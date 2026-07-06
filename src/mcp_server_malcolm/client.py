@@ -287,10 +287,82 @@ class MalcolmClient:
         return await self.get("/arkime/api/sessions", params=params)
 
     async def arkime_session_pcap(self, session_id: str) -> bytes:
-        """Download PCAP for a single Arkime session. Returns raw bytes."""
-        resp = await self.get_raw(f"/arkime/api/session/{session_id}/pcap")
+        """Download PCAP bytes for a single Arkime session.
+
+        Uses GET /arkime/api/sessions.pcap?expression=id==<id>. The per-node
+        route /arkime/api/session/<nodeName>/<id>.pcap needs a nodeName the
+        caller rarely has; the sessions.pcap query form does not. (Arkime
+        v6.5.0; there is NO /arkime/api/session/<id>/pcap route.)
+        """
+        resp = await self.get_raw(
+            "/arkime/api/sessions.pcap",
+            params={"expression": f"id=={session_id}"},
+        )
         resp.raise_for_status()
         return resp.content
+
+    async def arkime_hunts(self, length: int = 50, history: bool = False) -> dict[str, Any]:
+        """List Arkime hunt jobs (READ). Ships with the hunt-job write class."""
+        params = {"length": length, "history": "true" if history else "false"}
+        return await self.get("/arkime/api/hunts", params=params)
+
+    # -- Write primitives (gated) ---------------------------------------
+    # Every method here issues a mutating request. By convention they are
+    # named _write_* and imported ONLY from tools/write/*.py — a seam test
+    # asserts no other module references them. Do not call these from a
+    # read tool.
+
+    async def _write_event(self, alert: dict[str, Any]) -> dict[str, Any]:
+        """POST /mapi/event — index an external alert as a session document.
+
+        Malcolm's own purpose-built write endpoint (26.06.1). Wraps the caller
+        payload as {"alert": alert}; Malcolm deep-merges alert["body"] into an
+        ECS-ish doc and indexes it into arkime_sessions3-<yymmdd>.
+        """
+        return await self.post("/mapi/event", {"alert": alert})
+
+    async def _write_arkime_tags(self, ids: str, tags: str, segments: str = "no") -> dict[str, Any]:
+        """POST /arkime/api/sessions/addtags — additive tagging (Arkime v6.5.0).
+
+        checkHeaderToken passes without a token when the request carries no
+        cookie/referer (our case). Tags are sanitized to [-a-zA-Z0-9_:,]
+        server-side.
+        """
+        return await self.post(
+            "/arkime/api/sessions/addtags",
+            {"ids": ids, "tags": tags, "segments": segments},
+        )
+
+    async def _write_arkime_hunt(self, hunt: dict[str, Any]) -> dict[str, Any]:
+        """POST /arkime/api/hunt — create a cross-PCAP packet-search job.
+
+        Guarded by checkCookieToken (Arkime v6.5.0), so we first GET
+        /arkime/api/hunts (the setCookie middleware issues an ARKIME-COOKIE),
+        then replay that cookie as the x-arkime-cookie header on the POST. The
+        userId in the token matches because both requests carry the same Basic
+        auth → same X-Forwarded-User.
+        """
+        c = await self._client()
+        await c.get("/arkime/api/hunts", params={"length": 1})
+        token = c.cookies.get("ARKIME-COOKIE")
+        headers = {"x-arkime-cookie": token} if token else {}
+        resp = await c.post("/arkime/api/hunt", json=hunt, headers=headers)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _write_upload_pcap(
+        self, filename: str, content: bytes, tags: str = ""
+    ) -> httpx.Response:
+        """POST /upload — FilePond multipart PCAP upload (Malcolm 26.06.1).
+
+        FilePond field name is 'filepond' (config.php ENTRY_FIELD). Returns the
+        raw response so the caller can inspect status/text. A downstream
+        libmagic check (pcap-monitor) does the real type enforcement.
+        """
+        c = await self._client()
+        files = {"filepond": (filename, content, "application/octet-stream")}
+        data = {"tags": tags} if tags else None
+        return await c.post("/upload", files=files, data=data)
 
     # -- Convenience helpers --------------------------------------------
 
