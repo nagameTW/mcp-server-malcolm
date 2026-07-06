@@ -2,29 +2,41 @@
 
 **English** | [繁體中文](README.zh-TW.md)
 
-MCP server for [Malcolm](https://malcolm.fyi) — the open-source network traffic analysis platform (Zeek + Suricata + Arkime).
+An MCP server for [Malcolm](https://malcolm.fyi), the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox).
 
-Gives any MCP-compatible AI agent structured access to Malcolm's unified API for network traffic search, aggregation, field discovery, Suricata alerts, Arkime sessions, NetBox asset lookup, and system health monitoring.
+It gives any MCP-compatible AI agent structured access to Malcolm: search and aggregate network traffic, discover field names, query Suricata alerts, browse Arkime sessions, resolve NetBox assets, and check system health. Turn on the write classes and it can also create alerts, tag sessions, launch hunts, and upload PCAP.
 
-**Read-only by design** — no tool writes, posts, or ingests anything. The server is layered: a **backend-agnostic DSL core** (5 generic OpenSearch query tools that work against any OpenSearch-compatible endpoint) plus a **Malcolm module** (Malcolm-specific convenience tools) that can be dropped without touching the core.
+## Read-only until you opt in
 
-## Why
+With no configuration, this server exposes read tools only. It behaves like a read-only client, and nothing it does can change data in Malcolm.
 
-Malcolm stores all network metadata in a single OpenSearch index (`arkime_sessions3-*`) with non-standard field names and a custom filter syntax. LLMs writing raw OpenSearch DSL against Malcolm get it wrong most of the time. This MCP server solves that by:
+The server splits write access into four classes, each behind its own environment flag and each off by default. It doesn't register a disabled class, so that class's tools never appear in `list_tools()` and can't be called. At startup it prints which classes are on:
 
-- Exposing Malcolm's **simple filter syntax** instead of OpenSearch DSL
-- Providing **field discovery tools** so the LLM can verify field names before querying
-- Providing **field value enumeration** so the LLM knows what values actually exist
-- Wrapping **Suricata alert queries** with automatic field mapping (`suricata.alert.*` vs `rule.*`)
-- Adding **NetBox asset context** (IP-to-device resolution, network segments)
+```
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off
+```
 
-## Tools
+Every write is additive. Version 1 has no tool that deletes data, removes a tag, or touches user accounts. It leaves those out on purpose (see [Non-goals](#non-goals)).
 
-### DSL Core (backend-agnostic)
+## Why an MCP layer
 
-Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearch`
-proxy). No Malcolm-specific query shape — repoint the base URL and they work
-against any OpenSearch-compatible backend.
+Malcolm keeps all network metadata in one OpenSearch index (`arkime_sessions3-*`) with non-standard field names and its own filter syntax. An LLM asked to write raw OpenSearch DSL against that index gets it wrong more often than not. This server takes that job off the model:
+
+- It exposes Malcolm's filter syntax instead of raw DSL.
+- It provides field discovery so the model checks field names before it queries.
+- It provides value enumeration so the model sees what values a field actually holds.
+- It wraps Suricata alert queries and handles the field mapping (`suricata.alert.*` vs `rule.*`).
+- It adds NetBox asset context (IP-to-device, network segments).
+
+The write side follows the same idea. Rather than hand an agent the raw OpenSearch and NetBox passthroughs that Malcolm already leaves open to any authenticated user, this server exposes a small, named, audited set of write actions. More on that under [Security model](#security-model).
+
+## Read tools
+
+These are always registered.
+
+### DSL core (backend-agnostic)
+
+Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearch` proxy). No Malcolm-specific query shape: point the base URL at any OpenSearch-compatible backend and they still work.
 
 | Tool | Description |
 |------|-------------|
@@ -34,49 +46,92 @@ against any OpenSearch-compatible backend.
 | `index_mapping` | Field mapping/schema for an index |
 | `cluster_health` | OpenSearch cluster health |
 
-### Core Query
+### Core query
 
 | Tool | Description |
 |------|-------------|
-| `malcolm_search` | Search network traffic documents with Malcolm filter syntax |
+| `malcolm_search` | Search network traffic with Malcolm filter syntax |
 | `malcolm_aggregate` | Aggregate traffic by one or more fields (top-N with counts) |
 | `malcolm_alerts` | Search Suricata alerts by signature, severity, IP |
 
-### Field Discovery (Anti-Hallucination)
+### Field discovery (anti-hallucination)
 
 | Tool | Description |
 |------|-------------|
-| `malcolm_field_search` | Search/browse available field names by keyword, prefix, or type |
-| `malcolm_field_values` | List distinct values for a field (e.g. what `event.dataset` values exist) |
-| `malcolm_field_profile` | Show which `event.dataset` types contain a specific field |
+| `malcolm_field_search` | Search available field names by keyword, prefix, or type |
+| `malcolm_field_values` | List distinct values for a field |
+| `malcolm_field_profile` | Show which `event.dataset` types contain a field |
 
-### System Health
-
-| Tool | Description |
-|------|-------------|
-| `malcolm_service_status` | Check readiness of all Malcolm services + version info |
-| `malcolm_data_coverage` | Data freshness per sensor, document counts per dataset, index info |
-
-### Asset Context (NetBox)
+### System health
 
 | Tool | Description |
 |------|-------------|
-| `malcolm_netbox_lookup` | Look up IP address, device, or network prefix in NetBox |
+| `malcolm_service_status` | Readiness of all Malcolm services plus version info |
+| `malcolm_data_coverage` | Data freshness per sensor, doc counts per dataset, index info |
+| `malcolm_ping` | Quick liveness check of the Malcolm API |
+
+### Asset context (NetBox)
+
+| Tool | Description |
+|------|-------------|
+| `malcolm_netbox_lookup` | Look up an IP, device, or network prefix in NetBox |
 
 ### Arkime
 
 | Tool | Description |
 |------|-------------|
-| `arkime_sessions` | Search Arkime sessions using Arkime expression syntax |
-| `arkime_pcap_info` | Get PCAP download URL for a session |
+| `arkime_sessions` | Search Arkime sessions with Arkime expression syntax |
+| `arkime_session_pcap` | Download a session's PCAP, verify the file magic, and save it locally |
 
-### Correlation
+### Correlation and export
 
 | Tool | Description |
 |------|-------------|
 | `malcolm_related_sessions` | Find all sessions related to a Zeek UID |
+| `malcolm_dashboard_export` | Export an OpenSearch Dashboards saved object as JSON |
 
-## Quick Start
+## Write tools (opt-in)
+
+Each class is enabled by setting its flag to `true`. Nothing here runs unless you ask for it.
+
+| Class | Flag | Tools | Endpoint |
+|-------|------|-------|----------|
+| alerting | `MALCOLM_MCP_ENABLE_ALERTING` | `malcolm_create_alert` | `POST /mapi/event` |
+| arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
+| hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`, `arkime_hunt_status` | `POST /arkime/api/hunt` |
+| pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /upload` |
+
+- **alerting**: `malcolm_create_alert` indexes an analyst- or agent-generated finding as an alert document you can see in Malcolm's dashboards. It uses `/mapi/event`, Malcolm's own purpose-built write endpoint, which is the template the other classes follow.
+- **arkime-tag**: `arkime_add_tags` adds tags to sessions. It only adds; tag removal needs a higher Arkime role and its own safety design, so it's deferred.
+- **hunt-job**: `arkime_create_hunt` launches a cross-PCAP packet search (expensive, so scope the query first). `arkime_hunt_status` reads job progress and ships with the class.
+- **pcap-upload**: `malcolm_upload_pcap` sends a local capture file to Malcolm for ingestion, with a client-side size cap.
+
+Every write tool carries the MCP annotations `readOnlyHint: false` and `destructiveHint: false`, so an MCP client can apply its own confirmation step before the call runs.
+
+## Security model
+
+Malcolm's default deployment already gives any authenticated user unrestricted write access to raw OpenSearch (`/mapi/opensearch/*`) and full NetBox CRUD (`/mapi/netbox/*`). Both are bare reverse-proxies with no HTTP-verb filtering; Malcolm's own read-only mode removes them rather than trying to filter them. In the common auth modes, "logged in" means admin-equivalent.
+
+Turning on a write class here does not open a door that was otherwise shut. That door is already open at the platform level. This server adds a curated way through it:
+
+- A small, named set of write actions instead of a raw passthrough.
+- Off by default, enabled one class at a time.
+- An audit line for every write attempt.
+- MCP annotations so the client can require confirmation.
+
+This server does **not** expose the raw OpenSearch and NetBox write passthroughs, behind a flag or otherwise. Curating that surface is what it is for.
+
+## Audit
+
+Every write attempt emits one line of JSON, on success and on failure:
+
+```json
+{"ts": "2026-07-06T09:12:44Z", "tool": "arkime_add_tags", "class": "arkime-tag", "target": "ids=240601-abc", "params": {"tags": "suspicious"}, "outcome": "ok"}
+```
+
+`outcome` is one of `ok`, `http_4xx`, `http_5xx`, or `error:<type>`. Long parameter values are truncated, and PCAP bytes are never logged. The sink is stderr by default; set `MALCOLM_MCP_AUDIT_FILE` to append to a file instead. Read tools are not audited.
+
+## Quick start
 
 ### Install
 
@@ -84,33 +139,40 @@ against any OpenSearch-compatible backend.
 pip install mcp-server-malcolm
 ```
 
-Or install from source:
+Or from source:
 
 ```bash
-git clone https://github.com/user/mcp-server-malcolm.git
+git clone https://github.com/nagameTW/mcp-server-malcolm.git
 cd mcp-server-malcolm
 pip install -e .
 ```
 
 ### Configure
 
-Set environment variables for your Malcolm instance:
+Set the connection variables for your Malcolm instance:
 
 ```bash
-export MALCOLM_URL="https://malcolm-server"
+export MALCOLM_URL="https://malcolm.example"
 export MALCOLM_USERNAME="admin"
 export MALCOLM_PASSWORD="admin"
-export MALCOLM_SSL_VERIFY="false"    # Malcolm uses self-signed certs by default
+export MALCOLM_SSL_VERIFY="false"    # Malcolm ships self-signed certs by default
 export MALCOLM_TIMEOUT="30"
+```
+
+Leave the write flags unset to run read-only. To enable a class, set its flag:
+
+```bash
+export MALCOLM_MCP_ENABLE_ALERTING="true"
+export MALCOLM_MCP_AUDIT_FILE="/var/log/malcolm-mcp-audit.jsonl"
 ```
 
 ### Run
 
 ```bash
-# As MCP server (stdio transport)
+# As an MCP server (stdio transport)
 mcp-server-malcolm
 
-# Or via Python module
+# Or via the Python module
 python -m mcp_server_malcolm
 ```
 
@@ -126,7 +188,7 @@ Add the server to your MCP client's configuration:
     "malcolm": {
       "command": "mcp-server-malcolm",
       "env": {
-        "MALCOLM_URL": "https://malcolm-server",
+        "MALCOLM_URL": "https://malcolm.example",
         "MALCOLM_USERNAME": "admin",
         "MALCOLM_PASSWORD": "admin",
         "MALCOLM_SSL_VERIFY": "false"
@@ -136,12 +198,11 @@ Add the server to your MCP client's configuration:
 }
 ```
 
-Consult your MCP client's documentation for the exact config-file location
-(many use a project-level `.mcp.json` or a global config file).
+For the exact config-file location, check your MCP client's docs. Many use a project-level `.mcp.json` or a global config file.
 
-### Python (Direct Import)
+### Python (direct import)
 
-Use `MalcolmClient` directly without the MCP protocol layer:
+Use `MalcolmClient` without the MCP layer:
 
 ```python
 import asyncio
@@ -149,7 +210,7 @@ from mcp_server_malcolm import MalcolmClient
 
 async def main():
     client = MalcolmClient(
-        base_url="https://malcolm-server",
+        base_url="https://malcolm.example",
         username="admin",
         password="admin",
     )
@@ -172,10 +233,7 @@ async def main():
     # Get distinct values
     datasets = await client.field_values(field="event.dataset")
 
-    # Check which datasets have a field
-    profile = await client.field_profile("zeek.ssl.server_name")
-
-    # Look up NetBox asset
+    # Look up a NetBox asset
     asset = await client.netbox_get(
         "api/ipam/ip-addresses/",
         params={"address": "192.0.2.77"},
@@ -186,9 +244,11 @@ async def main():
 asyncio.run(main())
 ```
 
-## Malcolm Filter Syntax
+Write primitives live behind the `_write_*` methods. Only the gated write tools reach them, not the direct-import path.
 
-Malcolm uses a simple JSON filter syntax (NOT OpenSearch DSL):
+## Malcolm filter syntax
+
+Malcolm uses a simple JSON filter syntax, not OpenSearch DSL:
 
 ```python
 # Exact match
@@ -210,13 +270,13 @@ Malcolm uses a simple JSON filter syntax (NOT OpenSearch DSL):
 {"event.dataset": "dns", "source.ip": "192.0.2.77"}
 ```
 
-## Tool Examples
+## Examples
 
-### Search for DNS queries to a suspicious domain
+### Search DNS queries to a suspicious domain
 
 ```
 malcolm_search(
-  filters='{"event.dataset": "dns", "zeek.dns.query": "*evil.com*"}',
+  filters='{"event.dataset": "dns", "zeek.dns.query": "*example.com*"}',
   limit=20,
   time_from="7 days ago"
 )
@@ -232,89 +292,101 @@ malcolm_aggregate(
 )
 ```
 
-### Search Suricata alerts
+### Verify field names before querying
 
 ```
-malcolm_alerts(
-  signature="ET MALWARE",
-  severity="1,2",
-  time_from="24 hours ago"
-)
-```
-
-### Discover field names before querying
-
-```
-# What fields are available for DNS?
 malcolm_field_search(prefix="zeek.dns")
-
-# What values does event.dataset have?
 malcolm_field_values(field="event.dataset")
-
-# Which datasets contain zeek.ssl.server_name?
 malcolm_field_profile(field="zeek.ssl.server_name")
 ```
 
-### Check data freshness before a hunt
+### Create an alert (alerting class enabled)
 
 ```
-malcolm_data_coverage()
+malcolm_create_alert(
+  title="Periodic beacon to 192.0.2.77",
+  severity=2,
+  description="60s-interval C2 candidate",
+  source_ip="192.0.2.10",
+  dest_ip="192.0.2.77"
+)
 ```
 
-Returns sensor timestamps, document counts per dataset, and index info — so you know what time ranges have data and what protocols are present.
-
-### Look up an IP in NetBox
+### Tag sessions for review (arkime-tag class enabled)
 
 ```
-malcolm_netbox_lookup(ip="192.0.2.77")
+arkime_add_tags(session_ids="240601-abc,240601-def", tags="review,beacon")
 ```
 
-Returns device name, role, site, interfaces, and network segment — context for determining if behavior is normal.
-
-### Correlate sessions by Zeek UID
+### Launch a hunt (hunt-job class enabled)
 
 ```
-malcolm_related_sessions(uid="CYeji2z7CKmPRGyga")
+arkime_create_hunt(
+  name="beacon-bytes",
+  search="deadbeef",
+  search_type="hex",
+  total_sessions=42,
+  start_time=1717200000,
+  stop_time=1717203600,
+  expression="ip==192.0.2.77"
+)
 ```
 
-Finds all sessions (conn, dns, ssl, files, etc.) related to a single connection.
-
-## Configuration Reference
+## Configuration reference
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MALCOLM_URL` | `https://localhost` | Malcolm base URL |
 | `MALCOLM_USERNAME` | `admin` | Basic auth username |
 | `MALCOLM_PASSWORD` | `admin` | Basic auth password |
-| `MALCOLM_SSL_VERIFY` | `false` | Verify TLS certificates |
+| `MALCOLM_SSL_VERIFY` | `false` | Verify TLS certificates (accepts a CA path) |
 | `MALCOLM_TIMEOUT` | `30` | HTTP request timeout (seconds) |
+| `MALCOLM_MCP_ENABLE_ALERTING` | `false` | Enable the alerting write class |
+| `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | Enable additive session tagging |
+| `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | Enable Arkime hunt create + status |
+| `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | Enable PCAP upload |
+| `MALCOLM_MCP_AUDIT_FILE` | unset | Write-audit file (stderr when unset) |
 
-## Malcolm API Endpoints Used
+## Malcolm API endpoints used
 
-| Endpoint | Method | Used By |
+| Endpoint | Method | Used by |
 |----------|--------|---------|
 | `/mapi/document` | POST | `malcolm_search`, `malcolm_alerts`, `malcolm_related_sessions` |
 | `/mapi/agg/<fields>` | POST | `malcolm_aggregate`, `malcolm_field_values`, `malcolm_field_profile`, `malcolm_data_coverage` |
 | `/mapi/fields` | GET | `malcolm_field_search`, `malcolm_field_profile` |
-| `/mapi/ready` | GET | `malcolm_service_status` |
-| `/mapi/version` | GET | `malcolm_service_status` |
-| `/mapi/ingest-stats` | GET | `malcolm_data_coverage` |
-| `/mapi/indices` | GET | `malcolm_data_coverage` |
+| `/mapi/ready`, `/mapi/version` | GET | `malcolm_service_status` |
+| `/mapi/ping` | GET | `malcolm_ping` |
+| `/mapi/ingest-stats`, `/mapi/indices` | GET | `malcolm_data_coverage` |
+| `/mapi/dashboard-export/<id>` | GET | `malcolm_dashboard_export` |
 | `/mapi/opensearch/<index>/_search` | POST | `search_dsl` |
 | `/mapi/opensearch/<index>/_count` | POST | `count` |
 | `/mapi/opensearch/_cat/indices` | GET | `list_indices` |
 | `/mapi/opensearch/<index>/_mapping` | GET | `index_mapping` |
 | `/mapi/opensearch/_cluster/health` | GET | `cluster_health` |
 | `/mapi/netbox/*` | GET | `malcolm_netbox_lookup` |
+| `/mapi/event` | POST | `malcolm_create_alert` (write) |
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
-| `/arkime/api/session/<id>/pcap` | GET | `arkime_pcap_info` |
+| `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
+| `/arkime/api/sessions/addtags` | POST | `arkime_add_tags` (write) |
+| `/arkime/api/hunt`, `/arkime/api/hunts` | POST, GET | `arkime_create_hunt`, `arkime_hunt_status` (write + read) |
+| `/upload` | POST | `malcolm_upload_pcap` (write) |
+
+These endpoint paths and body shapes match Malcolm `26.06.1` and Arkime `v6.5.0`. Both drift between releases, so re-check against your own version if a write tool returns an unexpected error.
+
+## Non-goals
+
+Version 1 leaves these out on purpose:
+
+- Destructive writes (Arkime session delete, tag removal, user management).
+- Raw OpenSearch write or raw NetBox CRUD passthrough, behind a flag or otherwise.
+- The `streamable-http` transport (stdio only).
 
 ## Requirements
 
 - Python 3.11+
-- Malcolm instance with API access enabled
+- A Malcolm instance with API access
 - Network connectivity to Malcolm (HTTPS)
 
 ## License
 
-MIT
+MIT © nagameTW
