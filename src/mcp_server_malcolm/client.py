@@ -385,16 +385,19 @@ class MalcolmClient:
     async def _write_upload_pcap(
         self, filename: str, content: bytes, tags: str = ""
     ) -> httpx.Response:
-        """POST /upload — FilePond multipart PCAP upload (Malcolm 26.06.1).
+        """POST /server/php/submit.php — FilePond multipart PCAP upload.
 
         FilePond field name is 'filepond' (config.php ENTRY_FIELD). Returns the
-        raw response so the caller can inspect status/text. A downstream
-        libmagic check (pcap-monitor) does the real type enforcement.
+        raw response so the caller can inspect status/text (FilePond replies 200
+        with an empty/transfer-id body on success). A downstream libmagic check
+        (pcap-monitor) does the real type enforcement. Verified live against
+        Malcolm 25.12.1 — the bare /upload path is a rewrite target and 405s on
+        a direct POST; the FilePond processor is under /server/php/submit.php.
         """
         c = await self._client()
         files = {"filepond": (filename, content, "application/octet-stream")}
         data = {"tags": tags} if tags else None
-        return await c.post("/upload", files=files, data=data)
+        return await c.post("/server/php/submit.php", files=files, data=data)
 
     # -- Convenience helpers --------------------------------------------
 

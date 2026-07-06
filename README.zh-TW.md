@@ -99,7 +99,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | alerting | `MALCOLM_MCP_ENABLE_ALERTING` | `malcolm_create_alert` | `POST /mapi/event` |
 | arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
 | hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`、`arkime_hunt_status` | `POST /arkime/api/hunt` |
-| pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /upload` |
+| pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /server/php/submit.php` |
 
 - **alerting**：`malcolm_create_alert` 把分析師或 agent 產出的發現，寫成一筆能在 Malcolm dashboard 看到的告警文件。它走 `/mapi/event`，這是 Malcolm 自己設計的 write 端點，也是其他 class 效法的範本。
 - **arkime-tag**：`arkime_add_tags` 幫 session 加 tag，只加不減。移除 tag 需要更高的 Arkime 角色和另一套安全設計，所以延後。
@@ -369,7 +369,7 @@ arkime_create_hunt(
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags`（write） |
 | `/arkime/api/hunt`、`/arkime/api/hunts` | POST、GET | `arkime_create_hunt`、`arkime_hunt_status`（write + read） |
-| `/upload` | POST | `malcolm_upload_pcap`（write） |
+| `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |
 
 這些端點路徑和 body 形狀是對 Malcolm `26.06.1` 和 Arkime `v6.5.0` 核對過的。兩者版本之間都會漂移，所以若某個 write 工具回傳非預期錯誤，拿你自己的版本重新核對。
 

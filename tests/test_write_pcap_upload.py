@@ -31,7 +31,7 @@ async def test_upload_reads_file_and_posts_multipart(tmp_path):
     mcp = FastMCP("t")
     register_pcap_upload_tools(mcp, _mock(handler), str(audit))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(pcap), "tags": "hunt7"})
-    assert seen["path"] == "/upload"
+    assert seen["path"] == "/server/php/submit.php"
     assert b'name="filepond"' in seen["body"]
     assert b'name="tags"' in seen["body"]
     assert "uploaded" in str(out).lower()

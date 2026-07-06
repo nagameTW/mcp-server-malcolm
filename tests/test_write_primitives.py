@@ -82,7 +82,7 @@ async def test_write_upload_pcap_multipart_field_name():
 
     c = _mock_client(handler)
     resp = await c._write_upload_pcap("capture.pcap", b"\xa1\xb2\xc3\xd4rest", tags="hunt7")
-    assert seen["url"].endswith("/upload")
+    assert seen["url"].endswith("/server/php/submit.php")
     assert "multipart/form-data" in seen["ctype"]
     assert b'name="filepond"' in seen["body"]
     assert b'name="tags"' in seen["body"]
