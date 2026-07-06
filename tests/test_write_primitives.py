@@ -90,7 +90,8 @@ async def test_write_upload_pcap_multipart_field_name():
 
 
 @pytest.mark.asyncio
-async def test_arkime_session_pcap_uses_sessions_dot_pcap_expression():
+async def test_arkime_session_pcap_uses_sessions_dot_pcap_ids_param():
+    """Live-verified: sessions.pcap takes ids=<id>; expression=id== 404s."""
     seen = {}
 
     def handler(req: httpx.Request) -> httpx.Response:
@@ -99,9 +100,10 @@ async def test_arkime_session_pcap_uses_sessions_dot_pcap_expression():
         return httpx.Response(200, content=b"\xd4\xc3\xb2\xa1pcapbytes")
 
     c = _mock_client(handler)
-    data = await c.arkime_session_pcap("240601-SESSIONID")
+    data = await c.arkime_session_pcap("3@240425-SESSIONID")
     assert seen["path"] == "/arkime/api/sessions.pcap"
-    assert seen["query"]["expression"] == "id==240601-SESSIONID"
+    assert seen["query"]["ids"] == "3@240425-SESSIONID"
+    assert "expression" not in seen["query"]
     assert data.startswith(b"\xd4\xc3\xb2\xa1")
 
 

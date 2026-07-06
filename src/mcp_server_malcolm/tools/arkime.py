@@ -93,7 +93,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         if not _SESSION_ID_RE.fullmatch(sid):
             return "Error: invalid session_id (expected an Arkime session id)."
 
-        url = f"{client.base_url}/arkime/api/sessions.pcap?expression=id=={sid}"
+        url = f"{client.base_url}/arkime/api/sessions.pcap?ids={sid}"
         if url_only:
             return json.dumps(
                 {

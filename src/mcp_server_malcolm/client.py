@@ -311,14 +311,15 @@ class MalcolmClient:
     async def arkime_session_pcap(self, session_id: str) -> bytes:
         """Download PCAP bytes for a single Arkime session.
 
-        Uses GET /arkime/api/sessions.pcap?expression=id==<id>. The per-node
-        route /arkime/api/session/<nodeName>/<id>.pcap needs a nodeName the
-        caller rarely has; the sessions.pcap query form does not. (Arkime
-        v6.5.0; there is NO /arkime/api/session/<id>/pcap route.)
+        Uses GET /arkime/api/sessions.pcap?ids=<id> (the id from
+        arkime_sessions, e.g. "3@240425-..."; the node prefix is optional).
+        Verified live against Malcolm 25.12.1 — the expression=id==<id> form
+        returns 404 "no sessions found", and there is no
+        /arkime/api/session/<id>/pcap route.
         """
         resp = await self.get_raw(
             "/arkime/api/sessions.pcap",
-            params={"expression": f"id=={session_id}"},
+            params={"ids": session_id},
         )
         resp.raise_for_status()
         return resp.content
