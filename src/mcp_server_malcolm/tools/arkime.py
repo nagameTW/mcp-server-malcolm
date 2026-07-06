@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -64,30 +66,71 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         }
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
-    @mcp.tool()
-    async def arkime_pcap_info(
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_session_pcap(
         session_id: str,
+        url_only: bool = False,
     ) -> str:
-        """Get PCAP download info for an Arkime session.
+        """Download and validate the PCAP for one Arkime session.
 
-        Returns the download URL for the session's PCAP. The actual download
-        must be performed by the host system (e.g. curl with authentication).
+        Fetches the raw PCAP bytes, checks the file-magic (pcap/pcapng),
+        writes them to a temp file, and returns metadata (the MCP response
+        carries metadata, not raw bytes). Set url_only=True to get just the
+        download URL for very large sessions (no download performed).
 
         Args:
-            session_id: Arkime session ID (from arkime_sessions results).
+            session_id: Arkime session id (from arkime_sessions results).
+            url_only: If true, return the URL only and skip the download.
         """
-        if not session_id.strip():
+        sid = session_id.strip()
+        if not sid:
             return "Error: session_id is required."
 
-        # Build the download URL (client can use it with auth)
-        base = client._base_url
-        url = f"{base}/arkime/api/session/{session_id.strip()}/pcap"
+        url = f"{client._base_url}/arkime/api/sessions.pcap?expression=id=={sid}"
+        if url_only:
+            return json.dumps(
+                {
+                    "session_id": sid,
+                    "pcap_url": url,
+                    "note": "Download requires Malcolm authentication (Basic auth).",
+                },
+                indent=2,
+            )
+
+        try:
+            content = await client.arkime_session_pcap(sid)
+        except Exception as exc:
+            return f"PCAP download failed: {exc}"
+
+        magic = content[:4]
+        pcap_magics = {
+            b"\xa1\xb2\xc3\xd4": "pcap-be",
+            b"\xd4\xc3\xb2\xa1": "pcap-le",
+            b"\xa1\xb2\x3c\x4d": "pcap-ns-be",
+            b"\x4d\x3c\xb2\xa1": "pcap-ns-le",
+            b"\x0a\x0d\x0d\x0a": "pcapng",
+        }
+        kind = pcap_magics.get(magic)
+        valid = kind is not None
+
+        saved_to = ""
+        if content:
+            fd, path = tempfile.mkstemp(prefix=f"arkime-{sid}-", suffix=".pcap")
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(content)
+            saved_to = path
 
         return json.dumps(
             {
-                "session_id": session_id.strip(),
+                "session_id": sid,
+                "magic": magic.hex(),
+                "format": kind or "unknown",
+                "valid_pcap": valid,
+                "size_bytes": len(content),
+                "saved_to": saved_to,
                 "pcap_url": url,
-                "note": "Download requires Malcolm authentication (Basic auth).",
             },
             indent=2,
         )

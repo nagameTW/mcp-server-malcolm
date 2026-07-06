@@ -44,7 +44,9 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             os_info = version_data.get("opensearch", {})
             if isinstance(os_info, dict):
                 health = os_info.get("health", {})
-                result["opensearch_health"] = health.get("status", "unknown") if health else "unknown"
+                result["opensearch_health"] = (
+                    health.get("status", "unknown") if health else "unknown"
+                )
 
         if ready_data:
             result["services"] = ready_data
@@ -92,9 +94,7 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 time_from=time_from,
                 time_to=time_to,
             )
-            result["datasets"] = {
-                b["key"]: b["doc_count"] for b in buckets if "key" in b
-            }
+            result["datasets"] = {b["key"]: b["doc_count"] for b in buckets if "key" in b}
             result["total_documents"] = sum(b.get("doc_count", 0) for b in buckets)
         except Exception as exc:
             result["dataset_error"] = str(exc)
@@ -109,3 +109,28 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             result["index_error"] = str(exc)
 
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def malcolm_ping() -> str:
+        """Quick liveness check of the Malcolm API (GET /mapi/ping)."""
+        try:
+            data = await client.ping()
+        except Exception as exc:
+            return f"ping failed: {exc}"
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
+    async def malcolm_dashboard_export(dashboard_id: str) -> str:
+        """Export an OpenSearch Dashboards saved object as JSON.
+
+        Args:
+            dashboard_id: The dashboard's saved-object id.
+        """
+        did = dashboard_id.strip()
+        if not did:
+            return "Error: dashboard_id is required."
+        try:
+            data = await client.dashboard_export(did)
+        except Exception as exc:
+            return f"dashboard export failed: {exc}"
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
