@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from mcp_server_malcolm.client import MalcolmClient
+    from mcp_server_malcolm.config import WriteConfig
 
 
 def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
@@ -27,3 +28,23 @@ def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     register_netbox_tools(mcp, client)
     register_arkime_tools(mcp, client)
     register_correlation_tools(mcp, client)
+
+
+def register_write_tools(mcp: FastMCP, client: MalcolmClient, cfg: WriteConfig) -> None:
+    """Register write tools for enabled classes only (disabled = not registered)."""
+    if cfg.alerting:
+        from mcp_server_malcolm.tools.write.alerting import register_alerting_tools
+
+        register_alerting_tools(mcp, client, cfg.audit_file)
+    if cfg.arkime_tags:
+        from mcp_server_malcolm.tools.write.arkime_tags import register_arkime_tag_tools
+
+        register_arkime_tag_tools(mcp, client, cfg.audit_file)
+    if cfg.hunt_jobs:
+        from mcp_server_malcolm.tools.write.hunt_jobs import register_hunt_job_tools
+
+        register_hunt_job_tools(mcp, client, cfg.audit_file)
+    if cfg.pcap_upload:
+        from mcp_server_malcolm.tools.write.pcap_upload import register_pcap_upload_tools
+
+        register_pcap_upload_tools(mcp, client, cfg.audit_file)
