@@ -8,7 +8,7 @@ This is the template the other write classes follow.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -51,10 +51,10 @@ def register_alerting_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str
         if severity not in (1, 2, 3, 4):
             return "Error: severity must be 1, 2, 3, or 4."
 
-        body: dict = {"event": {"kind": "alert"}}
+        body: dict[str, Any] = {"event": {"kind": "alert"}}
         if description:
             body["event"]["reason"] = description
-        related: dict = {}
+        related: dict[str, Any] = {}
         if source_ip:
             related["source_ip"] = source_ip
         if dest_ip:

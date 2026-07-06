@@ -81,7 +81,7 @@ Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearc
 | Tool | Description |
 |------|-------------|
 | `arkime_sessions` | Search Arkime sessions with Arkime expression syntax |
-| `arkime_session_pcap` | Download a session's PCAP, verify the file magic, and save it locally |
+| `arkime_session_pcap` | Fetch a session's PCAP and report its size and file-magic validity (metadata only, nothing written to disk) |
 
 ### Correlation and export
 

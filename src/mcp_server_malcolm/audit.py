@@ -45,7 +45,7 @@ def record(
         "ts": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "tool": tool,
         "class": cls,
-        "target": target,
+        "target": _truncate(target),
         "params": {k: _truncate(v) for k, v in params_summary.items()},
         "outcome": outcome,
     }

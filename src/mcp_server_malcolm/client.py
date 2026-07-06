@@ -24,6 +24,17 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
+def _parse_ssl_verify(raw: str) -> bool | str:
+    """Parse MALCOLM_SSL_VERIFY: "true"/"false" → bool, anything else → CA path."""
+    val = raw.strip()
+    low = val.lower()
+    if low == "true":
+        return True
+    if low == "false" or not val:
+        return False
+    return val  # treat as a CA-bundle path for httpx verify=
+
+
 class MalcolmClient:
     """Async HTTP client for the Malcolm REST API.
 
@@ -36,7 +47,7 @@ class MalcolmClient:
         base_url: str = "https://localhost",
         username: str = "admin",
         password: str = "admin",
-        ssl_verify: bool = False,
+        ssl_verify: bool | str = False,
         timeout: float = 30.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -46,14 +57,25 @@ class MalcolmClient:
         self._http: httpx.AsyncClient | None = None
         self._field_cache: dict[str, str] | None = None
 
+    @property
+    def base_url(self) -> str:
+        """The configured Malcolm base URL (trailing slash stripped)."""
+        return self._base_url
+
     @classmethod
     def from_env(cls) -> MalcolmClient:
-        """Create client from environment variables."""
+        """Create client from environment variables.
+
+        MALCOLM_SSL_VERIFY accepts "true"/"false" (case-insensitive) or a path
+        to a CA bundle — anything that is not "true"/"false" is passed through
+        to httpx's verify= as a CA path, so verification is never silently
+        disabled when an operator supplies a real bundle.
+        """
         return cls(
             base_url=os.environ.get("MALCOLM_URL", "https://localhost"),
             username=os.environ.get("MALCOLM_USERNAME", "admin"),
             password=os.environ.get("MALCOLM_PASSWORD", "admin"),
-            ssl_verify=os.environ.get("MALCOLM_SSL_VERIFY", "false").lower() == "true",
+            ssl_verify=_parse_ssl_verify(os.environ.get("MALCOLM_SSL_VERIFY", "false")),
             timeout=float(os.environ.get("MALCOLM_TIMEOUT", "30")),
         )
 
@@ -324,14 +346,23 @@ class MalcolmClient:
     async def _write_arkime_tags(self, ids: str, tags: str, segments: str = "no") -> dict[str, Any]:
         """POST /arkime/api/sessions/addtags — additive tagging (Arkime v6.5.0).
 
-        checkHeaderToken passes without a token when the request carries no
-        cookie/referer (our case). Tags are sanitized to [-a-zA-Z0-9_:,]
-        server-side.
+        checkHeaderToken passes with no token when the request has no
+        cookie/referer. But a prior hunt-prime may have left an ARKIME-COOKIE
+        in the shared jar; httpx would then send it as a Cookie header, which
+        flips Arkime to checkCookieToken. So if a cookie is present, replay it
+        as x-arkime-cookie too (same first-party token, same Basic-auth user)
+        to stay consistent. Tags are sanitized to [-a-zA-Z0-9_:,] server-side.
         """
-        return await self.post(
+        c = await self._client()
+        token = c.cookies.get("ARKIME-COOKIE")
+        headers = {"x-arkime-cookie": token} if token else {}
+        resp = await c.post(
             "/arkime/api/sessions/addtags",
-            {"ids": ids, "tags": tags, "segments": segments},
+            json={"ids": ids, "tags": tags, "segments": segments},
+            headers=headers,
         )
+        resp.raise_for_status()
+        return resp.json()
 
     async def _write_arkime_hunt(self, hunt: dict[str, Any]) -> dict[str, Any]:
         """POST /arkime/api/hunt — create a cross-PCAP packet-search job.

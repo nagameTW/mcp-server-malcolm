@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from mcp_server_malcolm import audit
 
@@ -40,14 +40,17 @@ def register_pcap_upload_tools(mcp: FastMCP, client: MalcolmClient, audit_file: 
         if not os.path.isfile(path):
             return f"Error: file not found: {path}"
 
-        size = os.path.getsize(path)
-        if size > max_mb * 1024 * 1024:
-            return f"Error: file exceeds max_mb={max_mb} (size is {size / 1024 / 1024:.1f} MB)."
-
+        # Hard ceiling so a caller-supplied max_mb can't defeat the guard and OOM
+        # (the whole file is read into memory before the multipart POST).
+        max_mb = min(max_mb, 2048)
         filename = os.path.basename(path)
         target = f"file={filename}"
-        params_summary = {"size_bytes": size, "tags": tags}
+        params_summary: dict[str, Any] = {"tags": tags}
         try:
+            size = os.path.getsize(path)
+            if size > max_mb * 1024 * 1024:
+                return f"Error: file exceeds max_mb={max_mb} (size is {size / 1024 / 1024:.1f} MB)."
+            params_summary["size_bytes"] = size
             with open(path, "rb") as fh:
                 content = fh.read()
             resp = await client._write_upload_pcap(filename, content, tags=tags)

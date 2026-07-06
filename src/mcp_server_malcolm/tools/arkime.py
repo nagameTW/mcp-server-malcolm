@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from mcp_server_malcolm.client import MalcolmClient
+
+# session_id is spliced into an Arkime expression (id==<sid>); keep it to
+# Arkime's id charset so it can't inject operators/spaces that widen the query.
+_SESSION_ID_RE = re.compile(r"[A-Za-z0-9:@._-]+")
 
 
 def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
@@ -75,10 +78,10 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     ) -> str:
         """Download and validate the PCAP for one Arkime session.
 
-        Fetches the raw PCAP bytes, checks the file-magic (pcap/pcapng),
-        writes them to a temp file, and returns metadata (the MCP response
-        carries metadata, not raw bytes). Set url_only=True to get just the
-        download URL for very large sessions (no download performed).
+        Fetches the raw PCAP bytes, checks the file-magic (pcap/pcapng), and
+        returns metadata only — nothing is persisted to disk, and the MCP
+        response carries metadata rather than raw bytes. Set url_only=True to
+        get just the download URL for very large sessions (no download).
 
         Args:
             session_id: Arkime session id (from arkime_sessions results).
@@ -87,8 +90,10 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         sid = session_id.strip()
         if not sid:
             return "Error: session_id is required."
+        if not _SESSION_ID_RE.fullmatch(sid):
+            return "Error: invalid session_id (expected an Arkime session id)."
 
-        url = f"{client._base_url}/arkime/api/sessions.pcap?expression=id=={sid}"
+        url = f"{client.base_url}/arkime/api/sessions.pcap?expression=id=={sid}"
         if url_only:
             return json.dumps(
                 {
@@ -113,23 +118,14 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             b"\x0a\x0d\x0d\x0a": "pcapng",
         }
         kind = pcap_magics.get(magic)
-        valid = kind is not None
-
-        saved_to = ""
-        if content:
-            fd, path = tempfile.mkstemp(prefix=f"arkime-{sid}-", suffix=".pcap")
-            with os.fdopen(fd, "wb") as fh:
-                fh.write(content)
-            saved_to = path
 
         return json.dumps(
             {
                 "session_id": sid,
                 "magic": magic.hex(),
                 "format": kind or "unknown",
-                "valid_pcap": valid,
+                "valid_pcap": kind is not None,
                 "size_bytes": len(content),
-                "saved_to": saved_to,
                 "pcap_url": url,
             },
             indent=2,

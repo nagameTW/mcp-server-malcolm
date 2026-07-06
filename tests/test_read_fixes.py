@@ -31,9 +31,7 @@ def _mock_client(handler):
 
 
 @pytest.mark.asyncio
-async def test_pcap_tool_validates_magic_and_saves(tmp_path, monkeypatch):
-    monkeypatch.setenv("TMPDIR", str(tmp_path))
-
+async def test_pcap_tool_validates_magic_no_disk_write():
     def handler(req):
         return httpx.Response(200, content=b"\xd4\xc3\xb2\xa1\x02\x00\x04\x00rest-of-pcap")
 
@@ -45,6 +43,20 @@ async def test_pcap_tool_validates_magic_and_saves(tmp_path, monkeypatch):
     text = str(out)
     assert "valid_pcap" in text
     assert "true" in text.lower()
+    assert "saved_to" not in text  # nothing is persisted to disk
+
+
+@pytest.mark.asyncio
+async def test_pcap_tool_rejects_injection_session_id():
+    def handler(req):
+        raise AssertionError("must not download for a non-id session_id")
+
+    from mcp_server_malcolm.tools.arkime import register_arkime_tools
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    out = await mcp.call_tool("arkime_session_pcap", {"session_id": "1||ip==0.0.0.0/0"})
+    assert "invalid session_id" in str(out).lower()
 
 
 @pytest.mark.asyncio

@@ -116,3 +116,28 @@ async def test_arkime_hunts_read_status():
     c = _mock_client(handler)
     out = await c.arkime_hunts(length=5)
     assert out["recordsTotal"] == 1
+
+
+@pytest.mark.asyncio
+async def test_arkime_tags_replays_primed_cookie():
+    """A prior hunt-prime leaves ARKIME-COOKIE in the shared jar; tagging must
+    then replay it as x-arkime-cookie or Arkime's checkCookieToken 500s."""
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["x-arkime-cookie"] = req.headers.get("x-arkime-cookie")
+        return httpx.Response(200, json={"success": True})
+
+    c = _mock_client(handler)
+    c._http.cookies.set("ARKIME-COOKIE", "primed", domain="malcolm.example")
+    await c._write_arkime_tags(ids="id1", tags="x")
+    assert seen["x-arkime-cookie"] == "primed"
+
+
+def test_parse_ssl_verify_accepts_true_false_or_ca_path(monkeypatch):
+    monkeypatch.setenv("MALCOLM_SSL_VERIFY", "true")
+    assert MalcolmClient.from_env()._ssl_verify is True
+    monkeypatch.setenv("MALCOLM_SSL_VERIFY", "FALSE")
+    assert MalcolmClient.from_env()._ssl_verify is False
+    monkeypatch.setenv("MALCOLM_SSL_VERIFY", "/etc/ssl/ca.pem")
+    assert MalcolmClient.from_env()._ssl_verify == "/etc/ssl/ca.pem"

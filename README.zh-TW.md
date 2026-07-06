@@ -81,7 +81,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | 工具 | 說明 |
 |------|------|
 | `arkime_sessions` | 用 Arkime expression 語法搜尋 session |
-| `arkime_session_pcap` | 下載某 session 的 PCAP，驗證檔案 magic，並存到本機 |
+| `arkime_session_pcap` | 抓某 session 的 PCAP，回報大小與 magic 驗證結果（只回 metadata，不落地） |
 
 ### 關聯與匯出
 
