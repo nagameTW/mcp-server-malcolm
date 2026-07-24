@@ -73,6 +73,23 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
 
         return json.dumps(results, indent=2, ensure_ascii=False, default=str)
 
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def malcolm_netbox_sites() -> str:
+        """List NetBox sites (the site directory) via Malcolm.
+
+        Returns each site's id, name, and metadata. Useful for mapping the
+        physical/logical locations NetBox knows about before drilling into a
+        specific device or prefix.
+        """
+        try:
+            data = await client.netbox_sites()
+        except Exception as exc:
+            return f"NetBox sites lookup failed: {exc}"
+
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
 
 def _summarize_ip_results(entries: list, ip: str) -> dict:
     """Summarize NetBox IP address results."""

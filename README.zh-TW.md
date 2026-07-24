@@ -36,7 +36,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 
 ### DSL 核心（與後端無關）
 
-對設定好的端點（Malcolm 的 `/mapi/opensearch` proxy）送純 OpenSearch DSL。不含 Malcolm 專屬查詢形狀：把 base URL 改指到任何相容 OpenSearch 的後端，它們照樣能用。
+對設定好的端點（Malcolm 的 `/mapi/opensearch` proxy）送純 OpenSearch DSL。不綁 Malcolm 專屬的查詢格式：把 base URL 改指到任何相容 OpenSearch 的後端，它們照樣能用。
 
 | 工具 | 說明 |
 |------|------|
@@ -75,13 +75,19 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | 工具 | 說明 |
 |------|------|
 | `malcolm_netbox_lookup` | 查詢 IP、裝置或網段在 NetBox 的資料 |
+| `malcolm_netbox_sites` | 列出 NetBox 站點目錄（id、名稱、metadata） |
 
 ### Arkime
 
 | 工具 | 說明 |
 |------|------|
 | `arkime_sessions` | 用 Arkime expression 語法搜尋 session |
+| `arkime_session_detail` | 抓單一 session 的全部欄位（完整 SPI 文件） |
 | `arkime_session_pcap` | 抓某 session 的 PCAP，回報大小與 magic 驗證結果（只回 metadata，不落地） |
+| `arkime_unique` | 列出某欄位的不重複值，可帶計數 |
+| `arkime_spigraph` | 某欄位的 top 值加時序圖 |
+| `arkime_spiview` | 一次看多個欄位的值分布 |
+| `arkime_connections` | 來源/目的連線圖（nodes 與 links） |
 
 ### 關聯與匯出
 
@@ -364,14 +370,20 @@ arkime_create_hunt(
 | `/mapi/opensearch/<index>/_mapping` | GET | `index_mapping` |
 | `/mapi/opensearch/_cluster/health` | GET | `cluster_health` |
 | `/mapi/netbox/*` | GET | `malcolm_netbox_lookup` |
+| `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert`（write） |
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
+| `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
+| `/arkime/api/unique` | GET | `arkime_unique` |
+| `/arkime/api/spigraph` | GET | `arkime_spigraph` |
+| `/arkime/api/spiview` | GET | `arkime_spiview` |
+| `/arkime/api/connections` | GET | `arkime_connections` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags`（write） |
 | `/arkime/api/hunt`、`/arkime/api/hunts` | POST、GET | `arkime_create_hunt`、`arkime_hunt_status`（write + read） |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |
 
-這些端點路徑和 body 形狀是對 Malcolm `26.06.1` 和 Arkime `v6.5.0` 核對過的。兩者版本之間都會漂移，所以若某個 write 工具回傳非預期錯誤，拿你自己的版本重新核對。
+這些端點路徑和 body 結構是對 Malcolm `26.06.1` 和 Arkime `v6.5.0` 核對過的。兩者版本之間都會漂移，所以若某個 write 工具回傳非預期錯誤，拿你自己的版本重新核對。
 
 ## 不做的事
 

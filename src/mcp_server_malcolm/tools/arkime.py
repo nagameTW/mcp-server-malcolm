@@ -130,3 +130,168 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             },
             indent=2,
         )
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_session_detail(session_id: str) -> str:
+        """Fetch all fields (full SPI document) for one Arkime session.
+
+        arkime_sessions returns a trimmed row per session; this returns the
+        complete field set for a single session id.
+
+        Args:
+            session_id: Arkime session id (from arkime_sessions results).
+        """
+        sid = session_id.strip()
+        if not sid:
+            return "Error: session_id is required."
+        if not _SESSION_ID_RE.fullmatch(sid):
+            return "Error: invalid session_id (expected an Arkime session id)."
+
+        try:
+            data = await client.arkime_session_detail(sid)
+        except Exception as exc:
+            return f"Arkime session detail failed: {exc}"
+
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_unique(
+        field: str,
+        expression: str = "",
+        counts: bool = True,
+    ) -> str:
+        """List distinct values of one Arkime field, with optional counts.
+
+        Lighter than a full aggregation when you only need to see what values
+        a field holds. Returns one value per line (Arkime streams plain text).
+
+        Args:
+            field: Arkime field expression, e.g. "ip.dst", "protocols".
+            expression: Optional Arkime filter to scope the values.
+            counts: Include a per-value count (default true).
+        """
+        if not field.strip():
+            return "Error: field is required."
+
+        try:
+            text = await client.arkime_unique(
+                expression=expression.strip(),
+                field=field.strip(),
+                counts=counts,
+            )
+        except Exception as exc:
+            return f"Arkime unique failed: {exc}"
+
+        return text or "(no values)"
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_spigraph(
+        field: str,
+        expression: str = "",
+        size: int = 20,
+        time_from: str = "",
+        time_to: str = "",
+    ) -> str:
+        """Top values of one Arkime field, with a time-series graph.
+
+        Good for finding top talkers or spotting a value that spikes over time.
+
+        Args:
+            field: Arkime field, e.g. "ip.dst", "protocols", "http.host".
+            expression: Optional Arkime filter to scope the data.
+            size: Number of top values to return (1-100).
+            time_from: Start time, epoch seconds. Omit = recent-only.
+            time_to: End time, epoch seconds.
+        """
+        if not field.strip():
+            return "Error: field is required."
+
+        try:
+            data = await client.arkime_spigraph(
+                field=field.strip(),
+                expression=expression.strip(),
+                size=min(max(1, size), 100),
+                time_from=time_from,
+                time_to=time_to,
+            )
+        except Exception as exc:
+            return f"Arkime spigraph failed: {exc}"
+
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_spiview(
+        spi: str,
+        expression: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> str:
+        """Value profile across several Arkime fields at once.
+
+        Returns per-field top values with counts, in a single call — lighter
+        than running one aggregation per field.
+
+        Args:
+            spi: Comma-separated fields, each optionally ":<count>", e.g.
+                "protocols:10,ip.dst:20,http.host".
+            expression: Optional Arkime filter to scope the data.
+            time_from: Start time, epoch seconds. Omit = recent-only.
+            time_to: End time, epoch seconds.
+        """
+        if not spi.strip():
+            return "Error: spi (field list) is required."
+
+        try:
+            data = await client.arkime_spiview(
+                spi=spi.strip(),
+                expression=expression.strip(),
+                time_from=time_from,
+                time_to=time_to,
+            )
+        except Exception as exc:
+            return f"Arkime spiview failed: {exc}"
+
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_connections(
+        src_field: str = "ip.src",
+        dst_field: str = "ip.dst:port",
+        expression: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> str:
+        """Build a source/destination connection graph (who talked to whom).
+
+        Returns nodes and links — useful for tracing lateral movement or
+        mapping which hosts a suspect IP communicated with.
+
+        Args:
+            src_field: Source field (default "ip.src").
+            dst_field: Destination field (default "ip.dst:port").
+            expression: Optional Arkime filter to scope the graph.
+            time_from: Start time, epoch seconds. Omit = recent-only.
+            time_to: End time, epoch seconds.
+        """
+        try:
+            data = await client.arkime_connections(
+                src_field=src_field.strip() or "ip.src",
+                dst_field=dst_field.strip() or "ip.dst:port",
+                expression=expression.strip(),
+                time_from=time_from,
+                time_to=time_to,
+            )
+        except Exception as exc:
+            return f"Arkime connections failed: {exc}"
+
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
