@@ -1,7 +1,7 @@
 # mcp-server-malcolm
 
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
-[![Python](https://img.shields.io/pypi/pyversions/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
+[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
 [English](README.md) | **繁體中文**

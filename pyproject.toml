@@ -14,6 +14,14 @@ requires-python = ">=3.11"
 license = "MIT"
 authors = [{ name = "nagameTW" }]
 keywords = ["mcp", "malcolm", "zeek", "suricata", "arkime", "threat-hunting", "network-security"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: System :: Networking :: Monitoring",
+]
 dependencies = [
     "mcp>=1.0",
     "httpx>=0.27",
