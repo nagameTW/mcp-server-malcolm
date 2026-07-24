@@ -1,8 +1,12 @@
 # mcp-server-malcolm
 
+[![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
+[![Python](https://img.shields.io/pypi/pyversions/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+
 **English** | [繁體中文](README.zh-TW.md)
 
-An MCP server for [Malcolm](https://malcolm.fyi), the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox).
+The first MCP server for [Malcolm](https://malcolm.fyi), the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox).
 
 It gives any MCP-compatible AI agent structured access to Malcolm: search and aggregate network traffic, discover field names, query Suricata alerts, browse Arkime sessions, resolve NetBox assets, and check system health. Turn on the write classes and it can also create alerts, tag sessions, launch hunts, and upload PCAP.
 

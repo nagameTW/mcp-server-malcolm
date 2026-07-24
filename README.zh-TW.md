@@ -1,8 +1,12 @@
 # mcp-server-malcolm
 
+[![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
+[![Python](https://img.shields.io/pypi/pyversions/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+
 [English](README.md) | **繁體中文**
 
-給 [Malcolm](https://malcolm.fyi) 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。
+第一個給 [Malcolm](https://malcolm.fyi) 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。
 
 它讓任何支援 MCP 協定的 AI agent 都能用結構化工具存取 Malcolm：搜尋與聚合網路流量、探索欄位名稱、查詢 Suricata 告警、瀏覽 Arkime session、查詢 NetBox 資產、檢查系統健康。開啟 write class 之後，它還能建立告警、標記 session、發動 hunt、上傳 PCAP。
 
