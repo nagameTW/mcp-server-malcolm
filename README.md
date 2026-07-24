@@ -75,13 +75,19 @@ Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearc
 | Tool | Description |
 |------|-------------|
 | `malcolm_netbox_lookup` | Look up an IP, device, or network prefix in NetBox |
+| `malcolm_netbox_sites` | List the NetBox site directory (id, name, metadata) |
 
 ### Arkime
 
 | Tool | Description |
 |------|-------------|
 | `arkime_sessions` | Search Arkime sessions with Arkime expression syntax |
+| `arkime_session_detail` | Fetch all fields (full SPI document) for one session |
 | `arkime_session_pcap` | Fetch a session's PCAP and report its size and file-magic validity (metadata only, nothing written to disk) |
+| `arkime_unique` | List distinct values of one field, with optional counts |
+| `arkime_spigraph` | Top values of one field with a time-series graph |
+| `arkime_spiview` | Value profile across several fields in one call |
+| `arkime_connections` | Source/destination connection graph (nodes and links) |
 
 ### Correlation and export
 
@@ -364,9 +370,15 @@ arkime_create_hunt(
 | `/mapi/opensearch/<index>/_mapping` | GET | `index_mapping` |
 | `/mapi/opensearch/_cluster/health` | GET | `cluster_health` |
 | `/mapi/netbox/*` | GET | `malcolm_netbox_lookup` |
+| `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert` (write) |
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
+| `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
+| `/arkime/api/unique` | GET | `arkime_unique` |
+| `/arkime/api/spigraph` | GET | `arkime_spigraph` |
+| `/arkime/api/spiview` | GET | `arkime_spiview` |
+| `/arkime/api/connections` | GET | `arkime_connections` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags` (write) |
 | `/arkime/api/hunt`, `/arkime/api/hunts` | POST, GET | `arkime_create_hunt`, `arkime_hunt_status` (write + read) |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap` (write) |

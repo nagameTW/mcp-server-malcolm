@@ -288,6 +288,10 @@ class MalcolmClient:
         """Query NetBox API via Malcolm's /mapi/netbox/ proxy."""
         return await self.get(f"/mapi/netbox/{path.lstrip('/')}", params=params)
 
+    async def netbox_sites(self) -> dict[str, Any]:
+        """Site directory from /mapi/netbox-sites (ids + metadata)."""
+        return await self.get("/mapi/netbox-sites")
+
     # -- Arkime (forwarded) ---------------------------------------------
 
     async def arkime_sessions(
@@ -328,6 +332,95 @@ class MalcolmClient:
         """List Arkime hunt jobs (READ). Ships with the hunt-job write class."""
         params = {"length": length, "history": "true" if history else "false"}
         return await self.get("/arkime/api/hunts", params=params)
+
+    async def arkime_session_detail(self, session_id: str) -> dict[str, Any]:
+        """All fields for one session via GET /arkime/api/session/<id>.
+
+        The list search (arkime_sessions) returns a trimmed view; this returns
+        the full SPI document for a single session id.
+        """
+        return await self.get(f"/arkime/api/session/{session_id}")
+
+    async def arkime_unique(
+        self,
+        expression: str,
+        field: str,
+        counts: bool = True,
+    ) -> str:
+        """Distinct values of one field via GET /arkime/api/unique.
+
+        Returns text (one value per line), not JSON — this Arkime endpoint
+        streams a plain-text body, optionally suffixed with counts.
+        """
+        params: dict[str, Any] = {
+            "exp": field,
+            "counts": 1 if counts else 0,
+        }
+        if expression:
+            params["expression"] = expression
+        resp = await self.get_raw("/arkime/api/unique", params=params)
+        resp.raise_for_status()
+        return resp.text
+
+    @staticmethod
+    def _arkime_query(expression: str, time_from: str, time_to: str) -> dict[str, Any]:
+        """Standard Arkime SessionsQuery params (expression + time window)."""
+        params: dict[str, Any] = {}
+        if expression:
+            params["expression"] = expression
+        if time_from:
+            params["startTime"] = time_from
+        if time_to:
+            params["stopTime"] = time_to
+        return params
+
+    async def arkime_spigraph(
+        self,
+        field: str,
+        expression: str = "",
+        size: int = 20,
+        time_from: str = "",
+        time_to: str = "",
+    ) -> dict[str, Any]:
+        """Top values of one field with a time graph via GET /api/spigraph."""
+        params = self._arkime_query(expression, time_from, time_to)
+        params["field"] = field
+        params["size"] = size
+        return await self.get("/arkime/api/spigraph", params=params)
+
+    async def arkime_spiview(
+        self,
+        spi: str,
+        expression: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> dict[str, Any]:
+        """Field-value profile across fields via GET /api/spiview.
+
+        Args:
+            spi: Comma-separated db fields, each optionally ":<count>", e.g.
+                "protocols:10,ip.dst:20".
+        """
+        params = self._arkime_query(expression, time_from, time_to)
+        params["spi"] = spi
+        return await self.get("/arkime/api/spiview", params=params)
+
+    async def arkime_connections(
+        self,
+        src_field: str = "ip.src",
+        dst_field: str = "ip.dst:port",
+        expression: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> dict[str, Any]:
+        """Source/destination connection graph via GET /api/connections.
+
+        Returns {"nodes": [...], "links": [...]} for tracing who talked to whom.
+        """
+        params = self._arkime_query(expression, time_from, time_to)
+        params["srcField"] = src_field
+        params["dstField"] = dst_field
+        return await self.get("/arkime/api/connections", params=params)
 
     # -- Write primitives (gated) ---------------------------------------
     # Every method here issues a mutating request. By convention they are
