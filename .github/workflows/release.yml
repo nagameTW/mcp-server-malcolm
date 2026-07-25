@@ -1,0 +1,54 @@
+name: Release
+
+# Fire on a version tag you push by hand, e.g. `git tag v0.2.0 && git push origin v0.2.0`.
+# The tag is the release record; this workflow only does the build-and-publish work after it.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # Trusted Publishing: PyPI verifies this run's OIDC identity, no token needed
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@2834a314042ef964da07689278dd1e9d773e8afd # v1.14.1
+
+  github-release:
+    needs: pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the GitHub Release and attach the built artifacts
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: dist/*
+          generate_release_notes: true
