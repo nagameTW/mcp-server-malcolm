@@ -1,0 +1,67 @@
+name: Bug report
+description: Something in the server behaves incorrectly.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file this. A clear report with the versions
+        and a way to reproduce saves a lot of back-and-forth.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead.
+      placeholder: I called malcolm_search and got a 500 back, but the same query works in the Malcolm UI.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The tool call or sequence that triggers it. Include arguments where you can.
+      placeholder: |
+        1. Start the server with MALCOLM_URL=... (read-only, no write flags)
+        2. Call `malcolm_field_values` with field `...`
+        3. Response is `...`
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: Output of `pip show mcp-server-malcolm`, or the git commit if you run from source.
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      placeholder: "3.11"
+    validations:
+      required: true
+  - type: input
+    id: malcolm
+    attributes:
+      label: Malcolm version
+      description: The Malcolm release you point the server at, if you know it.
+      placeholder: 24.x
+  - type: dropdown
+    id: write-classes
+    attributes:
+      label: Write classes enabled
+      description: Which write flags were on when the bug showed up. Leave at "none" if you run read-only.
+      multiple: true
+      options:
+        - none (read-only)
+        - alerting
+        - arkime-tag
+        - hunt-job
+        - pcap-upload
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Relevant server output or the audit line for a write. Redact hosts, tokens, and any capture data first.
+      render: text

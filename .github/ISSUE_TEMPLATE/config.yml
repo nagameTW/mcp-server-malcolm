@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/nagameTW/mcp-server-malcolm/discussions/categories/q-a
+    about: Not sure how to do something, or want to ask before filing? Start a discussion.
+  - name: Security report
+    url: https://github.com/nagameTW/mcp-server-malcolm/security/advisories/new
+    about: Found a security problem? Report it privately here, not as a public issue.
+  - name: Malcolm platform
+    url: https://malcolm.fyi
+    about: Questions about Malcolm itself (Zeek, Suricata, Arkime, OpenSearch) belong upstream, not here.
