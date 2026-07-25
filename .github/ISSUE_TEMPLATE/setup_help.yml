@@ -1,0 +1,69 @@
+name: Setup or connection problem
+description: The server won't start, or your MCP client can't reach it.
+labels: ["setup"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this when the server itself runs but something around it won't line
+        up: the client shows no tools, startup fails, or the connection to
+        Malcolm doesn't work. If a specific tool returns wrong data, that's a bug
+        report instead.
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What's going wrong
+      options:
+        - Server won't start at all
+        - Server starts, but the MCP client shows no tools
+        - Tools show up, but every call fails to reach Malcolm
+        - Authentication to Malcolm is rejected
+        - A write class won't turn on
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      description: What you're connecting from.
+      placeholder: Claude Desktop, Cline, a custom client, ...
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Your client configuration
+      description: The MCP server entry from your client config. Redact hosts, usernames, and passwords first.
+      render: json
+      placeholder: |
+        {
+          "mcpServers": {
+            "malcolm": {
+              "command": "mcp-server-malcolm",
+              "env": { "MALCOLM_URL": "https://REDACTED" }
+            }
+          }
+        }
+    validations:
+      required: true
+  - type: textarea
+    id: reachable
+    attributes:
+      label: Can you reach Malcolm without the server
+      description: Result of a plain request to your MALCOLM_URL from the same machine, so we know if it's the server or the network. Redact the host.
+      placeholder: curl -sk https://REDACTED/mapi/ping  ->  {"ping":"pong"}
+  - type: textarea
+    id: startup
+    attributes:
+      label: Startup output
+      description: What the server prints when it starts, including the write-classes line. Redact anything sensitive.
+      render: text
+      placeholder: "[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off"
+  - type: input
+    id: version
+    attributes:
+      label: Server and Python version
+      placeholder: server 0.1.0, Python 3.11
+    validations:
+      required: true

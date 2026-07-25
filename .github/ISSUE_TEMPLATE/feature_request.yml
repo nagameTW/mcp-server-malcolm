@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a tool, an option, or a change in behavior.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before you write this up, a note on scope. Version 1 is read-first and
+        additive on purpose: no tool deletes data, removes a tag, or touches user
+        accounts. Requests that keep that line are the easiest to accept. See the
+        Non-goals section in the README for the reasoning.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you trying to do with an agent against Malcolm that the server doesn't let you do today?
+      placeholder: I want the agent to pull the full DNS query history for a host over a time window without writing raw DSL.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+      description: A tool name, arguments, and the Malcolm or Arkime API it would sit on top of, if you know it.
+    validations:
+      required: true
+  - type: dropdown
+    id: access
+    attributes:
+      label: Read or write
+      description: Does this only read from Malcolm, or does it change something?
+      options:
+        - Read-only
+        - Write (additive)
+        - Write (destructive — note this is a non-goal for v1)
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you've tried
+      description: Existing tools you worked around, or why raw DSL didn't cut it.
