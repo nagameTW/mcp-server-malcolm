@@ -47,4 +47,8 @@ def register_write_tools(mcp: FastMCP, client: MalcolmClient, cfg: WriteConfig) 
     if cfg.pcap_upload:
         from mcp_server_malcolm.tools.write.pcap_upload import register_pcap_upload_tools
 
-        register_pcap_upload_tools(mcp, client, cfg.audit_file)
+        register_pcap_upload_tools(mcp, client, cfg.audit_file, cfg.upload_dir)
+    if cfg.arkime_views:
+        from mcp_server_malcolm.tools.write.arkime_views import register_arkime_view_tools
+
+        register_arkime_view_tools(mcp, client, cfg.audit_file)

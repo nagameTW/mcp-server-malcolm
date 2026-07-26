@@ -2,6 +2,7 @@
 
 <!-- mcp-name: io.github.nagametw/mcp-server-malcolm -->
 
+[![CI](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml/badge.svg)](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
@@ -16,10 +17,10 @@ It gives any MCP-compatible AI agent structured access to Malcolm: search and ag
 
 With no configuration, this server exposes read tools only. It behaves like a read-only client, and nothing it does can change data in Malcolm.
 
-The server splits write access into four classes, each behind its own environment flag and each off by default. It doesn't register a disabled class, so that class's tools never appear in `list_tools()` and can't be called. At startup it prints which classes are on:
+The server splits write access into five classes, each behind its own environment flag and each off by default. It doesn't register a disabled class, so that class's tools never appear in `list_tools()` and can't be called. At startup it prints which classes are on:
 
 ```
-[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 ```
 
 Every write is additive. Version 1 has no tool that deletes data, removes a tag, or touches user accounts. It leaves those out on purpose (see [Non-goals](#non-goals)).
@@ -92,9 +93,12 @@ Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearc
 | `arkime_session_detail` | Fetch all fields (full SPI document) for one session |
 | `arkime_session_pcap` | Fetch a session's PCAP and report its size and file-magic validity (metadata only, nothing written to disk) |
 | `arkime_unique` | List distinct values of one field, with optional counts |
+| `arkime_multiunique` | Unique value combinations across several fields (e.g. src.ip + dst.port pairs) |
 | `arkime_spigraph` | Top values of one field with a time-series graph |
 | `arkime_spiview` | Value profile across several fields in one call |
+| `arkime_spigraphhierarchy` | Hierarchical top-N breakdown across fields (nested drill-down) |
 | `arkime_connections` | Source/destination connection graph (nodes and links) |
+| `arkime_file_by_hash` | Extract the transferred file whose md5/sha256 matches (metadata only, nothing written to disk) |
 
 ### Correlation and export
 
@@ -113,11 +117,13 @@ Each class is enabled by setting its flag to `true`. Nothing here runs unless yo
 | arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
 | hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`, `arkime_hunt_status` | `POST /arkime/api/hunt` |
 | pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /server/php/submit.php` |
+| arkime-view | `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `arkime_create_view`, `arkime_create_shortcut` | `POST /arkime/api/view`, `POST /arkime/api/shortcut` |
 
 - **alerting**: `malcolm_create_alert` indexes an analyst- or agent-generated finding as an alert document you can see in Malcolm's dashboards. It uses `/mapi/event`, Malcolm's own purpose-built write endpoint, which is the template the other classes follow.
 - **arkime-tag**: `arkime_add_tags` adds tags to sessions. It only adds; tag removal needs a higher Arkime role and its own safety design, so it's deferred.
 - **hunt-job**: `arkime_create_hunt` launches a cross-PCAP packet search (expensive, so scope the query first). `arkime_hunt_status` reads job progress and ships with the class.
-- **pcap-upload**: `malcolm_upload_pcap` sends a local capture file to Malcolm for ingestion, with a client-side size cap.
+- **pcap-upload**: `malcolm_upload_pcap` sends a local capture file to Malcolm for ingestion, with a client-side size cap. The file must live inside `MALCOLM_MCP_UPLOAD_DIR`; if that staging directory is unset, uploads are refused, so the tool can never be steered into reading an arbitrary file off the host.
+- **arkime-view**: `arkime_create_view` saves a named search expression and `arkime_create_shortcut` saves a named value list (IOC set) referenced in expressions as `$name`. Both are additive — they let an agent persist hunting knowledge for the human team, and neither deletes or overwrites.
 
 Every write tool carries the MCP annotations `readOnlyHint: false` and `destructiveHint: false`, so an MCP client can apply its own confirmation step before the call runs.
 
@@ -168,7 +174,12 @@ Set the connection variables for your Malcolm instance:
 export MALCOLM_URL="https://malcolm.example"
 export MALCOLM_USERNAME="admin"
 export MALCOLM_PASSWORD="admin"
-export MALCOLM_SSL_VERIFY="false"    # Malcolm ships self-signed certs by default
+# TLS verification is ON by default. Malcolm ships self-signed certs, so point
+# this at Malcolm's CA cert rather than disabling verification:
+export MALCOLM_SSL_VERIFY="/path/to/malcolm-ca.crt"
+# Only for an isolated localhost lab: MALCOLM_SSL_VERIFY="false" disables
+# verification entirely — never do this against a remote host (credentials and
+# query results would travel over an unauthenticated channel).
 export MALCOLM_TIMEOUT="30"
 ```
 
@@ -204,7 +215,7 @@ Add the server to your MCP client's configuration:
         "MALCOLM_URL": "https://malcolm.example",
         "MALCOLM_USERNAME": "admin",
         "MALCOLM_PASSWORD": "admin",
-        "MALCOLM_SSL_VERIFY": "false"
+        "MALCOLM_SSL_VERIFY": "/path/to/malcolm-ca.crt"
       }
     }
   }
@@ -352,12 +363,14 @@ arkime_create_hunt(
 | `MALCOLM_URL` | `https://localhost` | Malcolm base URL |
 | `MALCOLM_USERNAME` | `admin` | Basic auth username |
 | `MALCOLM_PASSWORD` | `admin` | Basic auth password |
-| `MALCOLM_SSL_VERIFY` | `false` | Verify TLS certificates (accepts a CA path) |
+| `MALCOLM_SSL_VERIFY` | `true` | Verify TLS certs. `true`/`false`, or a CA-bundle path (use the path for self-signed Malcolm) |
 | `MALCOLM_TIMEOUT` | `30` | HTTP request timeout (seconds) |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | Enable the alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | Enable additive session tagging |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | Enable Arkime hunt create + status |
-| `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | Enable PCAP upload |
+| `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | Enable PCAP upload (also needs `MALCOLM_MCP_UPLOAD_DIR`) |
+| `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `false` | Enable saved-view + shortcut (value-list) create |
+| `MALCOLM_MCP_UPLOAD_DIR` | unset | Staging dir that files must live inside to be uploadable; unset ⇒ uploads refused |
 | `MALCOLM_MCP_AUDIT_FILE` | unset | Write-audit file (stderr when unset) |
 
 ## Malcolm API endpoints used
@@ -382,12 +395,15 @@ arkime_create_hunt(
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
 | `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
-| `/arkime/api/unique` | GET | `arkime_unique` |
+| `/arkime/api/unique`, `/arkime/api/multiunique` | GET | `arkime_unique`, `arkime_multiunique` |
 | `/arkime/api/spigraph` | GET | `arkime_spigraph` |
 | `/arkime/api/spiview` | GET | `arkime_spiview` |
+| `/arkime/api/spigraphhierarchy` | GET | `arkime_spigraphhierarchy` |
 | `/arkime/api/connections` | GET | `arkime_connections` |
+| `/arkime/api/sessions/bodyhash/<hash>` | GET | `arkime_file_by_hash` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags` (write) |
 | `/arkime/api/hunt`, `/arkime/api/hunts` | POST, GET | `arkime_create_hunt`, `arkime_hunt_status` (write + read) |
+| `/arkime/api/view`, `/arkime/api/shortcut` | POST | `arkime_create_view`, `arkime_create_shortcut` (write) |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap` (write) |
 
 These endpoint paths and body shapes match Malcolm `26.06.1` and Arkime `v6.5.0`. Both drift between releases, so re-check against your own version if a write tool returns an unexpected error.

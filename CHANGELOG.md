@@ -6,6 +6,90 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+An API-coverage pass (verified against Malcolm's Flask source and the Arkime
+v6.x viewer API) plus findings from a multi-perspective code review (security,
+Python quality, test coverage). Two of the changes alter default behavior — see
+**Changed**.
+
+### Changed
+
+- Every tool definition reworked for LLM/agent legibility (and Glama's TDQS
+  quality score): a human `title` and full MCP annotations (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`) on all 36 tools, a
+  description on every one of the ~110 parameters (via `Annotated[…, Field]`,
+  since this FastMCP release doesn't read `Args:` docstrings into the schema),
+  and docstrings rewritten to state each tool's purpose, when to use it versus
+  its siblings, and what it returns. No tool behavior changed. A new
+  `test_tool_quality.py` guards these properties so a future tool can't
+  regress them.
+
+### Added
+
+- New read tools closing Arkime coverage gaps: `arkime_multiunique` (unique value
+  combinations across fields), `arkime_spigraphhierarchy` (hierarchical top-N
+  drill-down), and `arkime_file_by_hash` (extract the transferred file whose
+  md5/sha256 matches — the payload-forensics gap; returns metadata only, never
+  raw bytes in the response).
+- New opt-in write class `arkime-view` (`MALCOLM_MCP_ENABLE_ARKIME_VIEWS`) with
+  `arkime_create_view` (save a named search expression) and
+  `arkime_create_shortcut` (save a named value list / IOC set, referenced as
+  `$name`). Both additive; audited like every other write.
+- A `hunt_workflow` MCP prompt: a cold-start, worked tool-chaining guide (schema
+  discovery → search → drill-in → pivot → record) with the field-name,
+  time-format, and session-id gotchas spelled out.
+- Enriched the server `instructions` string with the three query dialects and
+  when to use each, the epoch-vs-dateparser time rule, and the
+  session-id → pcap/payload/tag dependency chain, so an agent can plan before
+  reading individual tool docstrings.
+
+### Security
+
+- PCAP upload no longer accepts an arbitrary local path. `malcolm_upload_pcap`
+  now requires the file to sit inside a configured staging directory
+  (`MALCOLM_MCP_UPLOAD_DIR`), resolving symlinks before the containment check;
+  with the directory unset, uploads are refused. This removes an
+  arbitrary-file-read-and-exfiltration path a prompt-injected caller could
+  otherwise have used to ship a credential file off the host.
+- TLS verification is now **on by default** (`MALCOLM_SSL_VERIFY` unset ⇒
+  `true`). The previous default transmitted Basic-auth credentials and query
+  results over an unverified channel, and the documented example paired it with
+  a remote host. For self-signed Malcolm, point `MALCOLM_SSL_VERIFY` at the CA
+  cert instead of disabling verification.
+- `arkime_session_pcap` / `arkime_session_detail` now reject a `..` session id,
+  closing a single-hop path-traversal gap in the id validator (the other path
+  validators already had this guard).
+- The write-primitive seam test now parses the AST instead of grepping text, so
+  it also catches dynamic dispatch (`getattr(client, "_write_event")`) — the
+  previous regex only caught direct attribute access.
+
+### Changed
+
+- **Breaking:** `MALCOLM_SSL_VERIFY` now defaults to `true` (was `false`). Set
+  it to `false` explicitly for an isolated localhost lab, or to a CA-bundle path
+  for self-signed certs.
+- **Breaking:** enabling `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` now also requires
+  `MALCOLM_MCP_UPLOAD_DIR` — without it, upload calls return an error.
+- `arkime_session_pcap` streams the download and enforces a 500 MB cap instead
+  of reading an unbounded body fully into memory.
+
+### Fixed
+
+- Closed a race in the lazily-created HTTP client: concurrent first calls could
+  each build an `httpx.AsyncClient` and leak the first one's connection pool. A
+  lock now guards the check-and-create.
+
+### Internal
+
+- Extracted the repeated write-tool audit-on-every-outcome logic into a shared
+  `run_write` helper.
+- Moved the `_arkime_query` static method to a module-level function (project
+  style: no `staticmethod`).
+- Enabled the `BLE` (blind-except) lint rule and annotated the intentional
+  MCP-boundary broad-except sites, so future accidental ones are flagged.
+- Removed dead code (`_format_json`); added tests for `_extract_buckets`,
+  `resolve_field`, `_parse_filters`, the write-gate's bundled read tool, the
+  upload containment guard, and the AST seam check (66 → 92 tests).
+
 ## [0.2.0] - 2026-07-26
 
 This release closes the biggest gaps found while auditing the tool surface

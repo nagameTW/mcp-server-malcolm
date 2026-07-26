@@ -29,7 +29,7 @@ async def test_upload_reads_file_and_posts_multipart(tmp_path):
         return httpx.Response(200, text="ok")
 
     mcp = FastMCP("t")
-    register_pcap_upload_tools(mcp, _mock(handler), str(audit))
+    register_pcap_upload_tools(mcp, _mock(handler), str(audit), str(tmp_path))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(pcap), "tags": "hunt7"})
     assert seen["path"] == "/server/php/submit.php"
     assert b'name="filepond"' in seen["body"]
@@ -45,7 +45,7 @@ async def test_upload_missing_file(tmp_path):
         raise AssertionError("no POST expected")
 
     mcp = FastMCP("t")
-    register_pcap_upload_tools(mcp, _mock(handler), None)
+    register_pcap_upload_tools(mcp, _mock(handler), None, str(tmp_path))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(tmp_path / "nope.pcap")})
     assert "not found" in str(out).lower()
 
@@ -59,6 +59,82 @@ async def test_upload_rejects_oversize(tmp_path):
         raise AssertionError("no POST expected")
 
     mcp = FastMCP("t")
-    register_pcap_upload_tools(mcp, _mock(handler), None)
+    register_pcap_upload_tools(mcp, _mock(handler), None, str(tmp_path))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(pcap), "max_mb": 1})
     assert "exceeds" in str(out).lower() or "too large" in str(out).lower()
+
+
+@pytest.mark.asyncio
+async def test_upload_disabled_without_upload_dir(tmp_path):
+    """With no MALCOLM_MCP_UPLOAD_DIR, uploads are refused (H1: no arbitrary read)."""
+    pcap = tmp_path / "capture.pcap"
+    pcap.write_bytes(b"\xa1\xb2\xc3\xd4" + b"x" * 100)
+
+    def handler(req):
+        raise AssertionError("no POST expected")
+
+    mcp = FastMCP("t")
+    register_pcap_upload_tools(mcp, _mock(handler), None, None)
+    out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(pcap)})
+    assert "disabled" in str(out).lower() and "MALCOLM_MCP_UPLOAD_DIR" in str(out)
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_path_outside_upload_dir(tmp_path):
+    """A path outside the staging dir (../secret) is rejected, not read (H1)."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    secret = tmp_path / "secret.key"
+    secret.write_bytes(b"\xa1\xb2\xc3\xd4" + b"TOPSECRET")
+
+    def handler(req):
+        raise AssertionError("no POST expected")
+
+    mcp = FastMCP("t")
+    register_pcap_upload_tools(mcp, _mock(handler), None, str(staging))
+    # Traversal out of the staging dir.
+    out = await mcp.call_tool(
+        "malcolm_upload_pcap", {"file_path": str(staging / ".." / "secret.key")}
+    )
+    assert "inside" in str(out).lower() and "MALCOLM_MCP_UPLOAD_DIR" in str(out)
+
+
+@pytest.mark.asyncio
+async def test_upload_rejects_symlink_escape(tmp_path):
+    """A symlink inside the staging dir pointing outside it is rejected (H1)."""
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    secret = tmp_path / "secret.key"
+    secret.write_bytes(b"\xa1\xb2\xc3\xd4" + b"TOPSECRET")
+    link = staging / "innocent.pcap"
+    link.symlink_to(secret)
+
+    def handler(req):
+        raise AssertionError("no POST expected")
+
+    mcp = FastMCP("t")
+    register_pcap_upload_tools(mcp, _mock(handler), None, str(staging))
+    out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(link)})
+    assert "inside" in str(out).lower()
+
+
+def test_resolve_in_dir_clamp_is_independent_of_containment(tmp_path):
+    """The 2048 MB hard ceiling in the tool is a plain min(); its correctness is
+    covered by test_upload_rejects_oversize. Here we lock the containment helper:
+    a file inside the dir resolves, one outside returns an error, unset dir is
+    refused — the three H1 branches, unit-tested without the MCP layer."""
+    from mcp_server_malcolm.tools.write.pcap_upload import _resolve_in_dir
+
+    inside = tmp_path / "a.pcap"
+    inside.write_bytes(b"x")
+    path, err = _resolve_in_dir(str(inside), str(tmp_path))
+    assert err is None and path == inside.resolve()
+
+    _, err = _resolve_in_dir(str(tmp_path / ".." / "x.pcap"), str(tmp_path))
+    assert err is not None and "inside" in err.lower()
+
+    _, err = _resolve_in_dir(str(inside), None)
+    assert err is not None and "disabled" in err.lower()
+
+    _, err = _resolve_in_dir("", str(tmp_path))
+    assert err is not None and "required" in err.lower()
