@@ -43,12 +43,17 @@ def register_hunt_job_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str
     ) -> str:
         """Create an Arkime hunt (cross-PCAP packet search) — expensive, additive.
 
+        Re-scans raw PCAP on capture nodes for a byte/regex pattern — costly, so
+        scope it tightly. First run count (or arkime_sessions) with the same
+        expression + time window to get total_sessions and confirm the scope is
+        small before creating the hunt. Track progress with arkime_hunt_status.
+
         Args:
             name: Hunt name (Arkime keeps only [-a-zA-Z0-9_: ]).
             search: The bytes/text/regex to search for inside packets.
             search_type: one of ascii, asciicase, hex, regex, hexregex.
             total_sessions: Number of sessions the query matches (bound the scope).
-            start_time: Query window start, epoch seconds.
+            start_time: Query window start, epoch seconds (NOT a dateparser string).
             stop_time: Query window stop, epoch seconds.
             expression: Arkime expression scoping which sessions to hunt.
             packet_type: "raw" or "reassembled".
@@ -120,6 +125,9 @@ def register_hunt_job_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str
     @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
     async def arkime_hunt_status(active_only: bool = True, limit: int = 50) -> str:
         """List Arkime hunt jobs and their status (READ).
+
+        Note: this read tool is only registered when the hunt-job write class is
+        enabled — if writes are off, hunt status is not available either.
 
         Args:
             active_only: If true, show queued/running/paused; if false, finished jobs.

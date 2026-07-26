@@ -20,10 +20,15 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         limit: int = 20,
         time_from: str = "",
         time_to: str = "",
+        doctype: str = "",
     ) -> str:
         """Search Malcolm indexed network traffic documents.
 
-        Uses Malcolm's simple filter syntax (NOT OpenSearch DSL).
+        Uses Malcolm's simple filter syntax (NOT OpenSearch DSL). Queries the
+        OpenSearch backend. Prefer this for field-based filtering with human
+        time ranges. To search with Arkime expression syntax, or when you need
+        a session id to feed arkime_session_pcap / arkime_add_tags afterward,
+        use arkime_sessions instead (only its rows carry that id).
 
         Filter examples:
           {"event.dataset": "conn"}                       -- Zeek conn logs
@@ -38,6 +43,9 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             limit: Maximum documents to return (1-500).
             time_from: Start time (dateparser format, e.g. "2024-01-01", "7 days ago").
             time_to: End time (default: now).
+            doctype: Target index selector. Empty (default) searches the Malcolm
+                network index (Zeek/Suricata). "host" or "beat"* reaches host/beats
+                logs; "arkime" or "session"* targets the Arkime sessions index.
         """
         parsed = _parse_filters(filters)
         data = await client.search(
@@ -45,6 +53,7 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             limit=min(max(1, limit), 500),
             time_from=time_from,
             time_to=time_to,
+            doctype=doctype.strip(),
         )
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -55,6 +64,7 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         limit: int = 50,
         time_from: str = "",
         time_to: str = "",
+        doctype: str = "",
     ) -> str:
         """Aggregate network traffic by one or more fields.
 
@@ -70,6 +80,8 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             limit: Maximum buckets per aggregation level (1-500).
             time_from: Start time (dateparser format).
             time_to: End time (default: now).
+            doctype: Target index selector (see malcolm_search). Empty = the
+                Malcolm network index.
         """
         parsed = _parse_filters(filters)
         data = await client.aggregate(
@@ -78,6 +90,7 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             limit=min(max(1, limit), 500),
             time_from=time_from,
             time_to=time_to,
+            doctype=doctype.strip(),
         )
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -87,6 +100,9 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         severity: str = "",
         source_ip: str = "",
         dest_ip: str = "",
+        category: str = "",
+        action: str = "",
+        sid: str = "",
         limit: int = 20,
         time_from: str = "",
         time_to: str = "",
@@ -101,6 +117,11 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             severity: Comma-separated severity levels, e.g. "1,2" (1=high, 2=medium, 3=low).
             source_ip: Filter by source IP.
             dest_ip: Filter by destination IP.
+            category: Alert category substring (matched on the ECS rule.category,
+                which Malcolm normalizes from suricata.alert.category).
+            action: Rule action -- "allowed" or "blocked" (Suricata drop/reject).
+            sid: Comma-separated Suricata signature IDs. Matched on the ECS
+                rule.id, which Malcolm renames suricata.alert.signature_id to.
             limit: Maximum alerts to return.
             time_from: Start time (dateparser format).
             time_to: End time (default: now).
@@ -119,6 +140,16 @@ def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             filters["source.ip"] = source_ip
         if dest_ip:
             filters["destination.ip"] = dest_ip
+        if category:
+            filters["rule.category"] = f"*{category}*"
+        if action:
+            filters["suricata.alert.action"] = action
+        if sid:
+            sids = [int(s.strip()) for s in sid.split(",") if s.strip().isdigit()]
+            if len(sids) == 1:
+                filters["rule.id"] = sids[0]
+            elif sids:
+                filters["rule.id"] = sids
 
         data = await client.search(
             filters=filters,

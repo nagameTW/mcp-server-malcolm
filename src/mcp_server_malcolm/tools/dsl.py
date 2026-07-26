@@ -70,6 +70,10 @@ def register_dsl_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         matches, not the documents. Returns the raw OpenSearch _count response
         ({"count": N, ...}).
 
+        NOTE the query_dsl shape differs from search_dsl: here it is the INNER
+        query clause only (no "query" wrapper, no "aggs"/"size"), whereas
+        search_dsl takes a full DSL body.
+
         Args:
             index: index or pattern to count over (default the Malcolm
                 sessions index "arkime_sessions3-*"). Accepts a wildcard.

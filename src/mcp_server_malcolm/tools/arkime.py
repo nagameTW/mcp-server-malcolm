@@ -14,6 +14,9 @@ if TYPE_CHECKING:
 # session_id is spliced into an Arkime expression (id==<sid>); keep it to
 # Arkime's id charset so it can't inject operators/spaces that widen the query.
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9:@._-]+")
+# sessions.pcap takes a comma-separated ids= query param, so allow commas here
+# (never used for a path segment or expression, so a comma is safe).
+_SESSION_IDS_RE = re.compile(r"[A-Za-z0-9:@._,-]+")
 
 
 def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
@@ -28,7 +31,10 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     ) -> str:
         """Search Arkime sessions using Arkime expression syntax.
 
-        Arkime expressions are simpler than OpenSearch DSL.
+        Arkime expressions are simpler than OpenSearch DSL. Unlike
+        malcolm_search (Malcolm filter dict, dateparser times), this uses
+        Arkime expressions and epoch-second times, and is the ONLY search that
+        returns a session id usable with arkime_session_pcap / arkime_add_tags.
 
         Expression examples:
           ip==192.0.2.77
@@ -42,8 +48,9 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         Args:
             expression: Arkime search expression (required).
             limit: Maximum sessions to return (1-100).
-            time_from: Start time, epoch seconds. Omit = recent-only; pass a range
-                for historical data.
+            time_from: Start time, epoch seconds (NOT a dateparser string like
+                "7 days ago"). Omit = recent-only; pass a range for historical
+                data.
             time_to: End time, epoch seconds.
         """
         if not expression.strip():
@@ -76,7 +83,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         session_id: str,
         url_only: bool = False,
     ) -> str:
-        """Download and validate the PCAP for one Arkime session.
+        """Download and validate the PCAP for one or more Arkime sessions.
 
         Fetches the raw PCAP bytes, checks the file-magic (pcap/pcapng), and
         returns metadata only — nothing is persisted to disk, and the MCP
@@ -84,14 +91,16 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         get just the download URL for very large sessions (no download).
 
         Args:
-            session_id: Arkime session id (from arkime_sessions results).
+            session_id: One Arkime session id, or several comma-separated
+                (from arkime_sessions results). Multiple ids are merged into a
+                single combined PCAP.
             url_only: If true, return the URL only and skip the download.
         """
         sid = session_id.strip()
         if not sid:
             return "Error: session_id is required."
-        if not _SESSION_ID_RE.fullmatch(sid):
-            return "Error: invalid session_id (expected an Arkime session id)."
+        if not _SESSION_IDS_RE.fullmatch(sid):
+            return "Error: invalid session_id (expected Arkime session id(s))."
 
         url = f"{client.base_url}/arkime/api/sessions.pcap?ids={sid}"
         if url_only:
@@ -206,7 +215,8 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             field: Arkime field, e.g. "ip.dst", "protocols", "http.host".
             expression: Optional Arkime filter to scope the data.
             size: Number of top values to return (1-100).
-            time_from: Start time, epoch seconds. Omit = recent-only.
+            time_from: Start time, epoch seconds (NOT a dateparser string).
+                Omit = recent-only.
             time_to: End time, epoch seconds.
         """
         if not field.strip():
@@ -243,7 +253,8 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             spi: Comma-separated fields, each optionally ":<count>", e.g.
                 "protocols:10,ip.dst:20,http.host".
             expression: Optional Arkime filter to scope the data.
-            time_from: Start time, epoch seconds. Omit = recent-only.
+            time_from: Start time, epoch seconds (NOT a dateparser string).
+                Omit = recent-only.
             time_to: End time, epoch seconds.
         """
         if not spi.strip():
@@ -280,7 +291,8 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             src_field: Source field (default "ip.src").
             dst_field: Destination field (default "ip.dst:port").
             expression: Optional Arkime filter to scope the graph.
-            time_from: Start time, epoch seconds. Omit = recent-only.
+            time_from: Start time, epoch seconds (NOT a dateparser string).
+                Omit = recent-only.
             time_to: End time, epoch seconds.
         """
         try:
