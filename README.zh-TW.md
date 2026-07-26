@@ -4,8 +4,11 @@
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Glama score](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/score.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
 [English](README.md) | **繁體中文**
+
+[![mcp-server-malcolm MCP server](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/card.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
 第一個給 [Malcolm](https://malcolm.fyi) 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。
 

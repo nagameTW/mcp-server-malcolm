@@ -6,8 +6,11 @@
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Glama score](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/score.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
 **English** | [繁體中文](README.zh-TW.md)
+
+[![mcp-server-malcolm MCP server](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/card.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
 The first MCP server for [Malcolm](https://malcolm.fyi), the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox).
 

@@ -159,7 +159,16 @@ def register_field_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         Use this to learn where a field lives (e.g. whether it only appears in SSL or DNS
         records) before scoping a query. To confirm the field NAME first, use
         `malcolm_field_search`; to list its distinct VALUES, use `malcolm_field_values`.
-        If the field is unknown, returns close-name suggestions instead of a profile.
+
+        Behavior: first resolves the name against the index mapping, then aggregates over
+        event.dataset. Three distinct text outcomes — (1) unknown field → a "not found"
+        message with close-name suggestions (no profile); (2) known field but no matching
+        documents in the time window → an "exists but no documents" message; (3) a
+        per-dataset "event.dataset=<name> (N docs)" list. The dataset counts honor the
+        time window: with no range it uses Malcolm's default recent window, so a field
+        that only has old data can resolve as known yet profile as empty — pass
+        time_from/time_to to reach historical data. Requires Malcolm access (Basic auth),
+        inherited from the server config. Returns plain text, not JSON.
         """
         # First check if the field exists at all
         resolution = await client.resolve_field(field)
