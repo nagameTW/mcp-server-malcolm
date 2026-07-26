@@ -66,9 +66,7 @@ async def test_aggregate_forwards_doctype():
 
     mcp = FastMCP("t")
     register_query_tools(mcp, _mock_client(handler))
-    await mcp.call_tool(
-        "malcolm_aggregate", {"fields": "host.name", "doctype": "beat"}
-    )
+    await mcp.call_tool("malcolm_aggregate", {"fields": "host.name", "doctype": "beat"})
     assert '"doctype"' in seen["body"]
     assert "beat" in seen["body"]
 
@@ -131,9 +129,7 @@ async def test_pcap_accepts_comma_separated_ids():
 
     mcp = FastMCP("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool(
-        "arkime_session_pcap", {"session_id": "240601-A,240601-B"}
-    )
+    out = await mcp.call_tool("arkime_session_pcap", {"session_id": "240601-A,240601-B"})
     assert seen["ids"] == "240601-A,240601-B"
     assert "pcap-le" in str(out)
 
@@ -145,9 +141,7 @@ async def test_pcap_rejects_injection_ids():
 
     mcp = FastMCP("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool(
-        "arkime_session_pcap", {"session_id": "1 || ip==0.0.0.0/0"}
-    )
+    out = await mcp.call_tool("arkime_session_pcap", {"session_id": "1 || ip==0.0.0.0/0"})
     assert "invalid session_id" in str(out).lower()
 
 
@@ -181,9 +175,7 @@ async def test_netbox_query_rejects_traversal_path():
 
     mcp = FastMCP("t")
     register_netbox_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool(
-        "malcolm_netbox_query", {"path": "../../secret"}
-    )
+    out = await mcp.call_tool("malcolm_netbox_query", {"path": "../../secret"})
     assert "invalid netbox path" in str(out).lower()
 
 
@@ -194,9 +186,7 @@ async def test_netbox_query_rejects_absolute_url_path():
 
     mcp = FastMCP("t")
     register_netbox_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool(
-        "malcolm_netbox_query", {"path": "http://evil.example/x"}
-    )
+    out = await mcp.call_tool("malcolm_netbox_query", {"path": "http://evil.example/x"})
     assert "invalid netbox path" in str(out).lower()
 
 
@@ -207,7 +197,5 @@ async def test_netbox_query_rejects_bad_params_json():
 
     mcp = FastMCP("t")
     register_netbox_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool(
-        "malcolm_netbox_query", {"path": "ipam/vlans/", "params": "{bad"}
-    )
+    out = await mcp.call_tool("malcolm_netbox_query", {"path": "ipam/vlans/", "params": "{bad"})
     assert "invalid json" in str(out).lower()
