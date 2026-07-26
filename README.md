@@ -1,6 +1,6 @@
 # mcp-server-malcolm
 
-<!-- mcp-name: io.github.nagametw/mcp-server-malcolm -->
+<!-- mcp-name: io.github.nagameTW/mcp-server-malcolm -->
 
 [![CI](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml/badge.svg)](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)

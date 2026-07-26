@@ -6,6 +6,16 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-07-26
+
+### Fixed
+
+- Corrected the MCP Registry server name casing to `io.github.nagameTW/...`
+  (was lowercase `nagametw`). The registry namespace check is case-sensitive and
+  must match the GitHub account (`nagameTW`), so publishing was rejected with a
+  403. The `mcp-name:` ownership token in the README is updated to match; this
+  release republishes it to PyPI so ownership verification passes.
+
 ### Changed
 
 - Shortened the `server.json` `description` to fit the MCP Registry's 100-char
@@ -192,7 +202,8 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.2.0...v0.3.0
