@@ -453,6 +453,61 @@ class MalcolmClient:
         params["dstField"] = dst_field
         return await self.get("/arkime/api/connections", params=params)
 
+    async def arkime_multiunique(
+        self,
+        fields: str,
+        expression: str = "",
+        counts: bool = True,
+        time_from: str = "",
+        time_to: str = "",
+    ) -> str:
+        """Unique value combinations across several fields via GET /api/multiunique.
+
+        Args:
+            fields: Comma-separated Arkime expression field names, e.g.
+                "source.ip,destination.port".
+
+        Returns plain text (one combined row per unique tuple), not JSON — this
+        Arkime endpoint streams a text body.
+        """
+        params = _arkime_query_params(expression, time_from, time_to)
+        params["exp"] = fields
+        params["counts"] = 1 if counts else 0
+        resp = await self.get_raw("/arkime/api/multiunique", params=params)
+        resp.raise_for_status()
+        return resp.text
+
+    async def arkime_spigraphhierarchy(
+        self,
+        fields: str,
+        expression: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> dict[str, Any]:
+        """Hierarchical top-N treemap across fields via GET /api/spigraphhierarchy.
+
+        Args:
+            fields: Comma-separated db fields defining the hierarchy levels,
+                e.g. "source.ip,destination.ip".
+
+        Returns {"hierarchicalResults": {...}, "tableResults": [...]}.
+        """
+        params = _arkime_query_params(expression, time_from, time_to)
+        params["exp"] = fields
+        return await self.get("/arkime/api/spigraphhierarchy", params=params)
+
+    async def arkime_file_by_hash(self, file_hash: str) -> httpx.Response:
+        """Extract the transferred file whose content hash matches, via
+        GET /api/sessions/bodyhash/<hash>.
+
+        Arkime finds the most recent session carrying a body with this hash
+        (md5 or sha256, as it appears in Arkime's http.md5/http.sha256 fields),
+        resolves the capture node itself, and returns the raw file bytes. No
+        node name is needed. Returns the raw response so the caller can inspect
+        status (400 "No Match Found" when nothing matches) and the bytes.
+        """
+        return await self.get_raw(f"/arkime/api/sessions/bodyhash/{file_hash}")
+
     # -- Write primitives (gated) ---------------------------------------
     # Every method here issues a mutating request. By convention they are
     # named _write_* and imported ONLY from tools/write/*.py — a seam test
@@ -489,22 +544,44 @@ class MalcolmClient:
         resp.raise_for_status()
         return resp.json()
 
-    async def _write_arkime_hunt(self, hunt: dict[str, Any]) -> dict[str, Any]:
-        """POST /arkime/api/hunt — create a cross-PCAP packet-search job.
+    async def _arkime_token_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        """POST to a checkCookieToken-guarded Arkime route with the token dance.
 
-        Guarded by checkCookieToken (Arkime v6.5.0), so we first GET
-        /arkime/api/hunts (the setCookie middleware issues an ARKIME-COOKIE),
-        then replay that cookie as the x-arkime-cookie header on the POST. The
-        userId in the token matches because both requests carry the same Basic
-        auth → same X-Forwarded-User.
+        First GET /arkime/api/hunts so Arkime's setCookie middleware issues an
+        ARKIME-COOKIE, then replay it as the x-arkime-cookie header on the POST.
+        The userId in the token matches because both requests carry the same
+        Basic auth → same X-Forwarded-User. Shared by hunt/view/shortcut writes.
         """
         c = await self._client()
         await c.get("/arkime/api/hunts", params={"length": 1})
         token = c.cookies.get("ARKIME-COOKIE")
         headers = {"x-arkime-cookie": token} if token else {}
-        resp = await c.post("/arkime/api/hunt", json=hunt, headers=headers)
+        resp = await c.post(path, json=body, headers=headers)
         resp.raise_for_status()
         return resp.json()
+
+    async def _write_arkime_hunt(self, hunt: dict[str, Any]) -> dict[str, Any]:
+        """POST /arkime/api/hunt — create a cross-PCAP packet-search job.
+
+        Guarded by checkCookieToken (Arkime v6.5.0); see _arkime_token_post.
+        """
+        return await self._arkime_token_post("/arkime/api/hunt", hunt)
+
+    async def _write_arkime_view(self, view: dict[str, Any]) -> dict[str, Any]:
+        """POST /arkime/api/view — create a saved search view (additive).
+
+        Guarded by checkCookieToken (Arkime v6.x); see _arkime_token_post. Note
+        the create route is the SINGULAR /api/view (/api/views is GET-only).
+        """
+        return await self._arkime_token_post("/arkime/api/view", view)
+
+    async def _write_arkime_shortcut(self, shortcut: dict[str, Any]) -> dict[str, Any]:
+        """POST /arkime/api/shortcut — create a value list / named IOC list.
+
+        Guarded by checkCookieToken (Arkime v6.x); see _arkime_token_post. The
+        list is referenced in expressions as $<name>.
+        """
+        return await self._arkime_token_post("/arkime/api/shortcut", shortcut)
 
     async def _write_upload_pcap(
         self, filename: str, content: bytes, tags: str = ""

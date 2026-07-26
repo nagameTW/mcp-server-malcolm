@@ -6,8 +6,29 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
-Findings from a multi-perspective code review (security, Python quality, test
-coverage). Two of the changes alter default behavior — see **Changed**.
+An API-coverage pass (verified against Malcolm's Flask source and the Arkime
+v6.x viewer API) plus findings from a multi-perspective code review (security,
+Python quality, test coverage). Two of the changes alter default behavior — see
+**Changed**.
+
+### Added
+
+- New read tools closing Arkime coverage gaps: `arkime_multiunique` (unique value
+  combinations across fields), `arkime_spigraphhierarchy` (hierarchical top-N
+  drill-down), and `arkime_file_by_hash` (extract the transferred file whose
+  md5/sha256 matches — the payload-forensics gap; returns metadata only, never
+  raw bytes in the response).
+- New opt-in write class `arkime-view` (`MALCOLM_MCP_ENABLE_ARKIME_VIEWS`) with
+  `arkime_create_view` (save a named search expression) and
+  `arkime_create_shortcut` (save a named value list / IOC set, referenced as
+  `$name`). Both additive; audited like every other write.
+- A `hunt_workflow` MCP prompt: a cold-start, worked tool-chaining guide (schema
+  discovery → search → drill-in → pivot → record) with the field-name,
+  time-format, and session-id gotchas spelled out.
+- Enriched the server `instructions` string with the three query dialects and
+  when to use each, the epoch-vs-dateparser time rule, and the
+  session-id → pcap/payload/tag dependency chain, so an agent can plan before
+  reading individual tool docstrings.
 
 ### Security
 

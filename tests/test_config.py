@@ -7,6 +7,7 @@ def _clear(monkeypatch):
         "MALCOLM_MCP_ENABLE_ARKIME_TAGS",
         "MALCOLM_MCP_ENABLE_HUNT_JOBS",
         "MALCOLM_MCP_ENABLE_PCAP_UPLOAD",
+        "MALCOLM_MCP_ENABLE_ARKIME_VIEWS",
         "MALCOLM_MCP_AUDIT_FILE",
         "MALCOLM_MCP_UPLOAD_DIR",
     ):
@@ -16,9 +17,11 @@ def _clear(monkeypatch):
 def test_defaults_all_off(monkeypatch):
     _clear(monkeypatch)
     cfg = WriteConfig.from_env()
-    assert cfg == WriteConfig(False, False, False, False, None, None)
+    assert cfg == WriteConfig(False, False, False, False, False, None, None)
     assert cfg.any_enabled() is False
-    assert cfg.enabled_summary() == "alerting=off arkime-tag=off hunt-job=off pcap-upload=off"
+    assert cfg.enabled_summary() == (
+        "alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off"
+    )
     assert cfg.upload_dir is None
 
 
@@ -39,7 +42,9 @@ def test_flags_parse_case_insensitively(monkeypatch):
     assert cfg.hunt_jobs is True
     assert cfg.arkime_tags is False
     assert cfg.any_enabled() is True
-    assert cfg.enabled_summary() == "alerting=on arkime-tag=off hunt-job=on pcap-upload=off"
+    assert cfg.enabled_summary() == (
+        "alerting=on arkime-tag=off hunt-job=on pcap-upload=off arkime-view=off"
+    )
 
 
 def test_audit_file_none_when_empty(monkeypatch):
@@ -53,7 +58,7 @@ def test_audit_file_none_when_empty(monkeypatch):
 def test_is_frozen():
     import dataclasses
 
-    cfg = WriteConfig(False, False, False, False, None, None)
+    cfg = WriteConfig(False, False, False, False, False, None, None)
     try:
         cfg.alerting = True  # type: ignore[misc]
         raised = False

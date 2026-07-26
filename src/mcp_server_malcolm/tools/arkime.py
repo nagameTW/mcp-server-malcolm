@@ -25,6 +25,14 @@ _SESSION_IDS_RE = re.compile(r"[A-Za-z0-9:@._,-]+")
 # declares an oversized Content-Length.
 _PCAP_MAX_MB = 500
 
+# file_hash lands in the URL path (/sessions/bodyhash/<hash>); a body hash is
+# hex only (md5 = 32, sha256 = 64), so restrict to hex and reject anything that
+# could add a path segment or query.
+_HASH_RE = re.compile(r"[A-Fa-f0-9]{16,128}")
+# Extracted-file guard: bodyhash streams the file into memory, same OOM concern
+# as the PCAP download.
+_FILE_MAX_MB = 100
+
 
 def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     """Register Arkime session search and PCAP info tools."""
@@ -314,3 +322,144 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             return f"Arkime connections failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_multiunique(
+        fields: str,
+        expression: str = "",
+        counts: bool = True,
+        time_from: str = "",
+        time_to: str = "",
+    ) -> str:
+        """Unique value combinations across several Arkime fields at once.
+
+        Like arkime_unique but for a tuple of fields — e.g. every distinct
+        (source.ip, destination.port) pair. Good for spotting a host scanning
+        many ports, or a small set of talkers behind a lot of traffic.
+
+        Args:
+            fields: Comma-separated Arkime field names, e.g.
+                "source.ip,destination.port".
+            expression: Optional Arkime filter to scope the data.
+            counts: Include a per-combination count (default true).
+            time_from: Start time, epoch seconds (NOT a dateparser string).
+                Omit = recent-only.
+            time_to: End time, epoch seconds.
+        """
+        if not fields.strip():
+            return "Error: fields is required."
+
+        try:
+            text = await client.arkime_multiunique(
+                fields=fields.strip(),
+                expression=expression.strip(),
+                counts=counts,
+                time_from=time_from,
+                time_to=time_to,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"Arkime multiunique failed: {exc}"
+
+        return text or "(no values)"
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_spigraphhierarchy(
+        fields: str,
+        expression: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> str:
+        """Hierarchical top-N breakdown across fields (a treemap/drill-down).
+
+        Unlike malcolm_aggregate's flat multi-field buckets, this returns a
+        nested hierarchy (level 1 -> its top level-2 values -> ...), matching
+        Arkime's SPI-graph hierarchy view.
+
+        Args:
+            fields: Comma-separated fields defining the hierarchy levels, e.g.
+                "source.ip,destination.ip,destination.port".
+            expression: Optional Arkime filter to scope the data.
+            time_from: Start time, epoch seconds (NOT a dateparser string).
+                Omit = recent-only.
+            time_to: End time, epoch seconds.
+        """
+        if not fields.strip():
+            return "Error: fields is required."
+
+        try:
+            data = await client.arkime_spigraphhierarchy(
+                fields=fields.strip(),
+                expression=expression.strip(),
+                time_from=time_from,
+                time_to=time_to,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"Arkime spigraphhierarchy failed: {exc}"
+
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def arkime_file_by_hash(file_hash: str, url_only: bool = False) -> str:
+        """Extract the transferred file whose content hash matches, across sessions.
+
+        Pivots from one file IOC to the actual bytes: Arkime finds the most
+        recent session carrying a body with this hash, resolves the capture node
+        itself, and returns the file. This tool checks the file-magic and
+        returns metadata only — the raw bytes are never put in the MCP response.
+        The hash comes from a session's http.md5 / http.sha256 field.
+
+        Args:
+            file_hash: The file's content hash, md5 (32 hex) or sha256 (64 hex).
+            url_only: If true, return just the download URL, skip the download.
+        """
+        h = file_hash.strip()
+        if not h:
+            return "Error: file_hash is required."
+        if not _HASH_RE.fullmatch(h):
+            return "Error: invalid file_hash (expected md5/sha256 hex)."
+
+        url = f"{client.base_url}/arkime/api/sessions/bodyhash/{h}"
+        if url_only:
+            return json.dumps(
+                {
+                    "file_hash": h,
+                    "download_url": url,
+                    "note": "Download requires Malcolm authentication (Basic auth).",
+                },
+                indent=2,
+            )
+
+        try:
+            resp = await client.arkime_file_by_hash(h)
+        except Exception as exc:  # noqa: BLE001
+            return f"File extraction failed: {exc}"
+
+        if resp.status_code == 400:
+            return json.dumps({"file_hash": h, "found": False, "note": "No match found."}, indent=2)
+        try:
+            resp.raise_for_status()
+        except Exception as exc:  # noqa: BLE001
+            return f"File extraction failed: {exc}"
+
+        content = resp.content
+        if len(content) > _FILE_MAX_MB * 1024 * 1024:
+            return (
+                f"Error: extracted file exceeds {_FILE_MAX_MB} MB "
+                f"({len(content) / 1024 / 1024:.1f} MB); use url_only to fetch it directly."
+            )
+        return json.dumps(
+            {
+                "file_hash": h,
+                "found": True,
+                "size_bytes": len(content),
+                "magic": content[:4].hex(),
+                "download_url": url,
+            },
+            indent=2,
+        )

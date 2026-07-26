@@ -23,21 +23,31 @@ _READ = {
     "arkime_session_pcap",
     "arkime_session_detail",
     "arkime_unique",
+    "arkime_multiunique",
     "arkime_spigraph",
     "arkime_spiview",
+    "arkime_spigraphhierarchy",
     "arkime_connections",
+    "arkime_file_by_hash",
     "malcolm_related_sessions",
     "malcolm_ping",
     "malcolm_dashboard_export",
 }
-_WRITE = {"malcolm_create_alert", "arkime_add_tags", "arkime_create_hunt", "malcolm_upload_pcap"}
+_WRITE = {
+    "malcolm_create_alert",
+    "arkime_add_tags",
+    "arkime_create_hunt",
+    "malcolm_upload_pcap",
+    "arkime_create_view",
+    "arkime_create_shortcut",
+}
 # Read tool bundled inside the hunt-job write class — registered ONLY when that
 # class is on, so it must be absent by default (not in _READ).
 _BUNDLED_WITH_WRITE = {"arkime_hunt_status"}
 
 
 def _names(monkeypatch, **flags):
-    for k in ("ALERTING", "ARKIME_TAGS", "HUNT_JOBS", "PCAP_UPLOAD"):
+    for k in ("ALERTING", "ARKIME_TAGS", "HUNT_JOBS", "PCAP_UPLOAD", "ARKIME_VIEWS"):
         monkeypatch.delenv(f"MALCOLM_MCP_ENABLE_{k}", raising=False)
     for k, v in flags.items():
         monkeypatch.setenv(f"MALCOLM_MCP_ENABLE_{k}", v)
@@ -66,6 +76,8 @@ def test_each_write_class_enables_independently(monkeypatch):
     hunt = _names(monkeypatch, HUNT_JOBS="true")
     assert "arkime_create_hunt" in hunt and "arkime_hunt_status" in hunt
     assert "malcolm_upload_pcap" in _names(monkeypatch, PCAP_UPLOAD="true")
+    views = _names(monkeypatch, ARKIME_VIEWS="true")
+    assert "arkime_create_view" in views and "arkime_create_shortcut" in views
 
 
 def test_enabling_one_class_does_not_enable_others(monkeypatch):

@@ -15,10 +15,10 @@
 
 不做任何設定時，這個 server 只提供讀取工具。它就是個唯讀客戶端，做的任何事都不會動到 Malcolm 裡的資料。
 
-write 存取分成四個 class，各自有一個環境變數開關，預設全關。沒開的 class 不會被註冊，所以它的工具不會出現在 `list_tools()`，也叫不到。啟動時 server 會印出哪些 class 是開的：
+write 存取分成五個 class，各自有一個環境變數開關，預設全關。沒開的 class 不會被註冊，所以它的工具不會出現在 `list_tools()`，也叫不到。啟動時 server 會印出哪些 class 是開的：
 
 ```
-[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 ```
 
 所有 write 都是「新增」性質。v1 沒有任何工具會刪資料、移除 tag、或動到使用者帳號。這些是刻意不做的（見 [不做的事](#不做的事)）。
@@ -91,9 +91,12 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | `arkime_session_detail` | 抓單一 session 的全部欄位（完整 SPI 文件） |
 | `arkime_session_pcap` | 抓某 session 的 PCAP，回報大小與 magic 驗證結果（只回 metadata，不落地） |
 | `arkime_unique` | 列出某欄位的不重複值，可帶計數 |
+| `arkime_multiunique` | 跨多個欄位的不重複值組合（例如 src.ip + dst.port 配對） |
 | `arkime_spigraph` | 某欄位的 top 值加時序圖 |
 | `arkime_spiview` | 一次看多個欄位的值分布 |
+| `arkime_spigraphhierarchy` | 跨欄位的階層式 top-N 分解（巢狀 drill-down） |
 | `arkime_connections` | 來源/目的連線圖（nodes 與 links） |
+| `arkime_file_by_hash` | 依 md5/sha256 萃取傳輸過的檔案（只回 metadata，不落地） |
 
 ### 關聯與匯出
 
@@ -112,11 +115,13 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
 | hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`、`arkime_hunt_status` | `POST /arkime/api/hunt` |
 | pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /server/php/submit.php` |
+| arkime-view | `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `arkime_create_view`、`arkime_create_shortcut` | `POST /arkime/api/view`、`POST /arkime/api/shortcut` |
 
 - **alerting**：`malcolm_create_alert` 把分析師或 agent 產出的發現，寫成一筆能在 Malcolm dashboard 看到的告警文件。它走 `/mapi/event`，這是 Malcolm 自己設計的 write 端點，也是其他 class 效法的範本。
 - **arkime-tag**：`arkime_add_tags` 幫 session 加 tag，只加不減。移除 tag 需要更高的 Arkime 角色和另一套安全設計，所以延後。
 - **hunt-job**：`arkime_create_hunt` 發動一個跨 PCAP 的封包搜尋（很吃資源，所以先把查詢範圍縮小）。`arkime_hunt_status` 讀取作業進度，跟著這個 class 一起出。
 - **pcap-upload**：`malcolm_upload_pcap` 把本機的封包檔送進 Malcolm 做 ingestion，並在客戶端擋一道大小上限。檔案必須位於 `MALCOLM_MCP_UPLOAD_DIR` 內；若這個 staging 目錄未設定，一律拒絕上傳，讓這個工具不可能被誘導去讀主機上的任意檔案。
+- **arkime-view**：`arkime_create_view` 存一個具名的搜尋 expression，`arkime_create_shortcut` 存一個具名的值清單（IOC 集合），在 expression 裡用 `$name` 引用。兩者都是 additive — 讓 agent 把 hunting 知識留給人類團隊，不刪除也不覆寫。
 
 每個 write 工具都帶著 MCP annotation `readOnlyHint: false` 和 `destructiveHint: false`，讓 MCP 客戶端能在呼叫前套自己的確認步驟。
 
@@ -361,6 +366,7 @@ arkime_create_hunt(
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | 開啟 session 加 tag（只加不減） |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | 開啟 Arkime hunt 建立 + 狀態查詢 |
 | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | 開啟 PCAP 上傳（另需 `MALCOLM_MCP_UPLOAD_DIR`） |
+| `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `false` | 開啟 saved-view + shortcut（值清單）建立 |
 | `MALCOLM_MCP_UPLOAD_DIR` | 未設 | 允許上傳的檔案必須位於這個 staging 目錄內；未設 ⇒ 拒絕上傳 |
 | `MALCOLM_MCP_AUDIT_FILE` | 未設 | write 稽核檔（未設時走 stderr） |
 
@@ -386,12 +392,15 @@ arkime_create_hunt(
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
 | `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
-| `/arkime/api/unique` | GET | `arkime_unique` |
+| `/arkime/api/unique`、`/arkime/api/multiunique` | GET | `arkime_unique`、`arkime_multiunique` |
 | `/arkime/api/spigraph` | GET | `arkime_spigraph` |
 | `/arkime/api/spiview` | GET | `arkime_spiview` |
+| `/arkime/api/spigraphhierarchy` | GET | `arkime_spigraphhierarchy` |
 | `/arkime/api/connections` | GET | `arkime_connections` |
+| `/arkime/api/sessions/bodyhash/<hash>` | GET | `arkime_file_by_hash` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags`（write） |
 | `/arkime/api/hunt`、`/arkime/api/hunts` | POST、GET | `arkime_create_hunt`、`arkime_hunt_status`（write + read） |
+| `/arkime/api/view`、`/arkime/api/shortcut` | POST | `arkime_create_view`、`arkime_create_shortcut`（write） |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |
 
 這些端點路徑和 body 結構是對 Malcolm `26.06.1` 和 Arkime `v6.5.0` 核對過的。兩者版本之間都會漂移，所以若某個 write 工具回傳非預期錯誤，拿你自己的版本重新核對。
