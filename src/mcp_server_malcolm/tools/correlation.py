@@ -43,8 +43,17 @@ def register_correlation_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         queries zeek.uid (the direct connection) and related.zeek.uid (references from
         other log types like files, dns, ssl) in one call. For a plain field query
         without the dual direct/related split, use `malcolm_search` with a zeek.uid
-        filter. Returns a JSON object with separate "direct" and "related" hit lists and
-        a summary count.
+        filter.
+
+        Behavior: runs TWO independent Malcolm searches (one per match kind); `limit`
+        caps EACH side separately, so up to 2×limit sessions come back total. The two
+        searches fail independently — a failure on one side does not abort the other;
+        instead the result carries a `direct_error` or `related_error` string for the
+        side that failed while still returning the side that succeeded (check for those
+        keys). No time filter is applied — both searches use Malcolm's default window.
+        Requires Malcolm access (Basic auth), inherited from the server config. Returns a
+        JSON object with separate "direct" and "related" hit lists plus a "summary" count
+        (and per-side error keys only when a side fails).
         """
         if not uid.strip():
             return "Error: uid is required."

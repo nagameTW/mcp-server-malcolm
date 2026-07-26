@@ -6,7 +6,22 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.3.1] - 2026-07-26
+## [0.3.2] - 2026-07-26
+
+### Changed
+
+- Enriched the `malcolm_related_sessions` and `malcolm_field_profile` tool
+  docstrings to disclose the behavior an agent can't infer from the schema:
+  `malcolm_related_sessions` runs two independent searches (so `limit` caps each
+  side separately, up to 2×limit total) and reports per-side `direct_error` /
+  `related_error` on partial failure; `malcolm_field_profile` has three distinct
+  text outcomes (unknown-field-with-suggestions / known-but-empty / the profile)
+  and its counts honor Malcolm's default recent window. No behavior change —
+  descriptions only.
+
+### Added
+
+- Glama score and card badges in the README (both language versions).
 
 ### Fixed
 
@@ -171,7 +186,8 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.1.0...v0.2.0
