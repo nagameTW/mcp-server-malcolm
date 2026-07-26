@@ -6,7 +6,17 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-07-26
+## [0.3.1] - 2026-07-26
+
+### Fixed
+
+- `arkime_connections` now defaults its `src_field` / `dst_field` to Arkime db
+  field names (`srcIp` / `dstIp`) instead of dotted ECS names (`ip.src` /
+  `ip.dst:port`). Arkime's `/api/connections` resolves these itself and errored
+  with a 500 (an internal `TypeError`) on a dotted name, so the tool failed on
+  its own defaults. Found by a live smoke test against Malcolm 25.12.1; the fix
+  is verified against that server. Pass Arkime db names (`srcIp`, `dstIp`,
+  `dstPort`, `node`) — the docstring and parameter descriptions now say so.
 
 An API-coverage pass (verified against Malcolm's Flask source and the Arkime
 v6.x viewer API) plus findings from a multi-perspective code review (security,
@@ -161,7 +171,8 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nagameTW/mcp-server-malcolm/releases/tag/v0.1.0

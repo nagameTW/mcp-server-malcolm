@@ -176,6 +176,7 @@ async def test_connections_defaults_and_returns_graph():
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_connections", {})
     assert seen["path"] == "/arkime/api/connections"
-    assert seen["src"] == "ip.src"
-    assert seen["dst"] == "ip.dst:port"
+    # Arkime db field names, not dotted ECS names — a dotted name errors in Arkime.
+    assert seen["src"] == "srcIp"
+    assert seen["dst"] == "dstIp"
     assert "nodes" in str(out)

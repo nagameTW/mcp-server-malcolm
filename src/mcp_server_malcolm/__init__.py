@@ -11,7 +11,7 @@ Provides tool access to Malcolm's unified API, including:
 Works with any MCP-compatible agent.
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from mcp_server_malcolm.client import MalcolmClient
 

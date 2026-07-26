@@ -438,13 +438,18 @@ class MalcolmClient:
 
     async def arkime_connections(
         self,
-        src_field: str = "ip.src",
-        dst_field: str = "ip.dst:port",
+        src_field: str = "srcIp",
+        dst_field: str = "dstIp",
         expression: str = "",
         time_from: str = "",
         time_to: str = "",
     ) -> dict[str, Any]:
         """Source/destination connection graph via GET /api/connections.
+
+        srcField/dstField take Arkime *db* field names (srcIp, dstIp, dstPort,
+        node), NOT the dotted ECS names the search tools use — Arkime's viewer
+        resolves them itself and errors (a 500 TypeError inside Arkime) on an
+        unknown db field like "ip.src". Verified live against Malcolm 25.12.1.
 
         Returns {"nodes": [...], "links": [...]} for tracing who talked to whom.
         """
