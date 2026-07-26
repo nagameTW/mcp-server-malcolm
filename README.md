@@ -1,5 +1,7 @@
 # mcp-server-malcolm
 
+<!-- mcp-name: io.github.nagametw/mcp-server-malcolm -->
+
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
@@ -80,6 +82,7 @@ Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearc
 |------|-------------|
 | `malcolm_netbox_lookup` | Look up an IP, device, or network prefix in NetBox |
 | `malcolm_netbox_sites` | List the NetBox site directory (id, name, metadata) |
+| `malcolm_netbox_query` | Read any other NetBox endpoint (services, VLANs, interfaces, VMs, contacts) |
 
 ### Arkime
 
@@ -373,7 +376,7 @@ arkime_create_hunt(
 | `/mapi/opensearch/_cat/indices` | GET | `list_indices` |
 | `/mapi/opensearch/<index>/_mapping` | GET | `index_mapping` |
 | `/mapi/opensearch/_cluster/health` | GET | `cluster_health` |
-| `/mapi/netbox/*` | GET | `malcolm_netbox_lookup` |
+| `/mapi/netbox/*` | GET | `malcolm_netbox_lookup`, `malcolm_netbox_query` |
 | `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert` (write) |
 | `/arkime/api/sessions` | GET | `arkime_sessions` |

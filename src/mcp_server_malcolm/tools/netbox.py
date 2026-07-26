@@ -3,12 +3,26 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from mcp_server_malcolm.client import MalcolmClient
+
+# The path is spliced into /mapi/netbox/<path>. Restrict it to a NetBox REST
+# path shape (app/model segments) so it can't traverse out of the proxy or
+# smuggle a scheme/host: lowercase words + slashes only, no dots, no "..".
+_NETBOX_PATH_RE = re.compile(r"[a-z0-9][a-z0-9/_-]*/?")
+
+
+def _netbox_path_error(path: str) -> str | None:
+    if not path:
+        return "Error: path is required (e.g. 'ipam/services/')."
+    if not _NETBOX_PATH_RE.fullmatch(path) or ".." in path:
+        return f"Error: invalid NetBox path: {path!r} (expected e.g. 'ipam/services/')."
+    return None
 
 
 def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
@@ -87,6 +101,46 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             data = await client.netbox_sites()
         except Exception as exc:
             return f"NetBox sites lookup failed: {exc}"
+
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+    @mcp.tool(
+        annotations={"readOnlyHint": True, "destructiveHint": False},
+    )
+    async def malcolm_netbox_query(path: str, params: str = "{}") -> str:
+        """Query any NetBox REST endpoint via Malcolm (read-only GET).
+
+        The higher-level malcolm_netbox_lookup covers ip/device/prefix; use this
+        for the rest of NetBox that it doesn't surface, e.g.:
+          path="ipam/services/"           params={"port": "443"}   port -> service
+          path="ipam/vlans/"              params={"vid": "100"}
+          path="dcim/interfaces/"         params={"mac_address": "..."}
+          path="virtualization/virtual-machines/"  params={"name": "vm-01"}
+          path="tenancy/contacts/"        params={"name": "..."}   asset owner
+
+        Args:
+            path: NetBox API path (app/model form, e.g. "ipam/services/").
+                No leading slash, no "..", no scheme/host.
+            params: JSON object of query-string filters, e.g. {"port": "443"}.
+        """
+        path = path.strip().lstrip("/")
+        if err := _netbox_path_error(path):
+            return err
+
+        parsed: dict | None = None
+        if params and params.strip() not in ("", "{}", "null"):
+            try:
+                loaded = json.loads(params)
+            except json.JSONDecodeError as exc:
+                return f"Error: invalid JSON in params: {exc}"
+            if not isinstance(loaded, dict):
+                return "Error: params must be a JSON object."
+            parsed = loaded
+
+        try:
+            data = await client.netbox_get(path, params=parsed)
+        except Exception as exc:
+            return f"NetBox query failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 

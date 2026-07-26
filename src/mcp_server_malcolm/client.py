@@ -126,8 +126,14 @@ class MalcolmClient:
         limit: int = 20,
         time_from: str = "",
         time_to: str = "",
+        doctype: str = "",
     ) -> dict[str, Any]:
-        """Search indexed documents via POST /mapi/document."""
+        """Search indexed documents via POST /mapi/document.
+
+        doctype selects the target index server-side: "host"/"beat"* -> the
+        other/beats index, "arkime"/"session"* -> the Arkime sessions index,
+        anything else (or empty) -> the default Malcolm network index.
+        """
         body: dict[str, Any] = {"limit": limit}
         if filters:
             body["filter"] = filters
@@ -135,6 +141,8 @@ class MalcolmClient:
             body["from"] = time_from
         if time_to:
             body["to"] = time_to
+        if doctype:
+            body["doctype"] = doctype
         return await self.post("/mapi/document", body)
 
     async def aggregate(
@@ -144,11 +152,13 @@ class MalcolmClient:
         limit: int = 500,
         time_from: str = "",
         time_to: str = "",
+        doctype: str = "",
     ) -> dict[str, Any]:
         """Aggregate on one or more fields via POST /mapi/agg/<fields>.
 
         Args:
             fields: Comma-separated field names, e.g. "source.ip,destination.ip".
+            doctype: Target index selector (see search()).
         """
         body: dict[str, Any] = {"limit": limit}
         if filters:
@@ -157,6 +167,8 @@ class MalcolmClient:
             body["from"] = time_from
         if time_to:
             body["to"] = time_to
+        if doctype:
+            body["doctype"] = doctype
         return await self.post(f"/mapi/agg/{fields}", body)
 
     # -- OpenSearch DSL (generic; backend-agnostic) ---------------------

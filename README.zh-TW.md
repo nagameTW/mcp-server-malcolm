@@ -80,6 +80,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 |------|------|
 | `malcolm_netbox_lookup` | 查詢 IP、裝置或網段在 NetBox 的資料 |
 | `malcolm_netbox_sites` | 列出 NetBox 站點目錄（id、名稱、metadata） |
+| `malcolm_netbox_query` | 讀取其他 NetBox 端點（服務、VLAN、介面、VM、聯絡人） |
 
 ### Arkime
 
@@ -373,7 +374,7 @@ arkime_create_hunt(
 | `/mapi/opensearch/_cat/indices` | GET | `list_indices` |
 | `/mapi/opensearch/<index>/_mapping` | GET | `index_mapping` |
 | `/mapi/opensearch/_cluster/health` | GET | `cluster_health` |
-| `/mapi/netbox/*` | GET | `malcolm_netbox_lookup` |
+| `/mapi/netbox/*` | GET | `malcolm_netbox_lookup`、`malcolm_netbox_query` |
 | `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert`（write） |
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
