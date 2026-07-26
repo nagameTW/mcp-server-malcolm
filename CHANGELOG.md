@@ -6,10 +6,19 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-26
+
 An API-coverage pass (verified against Malcolm's Flask source and the Arkime
 v6.x viewer API) plus findings from a multi-perspective code review (security,
 Python quality, test coverage). Two of the changes alter default behavior — see
-**Changed**.
+**Changed**, and the migration note below.
+
+> **Upgrading from 0.2.x:** TLS verification is now on by default — if you
+> pointed the server at a self-signed Malcolm with `MALCOLM_SSL_VERIFY="false"`,
+> either keep that (isolated labs only) or, preferably, set it to your Malcolm
+> CA-cert path. And `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` now also requires
+> `MALCOLM_MCP_UPLOAD_DIR` — set it to the staging directory holding uploadable
+> files, or PCAP upload stays refused.
 
 ### Changed
 
@@ -152,6 +161,7 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/nagameTW/mcp-server-malcolm/releases/tag/v0.1.0
