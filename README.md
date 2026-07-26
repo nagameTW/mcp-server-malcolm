@@ -2,6 +2,7 @@
 
 <!-- mcp-name: io.github.nagametw/mcp-server-malcolm -->
 
+[![CI](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml/badge.svg)](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
