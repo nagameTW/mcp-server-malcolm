@@ -6,6 +6,12 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Shortened the `server.json` `description` to fit the MCP Registry's 100-char
+  limit, so the server can be published to the official registry
+  (registry.modelcontextprotocol.io). No effect on the PyPI package.
+
 ## [0.3.2] - 2026-07-26
 
 ### Changed

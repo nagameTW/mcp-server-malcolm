@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.nagametw/mcp-server-malcolm",
-  "description": "The first MCP server for Malcolm, the open-source network traffic analysis suite (Zeek + Suricata + Arkime + OpenSearch + NetBox). Structured threat-hunting access for AI agents: search and aggregate traffic, discover fields, query Suricata alerts, browse Arkime sessions, and resolve NetBox assets. Read-only by default; opt-in, audited write classes.",
+  "description": "MCP server for Malcolm (Zeek/Suricata/Arkime/OpenSearch): threat-hunting access for AI agents",
   "repository": {
     "url": "https://github.com/nagameTW/mcp-server-malcolm",
     "source": "github"
