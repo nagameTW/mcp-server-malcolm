@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+from pydantic import Field
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from mcp_server_malcolm.client import MalcolmClient
+
+# Shared: every NetBox tool here is a read-only GET through Malcolm's proxy.
+_READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 # The path is spliced into /mapi/netbox/<path>. Restrict it to a NetBox REST
 # path shape (app/model segments) so it can't traverse out of the proxy or
@@ -28,24 +33,37 @@ def _netbox_path_error(path: str) -> str | None:
 def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     """Register NetBox asset and network lookup tools."""
 
-    @mcp.tool()
+    @mcp.tool(title="Look up NetBox asset", annotations=_READ)
     async def malcolm_netbox_lookup(
-        ip: str = "",
-        device: str = "",
-        prefix: str = "",
+        ip: Annotated[
+            str,
+            Field(
+                description='IP address to resolve to its NetBox asset, e.g. "192.0.2.77". '
+                "Empty = skip the IP lookup."
+            ),
+        ] = "",
+        device: Annotated[
+            str,
+            Field(
+                description='Device name to search for, e.g. "switch-01". '
+                "Empty = skip the device lookup."
+            ),
+        ] = "",
+        prefix: Annotated[
+            str,
+            Field(
+                description='Network prefix to query, e.g. "192.0.2.0/24". '
+                "Empty = skip the prefix lookup."
+            ),
+        ] = "",
     ) -> str:
-        """Look up asset information from NetBox via Malcolm.
+        """Resolve an IP, device name, or prefix to its NetBox asset (role, site, tenant).
 
-        Provides context about what a device/IP is, what role it has,
-        and which network segment it belongs to. Critical for determining
-        whether observed behavior is normal or anomalous.
-
-        Args:
-            ip: IP address to look up (e.g. "192.0.2.77").
-            device: Device name to search (e.g. "switch-01").
-            prefix: Network prefix to query (e.g. "192.0.2.0/24").
-
-        At least one parameter must be provided.
+        Use this to tell whether observed traffic involves a known asset and where it
+        sits — the fast path for the three common NetBox lookups. For any other NetBox
+        endpoint (services, VLANs, interfaces, VMs, contacts) use `malcolm_netbox_query`;
+        to list sites use `malcolm_netbox_sites`. Pass at least one of ip/device/prefix.
+        Returns a JSON object with a summarized section per lookup you supplied.
         """
         if not any([ip, device, prefix]):
             return "Error: provide at least one of: ip, device, prefix."
@@ -87,15 +105,14 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
 
         return json.dumps(results, indent=2, ensure_ascii=False, default=str)
 
-    @mcp.tool(
-        annotations={"readOnlyHint": True, "destructiveHint": False},
-    )
+    @mcp.tool(title="List NetBox sites", annotations=_READ)
     async def malcolm_netbox_sites() -> str:
-        """List NetBox sites (the site directory) via Malcolm.
+        """List every NetBox site in the site directory via Malcolm.
 
-        Returns each site's id, name, and metadata. Useful for mapping the
-        physical/logical locations NetBox knows about before drilling into a
-        specific device or prefix.
+        Use this to map the physical/logical locations NetBox knows about before
+        drilling into a specific asset. To then resolve a device, IP, or prefix use
+        `malcolm_netbox_lookup`; for any other NetBox endpoint use `malcolm_netbox_query`.
+        Returns the raw NetBox sites response (each site's id, name, and metadata).
         """
         try:
             data = await client.netbox_sites()
@@ -104,24 +121,32 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
-    @mcp.tool(
-        annotations={"readOnlyHint": True, "destructiveHint": False},
-    )
-    async def malcolm_netbox_query(path: str, params: str = "{}") -> str:
-        """Query any NetBox REST endpoint via Malcolm (read-only GET).
+    @mcp.tool(title="Query NetBox endpoint", annotations=_READ)
+    async def malcolm_netbox_query(
+        path: Annotated[
+            str,
+            Field(
+                description='NetBox API path in app/model form, no leading slash, no "..", '
+                'no scheme/host. Examples: "ipam/services/" (port -> service), "ipam/vlans/", '
+                '"dcim/interfaces/", "virtualization/virtual-machines/", "tenancy/contacts/" '
+                "(asset owner)."
+            ),
+        ],
+        params: Annotated[
+            str,
+            Field(
+                description="JSON object of query-string filters for the endpoint, e.g. "
+                '{"port": "443"}, {"vid": "100"}, {"name": "vm-01"}. Empty object = no filters.'
+            ),
+        ] = "{}",
+    ) -> str:
+        """Query any NetBox REST endpoint via Malcolm's read-only GET proxy.
 
-        The higher-level malcolm_netbox_lookup covers ip/device/prefix; use this
-        for the rest of NetBox that it doesn't surface, e.g.:
-          path="ipam/services/"           params={"port": "443"}   port -> service
-          path="ipam/vlans/"              params={"vid": "100"}
-          path="dcim/interfaces/"         params={"mac_address": "..."}
-          path="virtualization/virtual-machines/"  params={"name": "vm-01"}
-          path="tenancy/contacts/"        params={"name": "..."}   asset owner
-
-        Args:
-            path: NetBox API path (app/model form, e.g. "ipam/services/").
-                No leading slash, no "..", no scheme/host.
-            params: JSON object of query-string filters, e.g. {"port": "443"}.
+        Use this as the general escape hatch for NetBox endpoints the shortcuts don't
+        cover (services, VLANs, interfaces, VMs, contacts, ...). For the common
+        ip/device/prefix lookups prefer `malcolm_netbox_lookup`; to list sites use
+        `malcolm_netbox_sites`. The path is validated to a NetBox app/model shape before
+        proxying. Returns the raw NetBox JSON response for the endpoint.
         """
         path = path.strip().lstrip("/")
         if err := _netbox_path_error(path):

@@ -3,34 +3,53 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+from pydantic import Field
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from mcp_server_malcolm.client import MalcolmClient
 
+# Shared: every field tool here reads Malcolm's index metadata, never mutates.
+_READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
+
 
 def register_field_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     """Register field search, value enumeration, and profile tools."""
 
-    @mcp.tool()
+    @mcp.tool(title="Search index fields", annotations=_READ)
     async def malcolm_field_search(
-        keyword: str = "",
-        prefix: str = "",
-        field_type: str = "",
+        keyword: Annotated[
+            str,
+            Field(
+                description='Substring to match anywhere in a field name, e.g. "useragent", '
+                '"signature". Empty = no keyword filter.'
+            ),
+        ] = "",
+        prefix: Annotated[
+            str,
+            Field(
+                description='Field-name prefix to match, e.g. "zeek.dns", "suricata.alert", '
+                '"rule". Empty = no prefix filter.'
+            ),
+        ] = "",
+        field_type: Annotated[
+            str,
+            Field(
+                description='Filter by OpenSearch field type, e.g. "keyword", "ip", "long", '
+                '"date". Empty = any type.'
+            ),
+        ] = "",
     ) -> str:
-        """Search available field names in Malcolm's index.
+        """Discover which field NAMES exist in Malcolm's index, by keyword, prefix, or type.
 
-        Use this tool BEFORE querying to verify field names exist.
-        Malcolm uses NON-STANDARD field names (e.g. http.useragent, NOT http.user_agent).
-
-        Args:
-            keyword: Substring to search in field names (e.g. "useragent", "signature").
-            prefix: Field name prefix (e.g. "zeek.dns", "suricata.alert", "rule").
-            field_type: Filter by type (e.g. "keyword", "ip", "long", "date").
-
-        At least one parameter should be provided. Results sorted alphabetically.
+        Use this first, before any query, to confirm a field name exists — Malcolm uses
+        non-standard names (e.g. http.useragent, NOT http.user_agent). To then see the
+        VALUES a field holds, use `malcolm_field_values`; to see which datasets contain
+        it, use `malcolm_field_profile`. Pass at least one argument. Returns a text list
+        of "name (type)" lines, sorted alphabetically, capped at 100 fields.
         """
         results = await client.search_fields(
             keyword=keyword,
@@ -50,31 +69,46 @@ def register_field_tools(mcp: FastMCP, client: MalcolmClient) -> None:
 
         return "\n".join(lines)
 
-    @mcp.tool()
+    @mcp.tool(title="List field values", annotations=_READ)
     async def malcolm_field_values(
-        field: str,
-        limit: int = 30,
-        filters: str = "{}",
-        time_from: str = "",
-        time_to: str = "",
+        field: Annotated[
+            str,
+            Field(
+                description='Field to enumerate distinct values for, e.g. "event.dataset" -> '
+                '["conn","dns","ssl",...]; "network.protocol" -> ["tcp","udp","icmp"]; '
+                '"suricata.alert.severity" -> [1,2,3]. Confirm the name with malcolm_field_search.'
+            ),
+        ],
+        limit: Annotated[
+            int,
+            Field(
+                description="Max distinct values to return, ordered by document count.",
+                ge=1,
+                le=500,
+            ),
+        ] = 30,
+        filters: Annotated[
+            str,
+            Field(
+                description="Optional JSON filter (Malcolm filter syntax) scoping the "
+                "enumeration. Empty = all documents."
+            ),
+        ] = "{}",
+        time_from: Annotated[
+            str,
+            Field(description="Start time, dateparser format. Empty = Malcolm's recent window."),
+        ] = "",
+        time_to: Annotated[
+            str, Field(description="End time, dateparser format. Empty = now.")
+        ] = "",
     ) -> str:
-        """List distinct values for a field with document counts.
+        """List a single field's distinct VALUES with per-value document counts.
 
-        Use this to discover what values a field actually contains
-        BEFORE using it in a filter. Prevents value hallucination.
-
-        Examples:
-          field="event.dataset"            -> ["conn", "dns", "ssl", "http", "alert", ...]
-          field="network.protocol"         -> ["tcp", "udp", "icmp", ...]
-          field="suricata.alert.severity"  -> [1, 2, 3]
-          field="event.severity_tags"      -> ["Informational", "Warning", ...]
-
-        Args:
-            field: The field to enumerate values for.
-            limit: Maximum number of distinct values to return.
-            filters: Optional JSON filter to scope the enumeration.
-            time_from: Start time.
-            time_to: End time.
+        Use this to see what values a field actually holds before filtering on it, so
+        you don't invent values. To confirm the field NAME exists first, use
+        `malcolm_field_search`; to see which datasets carry the field, use
+        `malcolm_field_profile`. For multi-field or nested bucketing, use
+        `malcolm_aggregate`. Returns a text list of "value (N docs)" lines.
         """
         parsed_filters = None
         if filters and filters.strip() not in ("", "{}", "null"):
@@ -100,21 +134,32 @@ def register_field_tools(mcp: FastMCP, client: MalcolmClient) -> None:
 
         return "\n".join(lines)
 
-    @mcp.tool()
+    @mcp.tool(title="Profile field by dataset", annotations=_READ)
     async def malcolm_field_profile(
-        field: str,
-        time_from: str = "",
-        time_to: str = "",
+        field: Annotated[
+            str,
+            Field(
+                description="Field name to profile across datasets, e.g. "
+                '"zeek.ssl.server_name" (only present in SSL records).'
+            ),
+        ],
+        time_from: Annotated[
+            str,
+            Field(
+                description="Start time, dateparser format. Empty = recent-only; pass a "
+                "range for historical data."
+            ),
+        ] = "",
+        time_to: Annotated[
+            str, Field(description="End time, dateparser format. Empty = now.")
+        ] = "",
     ) -> str:
-        """Show which event.dataset types contain a specific field.
+        """Show which event.dataset types actually contain a given field, with doc counts.
 
-        Helps determine if a field is available for a given data type.
-        For example, zeek.ssl.server_name only exists in SSL records.
-
-        Args:
-            field: The field name to profile.
-            time_from: Start time. Omit = recent-only; pass a range for historical data.
-            time_to: End time.
+        Use this to learn where a field lives (e.g. whether it only appears in SSL or DNS
+        records) before scoping a query. To confirm the field NAME first, use
+        `malcolm_field_search`; to list its distinct VALUES, use `malcolm_field_values`.
+        If the field is unknown, returns close-name suggestions instead of a profile.
         """
         # First check if the field exists at all
         resolution = await client.resolve_field(field)

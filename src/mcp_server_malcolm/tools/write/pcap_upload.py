@@ -16,7 +16,9 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+from pydantic import Field
 
 from mcp_server_malcolm import audit
 
@@ -26,6 +28,15 @@ if TYPE_CHECKING:
     from mcp_server_malcolm.client import MalcolmClient
 
 _CLASS = "pcap-upload"
+
+# Shared: additive write to the external Malcolm server, never idempotent
+# (each call ingests the file's bytes again).
+_WRITE = {
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": True,
+}
 
 
 def _resolve_in_dir(file_path: str, upload_dir: str | None) -> tuple[Path | None, str | None]:
@@ -59,18 +70,38 @@ def register_pcap_upload_tools(
 ) -> None:
     """Register the PCAP upload tool (called only when the class is enabled)."""
 
-    @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
-    async def malcolm_upload_pcap(file_path: str, tags: str = "", max_mb: int = 500) -> str:
-        """Upload a local capture file to Malcolm for ingestion.
+    @mcp.tool(title="Upload PCAP", annotations=_WRITE)
+    async def malcolm_upload_pcap(
+        file_path: Annotated[
+            str,
+            Field(
+                description="Path to a local .pcap/.pcapng (or supported archive). Must resolve "
+                "inside MALCOLM_MCP_UPLOAD_DIR; paths outside it are rejected."
+            ),
+        ],
+        tags: Annotated[
+            str, Field(description="Optional comma-separated tags applied to the ingested data.")
+        ] = "",
+        max_mb: Annotated[
+            int,
+            Field(
+                description="Client-side size guard in megabytes; the whole file is read into "
+                "memory, and the server caps this at 2048.",
+                ge=1,
+            ),
+        ] = 500,
+    ) -> str:
+        """Upload a local capture file to Malcolm for ingestion (POST /upload).
 
-        The file must live inside the server's configured upload staging
-        directory (MALCOLM_MCP_UPLOAD_DIR); paths outside it are rejected.
-
-        Args:
-            file_path: Path to a local .pcap/.pcapng (or supported archive),
-                inside MALCOLM_MCP_UPLOAD_DIR.
-            tags: Optional comma-separated tags applied to the ingested data.
-            max_mb: Client-side size guard in megabytes (default 500).
+        Use this to feed a PCAP into Malcolm so Zeek/Suricata parse it and it
+        becomes searchable via malcolm_search / arkime_sessions. The file must
+        already sit inside the server's staging directory (MALCOLM_MCP_UPLOAD_DIR);
+        files outside it, and all uploads when that variable is unset, are
+        refused — this boundary stops a prompt-injected caller from shipping
+        arbitrary host files off-box. Additive — ingests new data and changes
+        nothing already indexed. The action is audited, and the tool is
+        registered only when the pcap-upload write class is enabled. Returns
+        JSON with the uploaded flag, filename, size, and HTTP status.
         """
         resolved, err = _resolve_in_dir(file_path.strip(), upload_dir)
         if err:

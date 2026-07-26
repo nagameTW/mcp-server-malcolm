@@ -3,30 +3,48 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+from pydantic import Field
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
 
     from mcp_server_malcolm.client import MalcolmClient
 
+# Shared: this tool reads correlated sessions from Malcolm, never mutates.
+_READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
+
 
 def register_correlation_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     """Register session correlation tools."""
 
-    @mcp.tool()
+    @mcp.tool(title="Find related sessions by UID", annotations=_READ)
     async def malcolm_related_sessions(
-        uid: str,
-        limit: int = 50,
+        uid: Annotated[
+            str,
+            Field(
+                description='Zeek connection UID to correlate on, e.g. "CYeji2z7CKmPRGyga". '
+                "Required (non-empty)."
+            ),
+        ],
+        limit: Annotated[
+            int,
+            Field(
+                description="Max sessions to return per side (direct and related counted "
+                "separately).",
+                ge=1,
+            ),
+        ] = 50,
     ) -> str:
-        """Find all sessions related to a Zeek UID.
+        """Correlate one Zeek UID across sessions via both direct and cross-reference matches.
 
-        Searches both zeek.uid (direct match) and related.zeek.uid
-        (cross-reference from other log types like files, dns, ssl).
-
-        Args:
-            uid: Zeek connection UID (e.g. "CYeji2z7CKmPRGyga").
-            limit: Maximum related sessions to return.
+        Use this to pivot from a single connection UID to everything tied to it: it
+        queries zeek.uid (the direct connection) and related.zeek.uid (references from
+        other log types like files, dns, ssl) in one call. For a plain field query
+        without the dual direct/related split, use `malcolm_search` with a zeek.uid
+        filter. Returns a JSON object with separate "direct" and "related" hit lists and
+        a summary count.
         """
         if not uid.strip():
             return "Error: uid is required."

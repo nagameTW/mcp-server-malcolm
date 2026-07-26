@@ -13,7 +13,9 @@ first (see MalcolmClient._arkime_token_post). Neither deletes or overwrites.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+from pydantic import Field
 
 from mcp_server_malcolm.tools.write._common import run_write
 
@@ -25,20 +27,37 @@ if TYPE_CHECKING:
 _CLASS = "arkime-view"
 _SHORTCUT_TYPES = ("string", "number", "ip")
 
+# Shared: additive write to the external Arkime server, never idempotent
+# (each call creates a new view/shortcut).
+_WRITE = {
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": True,
+}
+
 
 def register_arkime_view_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
     """Register saved-view + shortcut create tools (called only when enabled)."""
 
-    @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
-    async def arkime_create_view(name: str, expression: str) -> str:
-        """Save an Arkime search view (a named, reusable expression) — additive.
+    @mcp.tool(title="Save Arkime view", annotations=_WRITE)
+    async def arkime_create_view(
+        name: Annotated[
+            str, Field(description="View name; Arkime keeps only [-a-zA-Z0-9_] server-side.")
+        ],
+        expression: Annotated[
+            str, Field(description="The Arkime search expression to save under this view.")
+        ],
+    ) -> str:
+        """Save an Arkime search view — a named, reusable expression (POST /arkime/api/view).
 
-        Persists a hunt query so the human team can rerun it from the Arkime UI.
-        Creates a new view; changes nothing existing.
-
-        Args:
-            name: View name (Arkime keeps only [-a-zA-Z0-9_]).
-            expression: The Arkime search expression to save.
+        Use this to persist a hunt query so the human team can rerun it from the
+        Arkime UI. To save a reusable value list (IOC set) instead, use
+        arkime_create_shortcut; to actually run a payload search now, use
+        arkime_create_hunt. Additive — creates a new view and changes nothing
+        existing (calling twice with the same name creates a second view). The
+        action is audited, and the tool is registered only when the arkime-view
+        write class is enabled. Returns the raw Arkime response.
         """
         if not name.strip():
             return "Error: name is required."
@@ -60,25 +79,35 @@ def register_arkime_view_tools(mcp: FastMCP, client: MalcolmClient, audit_file: 
             return f"View creation failed: {err}"
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
-    @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
+    @mcp.tool(title="Create Arkime shortcut", annotations=_WRITE)
     async def arkime_create_shortcut(
-        name: str,
-        value: str,
-        shortcut_type: str = "string",
-        description: str = "",
+        name: Annotated[
+            str,
+            Field(
+                description="Shortcut name; Arkime keeps only [-a-zA-Z0-9_] server-side. "
+                "Referenced in expressions as $name."
+            ),
+        ],
+        value: Annotated[
+            str, Field(description="The values making up the list, comma- or newline-separated.")
+        ],
+        shortcut_type: Annotated[
+            str,
+            Field(description='Value type; one of "string", "number", "ip".'),
+        ] = "string",
+        description: Annotated[
+            str, Field(description="Optional free-text description of the shortcut.")
+        ] = "",
     ) -> str:
-        """Create an Arkime shortcut (a named value list / IOC set) — additive.
+        """Create an Arkime shortcut — a named value list / IOC set (POST /arkime/api/shortcut).
 
-        Stores a reusable list of values (IPs, hostnames, hashes) that can be
-        referenced in any Arkime expression as $<name>, e.g. ip == $c2_ips.
-        Creates a new shortcut; changes nothing existing.
-
-        Args:
-            name: Shortcut name (Arkime keeps only [-a-zA-Z0-9_]); referenced as
-                $name in expressions.
-            value: The values, comma- or newline-separated.
-            shortcut_type: One of "string", "number", "ip" (default "string").
-            description: Optional free-text description.
+        Use this to store a reusable list of values (IPs, hostnames, hashes)
+        that any Arkime expression can reference as $<name>, e.g. ip == $c2_ips.
+        To save a whole search expression instead, use arkime_create_view.
+        Additive — creates a new shortcut and changes nothing existing (calling
+        twice with the same name creates a second shortcut). The action is
+        audited, and the tool is registered only when the arkime-view write
+        class is enabled. Returns the raw Arkime response.
         """
         if not name.strip():
             return "Error: name is required."

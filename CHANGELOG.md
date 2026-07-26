@@ -11,6 +11,18 @@ v6.x viewer API) plus findings from a multi-perspective code review (security,
 Python quality, test coverage). Two of the changes alter default behavior — see
 **Changed**.
 
+### Changed
+
+- Every tool definition reworked for LLM/agent legibility (and Glama's TDQS
+  quality score): a human `title` and full MCP annotations (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`) on all 36 tools, a
+  description on every one of the ~110 parameters (via `Annotated[…, Field]`,
+  since this FastMCP release doesn't read `Args:` docstrings into the schema),
+  and docstrings rewritten to state each tool's purpose, when to use it versus
+  its siblings, and what it returns. No tool behavior changed. A new
+  `test_tool_quality.py` guards these properties so a future tool can't
+  regress them.
+
 ### Added
 
 - New read tools closing Arkime coverage gaps: `arkime_multiunique` (unique value

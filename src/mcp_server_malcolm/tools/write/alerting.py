@@ -8,7 +8,9 @@ This is the template the other write classes follow.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Annotated, Any
+
+from pydantic import Field
 
 from mcp_server_malcolm.tools.write._common import run_write
 
@@ -19,30 +21,52 @@ if TYPE_CHECKING:
 
 _CLASS = "alerting"
 
+# Shared: additive write to the external Malcolm server, never idempotent
+# (each call indexes a new alert document).
+_WRITE = {
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": True,
+}
+
 
 def register_alerting_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
     """Register the alerting write tool (called only when the class is enabled)."""
 
-    @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
+    @mcp.tool(title="Create Malcolm alert", annotations=_WRITE)
     async def malcolm_create_alert(
-        title: str,
-        severity: int,
-        description: str = "",
-        source_ip: str = "",
-        dest_ip: str = "",
+        title: Annotated[
+            str,
+            Field(description="Short alert name; becomes trigger.name / rule.name in Malcolm."),
+        ],
+        severity: Annotated[
+            int,
+            Field(
+                description="Severity 1 (highest) .. 4 (lowest); Malcolm maps this to risk_score. "
+                "Must be 1, 2, 3, or 4.",
+            ),
+        ],
+        description: Annotated[
+            str, Field(description="Free-text detail; stored as event.reason.")
+        ] = "",
+        source_ip: Annotated[
+            str, Field(description="Optional related source IP (stored under related).")
+        ] = "",
+        dest_ip: Annotated[
+            str, Field(description="Optional related destination IP (stored under related).")
+        ] = "",
     ) -> str:
-        """Create a Malcolm alert document (POST /mapi/event).
+        """Create a Malcolm alert document from an analyst/agent finding (POST /mapi/event).
 
-        Indexes an analyst/agent-generated finding as an alert visible in
-        Malcolm's dashboards. Additive — creates a new document, changes
-        nothing existing.
-
-        Args:
-            title: Short alert name (becomes trigger.name / rule.name).
-            severity: 1 (highest) .. 4 (lowest) — Malcolm maps this to risk_score.
-            description: Free-text detail (stored under event fields).
-            source_ip: Optional related source IP.
-            dest_ip: Optional related destination IP.
+        Use this to record a hunting conclusion as an alert that shows up in
+        Malcolm's dashboards alongside Suricata alerts. This is the only write
+        tool that mints a Malcolm-native event; to persist a reusable search
+        instead use arkime_create_view, or to tag sessions use arkime_add_tags.
+        Additive — indexes a new document and changes nothing that already
+        exists (calling twice creates two alerts). The action is audited, and
+        the tool is registered only when the alerting write class is enabled.
+        Returns JSON with the created flag and the raw server result.
         """
         if not title.strip():
             return "Error: title is required."

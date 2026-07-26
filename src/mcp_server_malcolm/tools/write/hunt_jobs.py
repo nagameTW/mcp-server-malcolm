@@ -9,7 +9,9 @@ Reading hunt status (GET /arkime/api/hunts) ships with this class but is a read.
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
+
+from pydantic import Field
 
 from mcp_server_malcolm.tools.write._common import run_write
 
@@ -21,43 +23,70 @@ if TYPE_CHECKING:
 _CLASS = "hunt-job"
 _SEARCH_TYPES = ("ascii", "asciicase", "hex", "regex", "hexregex")
 
+# Shared: additive write to the external Arkime server, never idempotent
+# (each call queues a new hunt job).
+_WRITE = {
+    "readOnlyHint": False,
+    "destructiveHint": False,
+    "idempotentHint": False,
+    "openWorldHint": True,
+}
+# The status tool only reads Arkime, never mutates.
+_READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
+
 
 def register_hunt_job_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
     """Register hunt create (write) + status (read). Called only when enabled."""
 
-    @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
+    @mcp.tool(title="Create hunt job", annotations=_WRITE)
     async def arkime_create_hunt(
-        name: str,
-        search: str,
-        search_type: str,
-        total_sessions: int,
-        start_time: int,
-        stop_time: int,
-        expression: str,
-        packet_type: str = "raw",
-        size: int = 50,
-        src: bool = True,
-        dst: bool = True,
+        name: Annotated[
+            str, Field(description="Hunt name; Arkime keeps only [-a-zA-Z0-9_: ] server-side.")
+        ],
+        search: Annotated[
+            str, Field(description="The bytes/text/regex to search for inside packet payloads.")
+        ],
+        search_type: Annotated[
+            str,
+            Field(
+                description="How to interpret search; one of ascii, asciicase, hex, regex, "
+                "hexregex."
+            ),
+        ],
+        total_sessions: Annotated[
+            int,
+            Field(
+                description="Number of sessions the expression + window match; bounds the scope. "
+                "Must be > 0. Get it from count / arkime_sessions first.",
+            ),
+        ],
+        start_time: Annotated[
+            int,
+            Field(description="Query window start as epoch seconds (NOT a dateparser string)."),
+        ],
+        stop_time: Annotated[int, Field(description="Query window stop as epoch seconds.")],
+        expression: Annotated[
+            str, Field(description="Arkime expression scoping which sessions to hunt.")
+        ],
+        packet_type: Annotated[
+            str, Field(description='Packet stream to scan: "raw" or "reassembled".')
+        ] = "raw",
+        size: Annotated[int, Field(description="Max packets to examine per session.", ge=1)] = 50,
+        src: Annotated[bool, Field(description="Search source-side packets.")] = True,
+        dst: Annotated[bool, Field(description="Search destination-side packets.")] = True,
     ) -> str:
-        """Create an Arkime hunt (cross-PCAP packet search) — expensive, additive.
+        """Queue an Arkime hunt job that re-scans stored PCAP for a byte/regex pattern.
 
-        Re-scans raw PCAP on capture nodes for a byte/regex pattern — costly, so
-        scope it tightly. First run count (or arkime_sessions) with the same
-        expression + time window to get total_sessions and confirm the scope is
-        small before creating the hunt. Track progress with arkime_hunt_status.
-
-        Args:
-            name: Hunt name (Arkime keeps only [-a-zA-Z0-9_: ]).
-            search: The bytes/text/regex to search for inside packets.
-            search_type: one of ascii, asciicase, hex, regex, hexregex.
-            total_sessions: Number of sessions the query matches (bound the scope).
-            start_time: Query window start, epoch seconds (NOT a dateparser string).
-            stop_time: Query window stop, epoch seconds.
-            expression: Arkime expression scoping which sessions to hunt.
-            packet_type: "raw" or "reassembled".
-            size: Max packets to examine per session.
-            src: Search source packets.
-            dst: Search destination packets.
+        Use this only when indexed session metadata can't answer the question
+        and you must look inside packet payloads. It is expensive: capture nodes
+        re-read raw PCAP, so scope it tightly. Before creating one, run count or
+        arkime_sessions with the same expression + time window to size it and
+        set total_sessions. To tag sessions you already found instead, use
+        arkime_add_tags; to save a metadata search, use arkime_create_view.
+        Additive — queues a new job and changes nothing existing (calling twice
+        queues two hunts). The action is audited, and the tool is registered
+        only when the hunt-job write class is enabled. Track progress with
+        arkime_hunt_status. Returns the raw Arkime response.
         """
         if not name.strip():
             return "Error: name is required."
@@ -106,16 +135,24 @@ def register_hunt_job_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str
             return f"Hunt creation failed: {err}"
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
-    @mcp.tool(annotations={"readOnlyHint": True, "destructiveHint": False})
-    async def arkime_hunt_status(active_only: bool = True, limit: int = 50) -> str:
-        """List Arkime hunt jobs and their status (READ).
+    @mcp.tool(title="List hunt jobs", annotations=_READ)
+    async def arkime_hunt_status(
+        active_only: Annotated[
+            bool,
+            Field(
+                description="If true, show queued/running/paused jobs; if false, finished "
+                "(history) jobs."
+            ),
+        ] = True,
+        limit: Annotated[int, Field(description="Max hunts to return.", ge=1)] = 50,
+    ) -> str:
+        """List Arkime hunt jobs and their progress/status (read-only).
 
-        Note: this read tool is only registered when the hunt-job write class is
-        enabled — if writes are off, hunt status is not available either.
-
-        Args:
-            active_only: If true, show queued/running/paused; if false, finished jobs.
-            limit: Max hunts to return.
+        Use this to check on hunts created with arkime_create_hunt — poll it to
+        see when a job finishes and how many sessions matched. Read-only: it
+        never creates or changes a hunt. This tool ships with the hunt-job write
+        class, so if that class is disabled hunt status is unavailable too.
+        Returns the raw Arkime hunts response.
         """
         try:
             data = await client.arkime_hunts(length=limit, history=not active_only)
