@@ -359,12 +359,18 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     async def arkime_connections(
         src_field: Annotated[
             str,
-            Field(description='Arkime field for graph source nodes (default "ip.src").'),
-        ] = "ip.src",
+            Field(
+                description="Arkime DB field for source nodes (default srcIp). Use an Arkime db "
+                "name (srcIp, dstIp, dstPort, node) — NOT a dotted ECS name like ip.src."
+            ),
+        ] = "srcIp",
         dst_field: Annotated[
             str,
-            Field(description='Arkime field for graph destination nodes (default "ip.dst:port").'),
-        ] = "ip.dst:port",
+            Field(
+                description="Arkime DB field for destination nodes (default dstIp; use dstPort to "
+                "graph by port). Arkime db name only, NOT a dotted ECS name."
+            ),
+        ] = "dstIp",
         expression: Annotated[
             str,
             Field(
@@ -387,16 +393,18 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         """Build a source/destination connection graph of who talked to whom.
 
         Returns nodes and links between two fields — useful for tracing lateral
-        movement or mapping which hosts a suspect IP communicated with. For
-        distinct field-tuple pairs as text rather than a graph use
+        movement or mapping which hosts a suspect IP communicated with. NOTE the
+        src/dst fields take Arkime *db* names (srcIp, dstIp, dstPort, node), not
+        the dotted ECS names the other tools use — a dotted name errors inside
+        Arkime. For distinct field-tuple pairs as text rather than a graph use
         arkime_multiunique; for a nested top-N hierarchy use
         arkime_spigraphhierarchy. Returns the raw Arkime connections response
         (nodes and links).
         """
         try:
             data = await client.arkime_connections(
-                src_field=src_field.strip() or "ip.src",
-                dst_field=dst_field.strip() or "ip.dst:port",
+                src_field=src_field.strip() or "srcIp",
+                dst_field=dst_field.strip() or "dstIp",
                 expression=expression.strip(),
                 time_from=time_from,
                 time_to=time_to,
