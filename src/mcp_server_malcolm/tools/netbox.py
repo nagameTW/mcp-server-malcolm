@@ -60,7 +60,7 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 )
                 entries = data.get("results", []) if isinstance(data, dict) else []
                 results["ip_lookup"] = _summarize_ip_results(entries, ip)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 results["ip_error"] = f"NetBox IP lookup failed: {exc}"
 
         if device:
@@ -71,7 +71,7 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 )
                 entries = data.get("results", []) if isinstance(data, dict) else []
                 results["device_lookup"] = _summarize_device_results(entries, device)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 results["device_error"] = f"NetBox device lookup failed: {exc}"
 
         if prefix:
@@ -82,7 +82,7 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 )
                 entries = data.get("results", []) if isinstance(data, dict) else []
                 results["prefix_lookup"] = _summarize_prefix_results(entries, prefix)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 results["prefix_error"] = f"NetBox prefix lookup failed: {exc}"
 
         return json.dumps(results, indent=2, ensure_ascii=False, default=str)
@@ -99,7 +99,7 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         """
         try:
             data = await client.netbox_sites()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"NetBox sites lookup failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
@@ -139,7 +139,7 @@ def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
 
         try:
             data = await client.netbox_get(path, params=parsed)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"NetBox query failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)

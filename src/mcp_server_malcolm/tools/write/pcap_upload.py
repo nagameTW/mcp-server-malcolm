@@ -4,12 +4,18 @@ FilePond multipart upload of a capture file for ingestion. The upload endpoint
 is one of two routes Malcolm's own read-only mode removes entirely, so this is
 a genuine write. Server-side: extension denylist + a downstream libmagic check
 route accepted types; everything else is deleted.
+
+file_path is confined to MALCOLM_MCP_UPLOAD_DIR: the tool reads a local file and
+ships its bytes off-host, so without a staging boundary a prompt-injected caller
+could exfiltrate any file the process can read (~/.ssh/id_rsa, ~/.aws/...). If
+the dir is unset, uploads are refused rather than allowed anywhere.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from mcp_server_malcolm import audit
@@ -22,36 +28,66 @@ if TYPE_CHECKING:
 _CLASS = "pcap-upload"
 
 
-def register_pcap_upload_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
+def _resolve_in_dir(file_path: str, upload_dir: str | None) -> tuple[Path | None, str | None]:
+    """Resolve file_path and confirm it sits inside upload_dir.
+
+    Returns (path, None) when the file is valid and contained, or
+    (None, error_message) otherwise. Symlinks are resolved before the
+    containment check so a link inside the dir can't point outside it.
+    """
+    if not file_path:
+        return None, "Error: file_path is required."
+    if not upload_dir:
+        return None, (
+            "Error: PCAP upload is disabled — set MALCOLM_MCP_UPLOAD_DIR to a "
+            "staging directory that holds the files allowed for upload."
+        )
+    base = Path(upload_dir).resolve()
+    resolved = Path(file_path).resolve()
+    if not resolved.is_relative_to(base):
+        return None, f"Error: file_path must be inside MALCOLM_MCP_UPLOAD_DIR ({base})."
+    if not resolved.is_file():
+        return None, f"Error: file not found: {resolved}"
+    return resolved, None
+
+
+def register_pcap_upload_tools(
+    mcp: FastMCP,
+    client: MalcolmClient,
+    audit_file: str | None,
+    upload_dir: str | None = None,
+) -> None:
     """Register the PCAP upload tool (called only when the class is enabled)."""
 
     @mcp.tool(annotations={"readOnlyHint": False, "destructiveHint": False})
     async def malcolm_upload_pcap(file_path: str, tags: str = "", max_mb: int = 500) -> str:
         """Upload a local capture file to Malcolm for ingestion.
 
+        The file must live inside the server's configured upload staging
+        directory (MALCOLM_MCP_UPLOAD_DIR); paths outside it are rejected.
+
         Args:
-            file_path: Path to a local .pcap/.pcapng (or supported archive).
+            file_path: Path to a local .pcap/.pcapng (or supported archive),
+                inside MALCOLM_MCP_UPLOAD_DIR.
             tags: Optional comma-separated tags applied to the ingested data.
             max_mb: Client-side size guard in megabytes (default 500).
         """
-        path = file_path.strip()
-        if not path:
-            return "Error: file_path is required."
-        if not os.path.isfile(path):
-            return f"Error: file not found: {path}"
+        resolved, err = _resolve_in_dir(file_path.strip(), upload_dir)
+        if err:
+            return err
 
         # Hard ceiling so a caller-supplied max_mb can't defeat the guard and OOM
         # (the whole file is read into memory before the multipart POST).
         max_mb = min(max_mb, 2048)
-        filename = os.path.basename(path)
+        filename = resolved.name
         target = f"file={filename}"
         params_summary: dict[str, Any] = {"tags": tags}
         try:
-            size = os.path.getsize(path)
+            size = os.path.getsize(resolved)
             if size > max_mb * 1024 * 1024:
                 return f"Error: file exceeds max_mb={max_mb} (size is {size / 1024 / 1024:.1f} MB)."
             params_summary["size_bytes"] = size
-            with open(path, "rb") as fh:
+            with open(resolved, "rb") as fh:
                 content = fh.read()
             resp = await client._write_upload_pcap(filename, content, tags=tags)
         except Exception as exc:  # noqa: BLE001

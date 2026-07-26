@@ -28,12 +28,12 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
 
         try:
             ready_data = await client.ready()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             errors.append(f"ready check failed: {exc}")
 
         try:
             version_data = await client.version()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             errors.append(f"version check failed: {exc}")
 
         result = {}
@@ -84,7 +84,7 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             stats = await client.ingest_stats()
             result["sensors"] = stats.get("sources", {})
             result["latest_age_seconds"] = stats.get("latest_ingest_age_seconds")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             result["ingest_error"] = str(exc)
 
         try:
@@ -96,7 +96,7 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             )
             result["datasets"] = {b["key"]: b["doc_count"] for b in buckets if "key" in b}
             result["total_documents"] = sum(b.get("doc_count", 0) for b in buckets)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             result["dataset_error"] = str(exc)
 
         try:
@@ -105,7 +105,7 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             if indices:
                 result["index_count"] = len(indices)
                 result["index_pattern"] = idx_data.get("malcolm_network_index_pattern", "unknown")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             result["index_error"] = str(exc)
 
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
@@ -115,7 +115,7 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         """Quick liveness check of the Malcolm API (GET /mapi/ping)."""
         try:
             data = await client.ping()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"ping failed: {exc}"
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -131,6 +131,6 @@ def register_health_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             return "Error: dashboard_id is required."
         try:
             data = await client.dashboard_export(did)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"dashboard export failed: {exc}"
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)

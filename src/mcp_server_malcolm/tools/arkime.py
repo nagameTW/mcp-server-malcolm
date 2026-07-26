@@ -13,10 +13,17 @@ if TYPE_CHECKING:
 
 # session_id is spliced into an Arkime expression (id==<sid>); keep it to
 # Arkime's id charset so it can't inject operators/spaces that widen the query.
+# The charset admits "." for real ids (3@240425-x.123); callers also reject
+# ".." so a bare "session/.." can't traverse up out of the API prefix.
 _SESSION_ID_RE = re.compile(r"[A-Za-z0-9:@._-]+")
 # sessions.pcap takes a comma-separated ids= query param, so allow commas here
 # (never used for a path segment or expression, so a comma is safe).
 _SESSION_IDS_RE = re.compile(r"[A-Za-z0-9:@._,-]+")
+
+# Cap the in-memory PCAP download: the whole body is read into RAM, so a huge
+# (or many-session) fetch could OOM. Refuse before reading when the server
+# declares an oversized Content-Length.
+_PCAP_MAX_MB = 500
 
 
 def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
@@ -63,7 +70,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 time_from=time_from,
                 time_to=time_to,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"Arkime search failed: {exc}"
 
         sessions = data.get("data", [])
@@ -99,7 +106,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         sid = session_id.strip()
         if not sid:
             return "Error: session_id is required."
-        if not _SESSION_IDS_RE.fullmatch(sid):
+        if not _SESSION_IDS_RE.fullmatch(sid) or ".." in sid:
             return "Error: invalid session_id (expected Arkime session id(s))."
 
         url = f"{client.base_url}/arkime/api/sessions.pcap?ids={sid}"
@@ -114,8 +121,8 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             )
 
         try:
-            content = await client.arkime_session_pcap(sid)
-        except Exception as exc:
+            content = await client.arkime_session_pcap(sid, max_bytes=_PCAP_MAX_MB * 1024 * 1024)
+        except Exception as exc:  # noqa: BLE001
             return f"PCAP download failed: {exc}"
 
         magic = content[:4]
@@ -155,12 +162,12 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         sid = session_id.strip()
         if not sid:
             return "Error: session_id is required."
-        if not _SESSION_ID_RE.fullmatch(sid):
+        if not _SESSION_ID_RE.fullmatch(sid) or ".." in sid:
             return "Error: invalid session_id (expected an Arkime session id)."
 
         try:
             data = await client.arkime_session_detail(sid)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"Arkime session detail failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
@@ -192,7 +199,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 field=field.strip(),
                 counts=counts,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"Arkime unique failed: {exc}"
 
         return text or "(no values)"
@@ -230,7 +237,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 time_from=time_from,
                 time_to=time_to,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"Arkime spigraph failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
@@ -267,7 +274,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 time_from=time_from,
                 time_to=time_to,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"Arkime spiview failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
@@ -303,7 +310,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 time_from=time_from,
                 time_to=time_to,
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             return f"Arkime connections failed: {exc}"
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)

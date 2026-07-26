@@ -7,13 +7,13 @@ Configuration via environment variables:
     MALCOLM_URL         Base URL (default: https://localhost)
     MALCOLM_USERNAME    Basic auth user (default: admin)
     MALCOLM_PASSWORD    Basic auth password (default: admin)
-    MALCOLM_SSL_VERIFY  Verify TLS certs (default: false)
+    MALCOLM_SSL_VERIFY  Verify TLS certs (default: true; "false" or a CA path)
     MALCOLM_TIMEOUT     Request timeout seconds (default: 30)
 """
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 import os
 from difflib import get_close_matches
@@ -25,13 +25,18 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_ssl_verify(raw: str) -> bool | str:
-    """Parse MALCOLM_SSL_VERIFY: "true"/"false" → bool, anything else → CA path."""
+    """Parse MALCOLM_SSL_VERIFY: "true"/"false" → bool, anything else → CA path.
+
+    Verification is ON by default (empty/unset → True): the secure default must
+    not silently ship credentials over an unauthenticated channel. A self-signed
+    Malcolm deployment should point this at its CA-bundle path, not "false".
+    """
     val = raw.strip()
     low = val.lower()
-    if low == "true":
-        return True
-    if low == "false" or not val:
+    if low == "false":
         return False
+    if low == "true" or not val:
+        return True
     return val  # treat as a CA-bundle path for httpx verify=
 
 
@@ -47,7 +52,7 @@ class MalcolmClient:
         base_url: str = "https://localhost",
         username: str = "admin",
         password: str = "admin",
-        ssl_verify: bool | str = False,
+        ssl_verify: bool | str = True,
         timeout: float = 30.0,
     ) -> None:
         self._base_url = base_url.rstrip("/")
@@ -55,6 +60,7 @@ class MalcolmClient:
         self._ssl_verify = ssl_verify
         self._timeout = timeout
         self._http: httpx.AsyncClient | None = None
+        self._http_lock = asyncio.Lock()
         self._field_cache: dict[str, str] | None = None
 
     @property
@@ -69,30 +75,35 @@ class MalcolmClient:
         MALCOLM_SSL_VERIFY accepts "true"/"false" (case-insensitive) or a path
         to a CA bundle — anything that is not "true"/"false" is passed through
         to httpx's verify= as a CA path, so verification is never silently
-        disabled when an operator supplies a real bundle.
+        disabled when an operator supplies a real bundle. Unset defaults to
+        "true": the secure default never ships credentials over an unverified
+        channel. For a self-signed Malcolm, set this to its CA-cert path.
         """
         return cls(
             base_url=os.environ.get("MALCOLM_URL", "https://localhost"),
             username=os.environ.get("MALCOLM_USERNAME", "admin"),
             password=os.environ.get("MALCOLM_PASSWORD", "admin"),
-            ssl_verify=_parse_ssl_verify(os.environ.get("MALCOLM_SSL_VERIFY", "false")),
+            ssl_verify=_parse_ssl_verify(os.environ.get("MALCOLM_SSL_VERIFY", "true")),
             timeout=float(os.environ.get("MALCOLM_TIMEOUT", "30")),
         )
 
     # -- HTTP primitives ------------------------------------------------
 
     async def _client(self) -> httpx.AsyncClient:
-        if self._http is None or self._http.is_closed:
-            self._http = httpx.AsyncClient(
-                base_url=self._base_url,
-                auth=self._auth,
-                verify=self._ssl_verify,
-                # Short connect budget: a dead/unreachable host must fail in
-                # seconds, not hang the full read timeout on every call.
-                timeout=httpx.Timeout(self._timeout, connect=5.0),
-                follow_redirects=True,
-            )
-        return self._http
+        # Lock the check-and-create so two racing coroutines can't each build a
+        # client and leak the first one's connection pool (unclosed sockets).
+        async with self._http_lock:
+            if self._http is None or self._http.is_closed:
+                self._http = httpx.AsyncClient(
+                    base_url=self._base_url,
+                    auth=self._auth,
+                    verify=self._ssl_verify,
+                    # Short connect budget: a dead/unreachable host must fail in
+                    # seconds, not hang the full read timeout on every call.
+                    timeout=httpx.Timeout(self._timeout, connect=5.0),
+                    follow_redirects=True,
+                )
+            return self._http
 
     async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """HTTP GET, returns parsed JSON."""
@@ -324,7 +335,7 @@ class MalcolmClient:
             params["stopTime"] = time_to
         return await self.get("/arkime/api/sessions", params=params)
 
-    async def arkime_session_pcap(self, session_id: str) -> bytes:
+    async def arkime_session_pcap(self, session_id: str, max_bytes: int = 0) -> bytes:
         """Download PCAP bytes for a single Arkime session.
 
         Uses GET /arkime/api/sessions.pcap?ids=<id> (the id from
@@ -332,13 +343,33 @@ class MalcolmClient:
         Verified live against Malcolm 25.12.1 — the expression=id==<id> form
         returns 404 "no sessions found", and there is no
         /arkime/api/session/<id>/pcap route.
+
+        Args:
+            session_id: One or more comma-separated Arkime session ids.
+            max_bytes: Refuse a download larger than this (0 = no cap). The body
+                is streamed so an oversized response is aborted before it is all
+                read into memory.
+
+        Raises:
+            ValueError: the response exceeds max_bytes.
         """
-        resp = await self.get_raw(
-            "/arkime/api/sessions.pcap",
-            params={"ids": session_id},
-        )
-        resp.raise_for_status()
-        return resp.content
+        c = await self._client()
+        async with c.stream("GET", "/arkime/api/sessions.pcap", params={"ids": session_id}) as resp:
+            resp.raise_for_status()
+            if max_bytes:
+                declared = resp.headers.get("content-length")
+                if declared is not None and int(declared) > max_bytes:
+                    raise ValueError(
+                        f"PCAP too large: {int(declared)} bytes exceeds cap {max_bytes}"
+                    )
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in resp.aiter_bytes():
+                total += len(chunk)
+                if max_bytes and total > max_bytes:
+                    raise ValueError(f"PCAP exceeds cap {max_bytes} bytes")
+                chunks.append(chunk)
+            return b"".join(chunks)
 
     async def arkime_hunts(self, length: int = 50, history: bool = False) -> dict[str, Any]:
         """List Arkime hunt jobs (READ). Ships with the hunt-job write class."""
@@ -374,18 +405,6 @@ class MalcolmClient:
         resp.raise_for_status()
         return resp.text
 
-    @staticmethod
-    def _arkime_query(expression: str, time_from: str, time_to: str) -> dict[str, Any]:
-        """Standard Arkime SessionsQuery params (expression + time window)."""
-        params: dict[str, Any] = {}
-        if expression:
-            params["expression"] = expression
-        if time_from:
-            params["startTime"] = time_from
-        if time_to:
-            params["stopTime"] = time_to
-        return params
-
     async def arkime_spigraph(
         self,
         field: str,
@@ -395,7 +414,7 @@ class MalcolmClient:
         time_to: str = "",
     ) -> dict[str, Any]:
         """Top values of one field with a time graph via GET /api/spigraph."""
-        params = self._arkime_query(expression, time_from, time_to)
+        params = _arkime_query_params(expression, time_from, time_to)
         params["field"] = field
         params["size"] = size
         return await self.get("/arkime/api/spigraph", params=params)
@@ -413,7 +432,7 @@ class MalcolmClient:
             spi: Comma-separated db fields, each optionally ":<count>", e.g.
                 "protocols:10,ip.dst:20".
         """
-        params = self._arkime_query(expression, time_from, time_to)
+        params = _arkime_query_params(expression, time_from, time_to)
         params["spi"] = spi
         return await self.get("/arkime/api/spiview", params=params)
 
@@ -429,7 +448,7 @@ class MalcolmClient:
 
         Returns {"nodes": [...], "links": [...]} for tracing who talked to whom.
         """
-        params = self._arkime_query(expression, time_from, time_to)
+        params = _arkime_query_params(expression, time_from, time_to)
         params["srcField"] = src_field
         params["dstField"] = dst_field
         return await self.get("/arkime/api/connections", params=params)
@@ -588,6 +607,13 @@ def _extract_buckets(data: dict[str, Any], field: str) -> list[dict[str, Any]]:
     return []
 
 
-def _format_json(data: Any, indent: int = 2) -> str:
-    """Format data as JSON string for MCP tool output."""
-    return json.dumps(data, indent=indent, ensure_ascii=False, default=str)
+def _arkime_query_params(expression: str, time_from: str, time_to: str) -> dict[str, Any]:
+    """Standard Arkime SessionsQuery params (expression + time window)."""
+    params: dict[str, Any] = {}
+    if expression:
+        params["expression"] = expression
+    if time_from:
+        params["startTime"] = time_from
+    if time_to:
+        params["stopTime"] = time_to
+    return params

@@ -10,9 +10,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-import httpx
-
-from mcp_server_malcolm import audit
+from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -42,28 +40,14 @@ def register_arkime_tag_tools(mcp: FastMCP, client: MalcolmClient, audit_file: s
 
         target = f"ids={ids}"
         params_summary = {"tags": tg}
-        try:
-            result = await client._write_arkime_tags(ids=ids, tags=tg)
-        except httpx.HTTPStatusError as exc:
-            audit.record(
-                "arkime_add_tags",
-                _CLASS,
-                target,
-                params_summary,
-                audit.outcome_for_status(exc.response.status_code),
-                audit_file,
-            )
-            return f"Add tags failed: HTTP {exc.response.status_code}"
-        except Exception as exc:  # noqa: BLE001
-            audit.record(
-                "arkime_add_tags",
-                _CLASS,
-                target,
-                params_summary,
-                f"error:{type(exc).__name__}",
-                audit_file,
-            )
-            return f"Add tags failed: {exc}"
-
-        audit.record("arkime_add_tags", _CLASS, target, params_summary, "ok", audit_file)
+        result, err = await run_write(
+            "arkime_add_tags",
+            _CLASS,
+            target,
+            params_summary,
+            audit_file,
+            lambda: client._write_arkime_tags(ids=ids, tags=tg),
+        )
+        if err:
+            return f"Add tags failed: {err}"
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)

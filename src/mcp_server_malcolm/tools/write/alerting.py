@@ -10,9 +10,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
-from mcp_server_malcolm import audit
+from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
     from mcp.server.fastmcp import FastMCP
@@ -70,30 +68,16 @@ def register_alerting_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str
         target = f"title={title.strip()}"
         params_summary = {"severity": severity, "source_ip": source_ip, "dest_ip": dest_ip}
 
-        try:
-            result = await client._write_event(alert)
-        except httpx.HTTPStatusError as exc:
-            audit.record(
-                "malcolm_create_alert",
-                _CLASS,
-                target,
-                params_summary,
-                audit.outcome_for_status(exc.response.status_code),
-                audit_file,
-            )
-            return f"Alert creation failed: HTTP {exc.response.status_code}"
-        except Exception as exc:  # noqa: BLE001
-            audit.record(
-                "malcolm_create_alert",
-                _CLASS,
-                target,
-                params_summary,
-                f"error:{type(exc).__name__}",
-                audit_file,
-            )
-            return f"Alert creation failed: {exc}"
-
-        audit.record("malcolm_create_alert", _CLASS, target, params_summary, "ok", audit_file)
+        result, err = await run_write(
+            "malcolm_create_alert",
+            _CLASS,
+            target,
+            params_summary,
+            audit_file,
+            lambda: client._write_event(alert),
+        )
+        if err:
+            return f"Alert creation failed: {err}"
         return json.dumps(
             {"created": True, "result": result}, indent=2, ensure_ascii=False, default=str
         )

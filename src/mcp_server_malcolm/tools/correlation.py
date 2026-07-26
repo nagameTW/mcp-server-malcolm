@@ -44,7 +44,7 @@ def register_correlation_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             if isinstance(direct_hits, dict):
                 direct_hits = direct_hits.get("hits", [])
             results["direct"] = direct_hits if isinstance(direct_hits, list) else []
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             results["direct_error"] = str(exc)
 
         # Related match: sessions referencing this UID
@@ -57,7 +57,7 @@ def register_correlation_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             if isinstance(related_hits, dict):
                 related_hits = related_hits.get("hits", [])
             results["related"] = related_hits if isinstance(related_hits, list) else []
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             results["related_error"] = str(exc)
 
         direct_count = len(results.get("direct", []))

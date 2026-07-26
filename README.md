@@ -117,7 +117,7 @@ Each class is enabled by setting its flag to `true`. Nothing here runs unless yo
 - **alerting**: `malcolm_create_alert` indexes an analyst- or agent-generated finding as an alert document you can see in Malcolm's dashboards. It uses `/mapi/event`, Malcolm's own purpose-built write endpoint, which is the template the other classes follow.
 - **arkime-tag**: `arkime_add_tags` adds tags to sessions. It only adds; tag removal needs a higher Arkime role and its own safety design, so it's deferred.
 - **hunt-job**: `arkime_create_hunt` launches a cross-PCAP packet search (expensive, so scope the query first). `arkime_hunt_status` reads job progress and ships with the class.
-- **pcap-upload**: `malcolm_upload_pcap` sends a local capture file to Malcolm for ingestion, with a client-side size cap.
+- **pcap-upload**: `malcolm_upload_pcap` sends a local capture file to Malcolm for ingestion, with a client-side size cap. The file must live inside `MALCOLM_MCP_UPLOAD_DIR`; if that staging directory is unset, uploads are refused, so the tool can never be steered into reading an arbitrary file off the host.
 
 Every write tool carries the MCP annotations `readOnlyHint: false` and `destructiveHint: false`, so an MCP client can apply its own confirmation step before the call runs.
 
@@ -168,7 +168,12 @@ Set the connection variables for your Malcolm instance:
 export MALCOLM_URL="https://malcolm.example"
 export MALCOLM_USERNAME="admin"
 export MALCOLM_PASSWORD="admin"
-export MALCOLM_SSL_VERIFY="false"    # Malcolm ships self-signed certs by default
+# TLS verification is ON by default. Malcolm ships self-signed certs, so point
+# this at Malcolm's CA cert rather than disabling verification:
+export MALCOLM_SSL_VERIFY="/path/to/malcolm-ca.crt"
+# Only for an isolated localhost lab: MALCOLM_SSL_VERIFY="false" disables
+# verification entirely — never do this against a remote host (credentials and
+# query results would travel over an unauthenticated channel).
 export MALCOLM_TIMEOUT="30"
 ```
 
@@ -204,7 +209,7 @@ Add the server to your MCP client's configuration:
         "MALCOLM_URL": "https://malcolm.example",
         "MALCOLM_USERNAME": "admin",
         "MALCOLM_PASSWORD": "admin",
-        "MALCOLM_SSL_VERIFY": "false"
+        "MALCOLM_SSL_VERIFY": "/path/to/malcolm-ca.crt"
       }
     }
   }
@@ -352,12 +357,13 @@ arkime_create_hunt(
 | `MALCOLM_URL` | `https://localhost` | Malcolm base URL |
 | `MALCOLM_USERNAME` | `admin` | Basic auth username |
 | `MALCOLM_PASSWORD` | `admin` | Basic auth password |
-| `MALCOLM_SSL_VERIFY` | `false` | Verify TLS certificates (accepts a CA path) |
+| `MALCOLM_SSL_VERIFY` | `true` | Verify TLS certs. `true`/`false`, or a CA-bundle path (use the path for self-signed Malcolm) |
 | `MALCOLM_TIMEOUT` | `30` | HTTP request timeout (seconds) |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | Enable the alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | Enable additive session tagging |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | Enable Arkime hunt create + status |
-| `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | Enable PCAP upload |
+| `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | Enable PCAP upload (also needs `MALCOLM_MCP_UPLOAD_DIR`) |
+| `MALCOLM_MCP_UPLOAD_DIR` | unset | Staging dir that files must live inside to be uploadable; unset ⇒ uploads refused |
 | `MALCOLM_MCP_AUDIT_FILE` | unset | Write-audit file (stderr when unset) |
 
 ## Malcolm API endpoints used

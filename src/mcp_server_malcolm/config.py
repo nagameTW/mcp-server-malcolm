@@ -28,16 +28,19 @@ class WriteConfig:
     hunt_jobs: bool
     pcap_upload: bool
     audit_file: str | None
+    upload_dir: str | None
 
     @classmethod
     def from_env(cls) -> WriteConfig:
         audit = os.environ.get("MALCOLM_MCP_AUDIT_FILE", "").strip()
+        upload_dir = os.environ.get("MALCOLM_MCP_UPLOAD_DIR", "").strip()
         return cls(
             alerting=_flag("MALCOLM_MCP_ENABLE_ALERTING"),
             arkime_tags=_flag("MALCOLM_MCP_ENABLE_ARKIME_TAGS"),
             hunt_jobs=_flag("MALCOLM_MCP_ENABLE_HUNT_JOBS"),
             pcap_upload=_flag("MALCOLM_MCP_ENABLE_PCAP_UPLOAD"),
             audit_file=audit or None,
+            upload_dir=upload_dir or None,
         )
 
     def any_enabled(self) -> bool:

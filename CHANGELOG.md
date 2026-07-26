@@ -6,6 +6,57 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+Findings from a multi-perspective code review (security, Python quality, test
+coverage). Two of the changes alter default behavior — see **Changed**.
+
+### Security
+
+- PCAP upload no longer accepts an arbitrary local path. `malcolm_upload_pcap`
+  now requires the file to sit inside a configured staging directory
+  (`MALCOLM_MCP_UPLOAD_DIR`), resolving symlinks before the containment check;
+  with the directory unset, uploads are refused. This removes an
+  arbitrary-file-read-and-exfiltration path a prompt-injected caller could
+  otherwise have used to ship a credential file off the host.
+- TLS verification is now **on by default** (`MALCOLM_SSL_VERIFY` unset ⇒
+  `true`). The previous default transmitted Basic-auth credentials and query
+  results over an unverified channel, and the documented example paired it with
+  a remote host. For self-signed Malcolm, point `MALCOLM_SSL_VERIFY` at the CA
+  cert instead of disabling verification.
+- `arkime_session_pcap` / `arkime_session_detail` now reject a `..` session id,
+  closing a single-hop path-traversal gap in the id validator (the other path
+  validators already had this guard).
+- The write-primitive seam test now parses the AST instead of grepping text, so
+  it also catches dynamic dispatch (`getattr(client, "_write_event")`) — the
+  previous regex only caught direct attribute access.
+
+### Changed
+
+- **Breaking:** `MALCOLM_SSL_VERIFY` now defaults to `true` (was `false`). Set
+  it to `false` explicitly for an isolated localhost lab, or to a CA-bundle path
+  for self-signed certs.
+- **Breaking:** enabling `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` now also requires
+  `MALCOLM_MCP_UPLOAD_DIR` — without it, upload calls return an error.
+- `arkime_session_pcap` streams the download and enforces a 500 MB cap instead
+  of reading an unbounded body fully into memory.
+
+### Fixed
+
+- Closed a race in the lazily-created HTTP client: concurrent first calls could
+  each build an `httpx.AsyncClient` and leak the first one's connection pool. A
+  lock now guards the check-and-create.
+
+### Internal
+
+- Extracted the repeated write-tool audit-on-every-outcome logic into a shared
+  `run_write` helper.
+- Moved the `_arkime_query` static method to a module-level function (project
+  style: no `staticmethod`).
+- Enabled the `BLE` (blind-except) lint rule and annotated the intentional
+  MCP-boundary broad-except sites, so future accidental ones are flagged.
+- Removed dead code (`_format_json`); added tests for `_extract_buckets`,
+  `resolve_field`, `_parse_filters`, the write-gate's bundled read tool, the
+  upload containment guard, and the AST seam check (66 → 92 tests).
+
 ## [0.2.0] - 2026-07-26
 
 This release closes the biggest gaps found while auditing the tool surface

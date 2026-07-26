@@ -115,7 +115,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 - **alerting**：`malcolm_create_alert` 把分析師或 agent 產出的發現，寫成一筆能在 Malcolm dashboard 看到的告警文件。它走 `/mapi/event`，這是 Malcolm 自己設計的 write 端點，也是其他 class 效法的範本。
 - **arkime-tag**：`arkime_add_tags` 幫 session 加 tag，只加不減。移除 tag 需要更高的 Arkime 角色和另一套安全設計，所以延後。
 - **hunt-job**：`arkime_create_hunt` 發動一個跨 PCAP 的封包搜尋（很吃資源，所以先把查詢範圍縮小）。`arkime_hunt_status` 讀取作業進度，跟著這個 class 一起出。
-- **pcap-upload**：`malcolm_upload_pcap` 把本機的封包檔送進 Malcolm 做 ingestion，並在客戶端擋一道大小上限。
+- **pcap-upload**：`malcolm_upload_pcap` 把本機的封包檔送進 Malcolm 做 ingestion，並在客戶端擋一道大小上限。檔案必須位於 `MALCOLM_MCP_UPLOAD_DIR` 內；若這個 staging 目錄未設定，一律拒絕上傳，讓這個工具不可能被誘導去讀主機上的任意檔案。
 
 每個 write 工具都帶著 MCP annotation `readOnlyHint: false` 和 `destructiveHint: false`，讓 MCP 客戶端能在呼叫前套自己的確認步驟。
 
@@ -166,7 +166,11 @@ pip install -e .
 export MALCOLM_URL="https://malcolm.example"
 export MALCOLM_USERNAME="admin"
 export MALCOLM_PASSWORD="admin"
-export MALCOLM_SSL_VERIFY="false"    # Malcolm 預設用自簽憑證
+# TLS 驗證預設開啟。Malcolm 用自簽憑證，所以請把這個指向 Malcolm 的 CA 憑證，
+# 而不是關掉驗證：
+export MALCOLM_SSL_VERIFY="/path/to/malcolm-ca.crt"
+# 只有在隔離的 localhost 實驗環境才用 MALCOLM_SSL_VERIFY="false" 完全關閉驗證 —
+# 千萬不要對遠端主機這樣做（憑證和查詢結果會走沒有驗證的通道）。
 export MALCOLM_TIMEOUT="30"
 ```
 
@@ -202,7 +206,7 @@ python -m mcp_server_malcolm
         "MALCOLM_URL": "https://malcolm.example",
         "MALCOLM_USERNAME": "admin",
         "MALCOLM_PASSWORD": "admin",
-        "MALCOLM_SSL_VERIFY": "false"
+        "MALCOLM_SSL_VERIFY": "/path/to/malcolm-ca.crt"
       }
     }
   }
@@ -350,12 +354,13 @@ arkime_create_hunt(
 | `MALCOLM_URL` | `https://localhost` | Malcolm 基礎 URL |
 | `MALCOLM_USERNAME` | `admin` | Basic auth 使用者名稱 |
 | `MALCOLM_PASSWORD` | `admin` | Basic auth 密碼 |
-| `MALCOLM_SSL_VERIFY` | `false` | 是否驗證 TLS 憑證（可填 CA 路徑） |
+| `MALCOLM_SSL_VERIFY` | `true` | 是否驗證 TLS 憑證。`true`/`false`，或填 CA-bundle 路徑（自簽 Malcolm 請填路徑） |
 | `MALCOLM_TIMEOUT` | `30` | HTTP 請求逾時（秒） |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | 開啟 alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | 開啟 session 加 tag（只加不減） |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | 開啟 Arkime hunt 建立 + 狀態查詢 |
-| `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | 開啟 PCAP 上傳 |
+| `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `false` | 開啟 PCAP 上傳（另需 `MALCOLM_MCP_UPLOAD_DIR`） |
+| `MALCOLM_MCP_UPLOAD_DIR` | 未設 | 允許上傳的檔案必須位於這個 staging 目錄內；未設 ⇒ 拒絕上傳 |
 | `MALCOLM_MCP_AUDIT_FILE` | 未設 | write 稽核檔（未設時走 stderr） |
 
 ## 用到的 Malcolm API 端點
