@@ -33,8 +33,11 @@ Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_session
 - 對外用 Malcolm 的 filter 語法，不是原生 DSL。
 - 提供欄位探索，讓模型查詢前先確認欄位名稱。
 - 提供欄位值列舉，讓模型看到欄位裡實際有哪些值。
+- 兩套欄位字彙都涵蓋。Arkime expression 吃 Arkime 自己的名稱（`ip.src`），Malcolm 其他地方吃 ECS 名稱（`source.ip`），而 Malcolm 自己的欄位清單只有後者。前者由 `arkime_field_search` 補上。
 - 封裝 Suricata 告警查詢，替它處理欄位映射（`suricata.alert.*` 對 `rule.*`）。
 - 補上 NetBox 資產上下文（IP 對應裝置、網段）。
+
+這一層真正要擋的失敗是無聲的那種。查一個 Malcolm 沒有索引的欄位，它不會報錯，只會回空結果；模型猜了個看似合理但錯誤的名稱，讀到的是「這種流量不存在」，然後就走掉了。所以當搜尋回空的時候，這個 server 會去比對查詢用到的欄位，把 Malcolm 實際存放該值的名稱回報出來。這個比對只在結果已經是空的之後才跑，查得到東西的時候不會多佔模型任何 context。
 
 write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開著的 OpenSearch、NetBox 原始 passthrough 直接交給 agent，不如只開一組具名、有稽核的 write 動作。細節見 [安全模型](#安全模型)。
 
@@ -69,6 +72,9 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | `malcolm_field_search` | 依關鍵字、前綴、型別搜尋可用欄位名稱 |
 | `malcolm_field_values` | 列出欄位的所有不同值 |
 | `malcolm_field_profile` | 顯示某欄位存在於哪些 `event.dataset` 類型 |
+| `arkime_field_search` | 搜尋 Arkime **expression** 能用的欄位名稱（[Arkime](#arkime) 一節也有列） |
+
+上面三個 `malcolm_*` 涵蓋的是 ECS 名稱，給 `malcolm_search`、`malcolm_aggregate` 和 DSL 工具用。凡是要放進 `expression` 參數的，得改用 `arkime_field_search`：Arkime 的 parser 只認 `ip.src`，會拒絕 `source.ip`，而 Malcolm 的 `/mapi/fields` 根本沒有列出 expression 名稱。
 
 ### 系統健康
 
@@ -325,6 +331,11 @@ malcolm_aggregate(
 malcolm_field_search(prefix="zeek.dns")
 malcolm_field_values(field="event.dataset")
 malcolm_field_profile(field="zeek.ssl.server_name")
+
+# 要寫 Arkime expression 之前，先到 Arkime 自己的字彙裡查。
+# 回傳長這樣：「ip.src | srcIp | ip | general」——前者放進 expression，
+# 後者用在工具要求 db 欄位的地方。
+arkime_field_search(keyword="src")
 ```
 
 ### 建立告警（alerting class 已開）

@@ -35,8 +35,17 @@ Malcolm keeps all network metadata in one OpenSearch index (`arkime_sessions3-*`
 - It exposes Malcolm's filter syntax instead of raw DSL.
 - It provides field discovery so the model checks field names before it queries.
 - It provides value enumeration so the model sees what values a field actually holds.
+- It covers both field vocabularies. Arkime expressions take Arkime's own names (`ip.src`), the rest of Malcolm takes ECS names (`source.ip`), and Malcolm's own field list carries only the second set. `arkime_field_search` supplies the first.
 - It wraps Suricata alert queries and handles the field mapping (`suricata.alert.*` vs `rule.*`).
 - It adds NetBox asset context (IP-to-device, network segments).
+
+The failure mode this is built against is a quiet one. Malcolm answers a query
+against a field it does not index with an empty result rather than an error, so
+a model that guesses a plausible-but-wrong name reads "no such traffic" and
+moves on. When a search comes back empty, this server checks the fields the
+query named and reports the name Malcolm actually stores the value under. That
+lookup runs only after a result set is already empty, so nothing is added to
+the model's context on queries that worked.
 
 The write side follows the same idea. Rather than hand an agent the raw OpenSearch and NetBox passthroughs that Malcolm already leaves open to any authenticated user, this server exposes a small, named, audited set of write actions. More on that under [Security model](#security-model).
 
@@ -71,6 +80,9 @@ Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearc
 | `malcolm_field_search` | Search available field names by keyword, prefix, or type |
 | `malcolm_field_values` | List distinct values for a field |
 | `malcolm_field_profile` | Show which `event.dataset` types contain a field |
+| `arkime_field_search` | Search the field names Arkime *expressions* accept (listed again under [Arkime](#arkime)) |
+
+These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `malcolm_aggregate` and the DSL tools. Anything going into an `expression` argument needs `arkime_field_search` instead: Arkime's parser accepts `ip.src` and rejects `source.ip`, and Malcolm's `/mapi/fields` does not list the expression names at all.
 
 ### System health
 
@@ -331,6 +343,11 @@ malcolm_aggregate(
 malcolm_field_search(prefix="zeek.dns")
 malcolm_field_values(field="event.dataset")
 malcolm_field_profile(field="zeek.ssl.server_name")
+
+# Before writing an Arkime expression, look the name up in Arkime's own
+# vocabulary. This returns "ip.src | srcIp | ip | general": the first name
+# goes in an expression, the second wherever a tool asks for a db field.
+arkime_field_search(keyword="src")
 ```
 
 ### Create an alert (alerting class enabled)
