@@ -25,9 +25,11 @@ DATA MODEL
 - event.dataset distinguishes record types: conn, dns, ssl, http, tls, files, \
 alert, etc. Filter on it to narrow to a log type.
 - Field names are NON-STANDARD (e.g. http.useragent, not http.user_agent). \
-NEVER guess a field name — call malcolm_field_search / malcolm_field_values \
-first to confirm the name and its values. This is the anti-hallucination layer; \
-use it before every unfamiliar filter.
+NEVER guess a field name — look it up first. This is the anti-hallucination \
+layer; use it before every unfamiliar filter. TWO vocabularies, one per \
+dialect: malcolm_field_search / malcolm_field_values for malcolm_* and DSL \
+tools, arkime_field_search for anything you put in an arkime_* `expression`. \
+They are not interchangeable.
 
 THREE QUERY DIALECTS — pick deliberately:
 1. malcolm_search / malcolm_aggregate / malcolm_alerts — Malcolm's simple filter \

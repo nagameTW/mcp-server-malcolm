@@ -21,6 +21,9 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
      (Malcolm uses http.useragent, NOT http.user_agent).
    - malcolm_field_values(field="event.dataset") -> see what record types exist
      (conn, dns, ssl, http, alert, ...).
+   - arkime_field_search(keyword="user") -> the SEPARATE vocabulary Arkime
+     expressions use (ip.src, not source.ip). Needed before step 3's Arkime
+     dialect; the two field lists do not overlap.
 
 2. GET YOUR BEARINGS.
    - malcolm_data_coverage() -> what data exists and how fresh it is.
@@ -29,8 +32,11 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
 
 3. FIND SESSIONS. Pick the dialect:
    - Field filter + human time: malcolm_search(
-       filters='{"event.dataset":"dns","zeek.dns.query":"*.example.com"}',
+       filters='{"event.dataset":"dns","zeek.dns.query":"ntp.ubuntu.com"}',
        time_from="7 days ago")
+     Filter values are EXACT (Malcolm compiles them to a terms query). No
+     wildcards: enumerate with malcolm_field_values and pass a list, or use
+     search_dsl to write a wildcard query yourself.
    - Arkime expression + a session id you can drill into (epoch seconds!):
        arkime_sessions(expression="ip==192.0.2.77 && protocols==ssh")
      ONLY arkime_sessions returns an id usable in step 4.

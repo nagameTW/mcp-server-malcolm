@@ -90,6 +90,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 
 | 工具 | 說明 |
 |------|------|
+| `arkime_field_search` | 查詢 Arkime expression 能用的欄位名稱（`ip.src`、`port.dst`）——跟 `malcolm_field_search` 回傳的 ECS 名稱是兩套字彙 |
 | `arkime_sessions` | 用 Arkime expression 語法搜尋 session |
 | `arkime_session_detail` | 抓單一 session 的全部欄位（完整 SPI 文件） |
 | `arkime_session_pcap` | 抓某 session 的 PCAP，回報大小與 magic 驗證結果（只回 metadata，不落地） |
@@ -287,12 +288,14 @@ Malcolm 用的是簡單的 JSON filter 語法，不是 OpenSearch DSL：
 # 欄位必須存在（非 null）
 {"!related.password": null}
 
-# 萬用字元
-{"suricata.alert.signature": "*MALWARE*"}
-
 # 組合條件（AND）
 {"event.dataset": "dns", "source.ip": "192.0.2.77"}
 ```
+
+值是**完全比對**。Malcolm 會把這個 dict 編成 OpenSearch 的 `terms` query，所以沒有萬用字元可用：
+`{"rule.name": "*MALWARE*"}` 找的是名稱剛好叫 `*MALWARE*` 的 signature，結果一定是空的，而且不會報錯。
+要做子字串比對，可以先用 `malcolm_field_values` 列出實際的值、挑出要的再以陣列傳入，或者改用
+`search_dsl` 自己寫 wildcard query。`malcolm_alerts` 的 `signature` 和 `category` 參數已經幫你做掉這段列舉。
 
 ## 範例
 
@@ -300,7 +303,7 @@ Malcolm 用的是簡單的 JSON filter 語法，不是 OpenSearch DSL：
 
 ```
 malcolm_search(
-  filters='{"event.dataset": "dns", "zeek.dns.query": "*example.com*"}',
+  filters='{"event.dataset": "dns", "zeek.dns.query": "ntp.ubuntu.com"}',
   limit=20,
   time_from="7 days ago"
 )
@@ -392,6 +395,7 @@ arkime_create_hunt(
 | `/mapi/netbox/*` | GET | `malcolm_netbox_lookup`、`malcolm_netbox_query` |
 | `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert`（write） |
+| `/arkime/api/fields` | GET | `arkime_field_search` |
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
 | `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |

@@ -6,6 +6,63 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+Audited Malcolm's ingest pipelines (`logstash/pipelines/`) against the fields
+this server queries, after Malcolm's maintainer pointed at them as the place
+where field-mapping quirks are settled. Three of those quirks were live bugs.
+
+### Added
+
+- `arkime_field_search`: field discovery for Arkime's expression syntax.
+  Arkime expressions take Arkime's own names (`ip.src`, `port.dst`), and
+  `/mapi/fields` reports only the ECS names because Malcolm keys its merged
+  field list by Arkime's `dbField` and drops the expression alias. So an agent
+  had no way to discover a name that works inside an `expression` argument —
+  it had to guess. Each result carries both names, and says which goes where.
+- An empty `malcolm_search` / `malcolm_aggregate` / `malcolm_field_values`
+  result now reports any queried field that Malcolm does not index, together
+  with the name it stores the value under. Filtering on a renamed field is not
+  an error in Malcolm — it silently matches nothing, which reads as "this
+  traffic does not exist". The lookup runs only once a result set is already
+  empty, so nothing is added on the happy path.
+- `resolve_field` consults a table of ingest renames before falling back to
+  string similarity. For `suricata.alert.signature`, `difflib` returns
+  `suricata.alert.rev` and friends: real fields, all wrong, and indistinguishable
+  from the truth. The table is drawn from Malcolm's pipeline source and covers
+  only jumps that share no spelling with their target.
+
+### Fixed
+
+- Malcolm's filter dict does not support wildcards, and this server documented
+  that it did. `filtervalues()` compiles the dict to an OpenSearch `terms`
+  query, so `{"rule.name": "*MALWARE*"}` searches for a signature literally
+  named `*MALWARE*` and matches nothing — no error, just an empty result an
+  agent reads as "no such traffic". The wildcard examples are gone from the
+  tool descriptions, the hunt prompt and both READMEs, which now state that
+  values are exact and point at `search_dsl` for substring matching.
+- `malcolm_alerts(signature=...)` filtered `suricata.alert.signature` wrapped
+  in wildcards, so it failed twice over: `11_suricata_logs.conf` renames that
+  field to `rule.name` outright, and the wildcards could not match regardless.
+  Every signature search returned zero alerts whatever the data held. Both
+  `signature` and `category` now resolve the substring against the recorded
+  values first and filter on the exact matches; a substring nothing matches
+  says so instead of returning an empty result set.
+- `malcolm_related_sessions` queried `related.zeek.uid`, a field that exists
+  nowhere in Malcolm. The "related" half of every correlation came back empty
+  and was reported as a successful `N direct + 0 related`. Malcolm parks the
+  Zeek connection UID in Arkime's `rootId`, which is what actually ties a
+  flow's dns/ssl/files records to its conn record.
+- `malcolm_search` documented its default time window as "Malcolm's default
+  recent window". `/mapi/document` defaults to all history and `/mapi/agg` to
+  the last 24 hours, so the two tools covered different periods from identical
+  arguments and the description stated the opposite of the truth for one of
+  them. Both are now documented as they behave.
+
+### Changed
+
+- `arkime_sessions` documents the expression rules an agent cannot discover by
+  probing: existence is the literal token `EXISTS!`, a list literal is an OR,
+  and there is no free-text search — every clause must be field-operator-value.
+
 ## [0.3.3] - 2026-07-26
 
 ### Fixed
