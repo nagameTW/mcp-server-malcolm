@@ -239,11 +239,11 @@ class MalcolmClient:
         """Return Arkime's field table (cached), expression name paired with db name.
 
         Arkime's expression parser accepts only Arkime's own names — `ip.src`,
-        `port.dst`, `protocols` — and rejects the dotted ECS names that
-        /mapi/fields reports, because Malcolm builds that list keyed by Arkime's
-        `dbField2` and drops the expression alias entirely. So this endpoint is
-        the only place an agent can discover a name that will work inside an
-        `expression` argument.
+        `port.dst`, `protocols` — and /mapi/fields does not list them: Malcolm
+        merges Arkime's field table keyed by `dbField2` and drops the `exp`
+        alias, so that list holds `srcIp` and `source.ip` but never `ip.src`.
+        This endpoint is the only place an agent can discover a name that will
+        work inside an `expression` argument.
 
         Returns:
             One dict per field with "exp" (use in expressions), "db" (use where

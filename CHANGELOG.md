@@ -14,10 +14,12 @@ where field-mapping quirks are settled. Three of those quirks were live bugs.
 
 - `arkime_field_search`: field discovery for Arkime's expression syntax.
   Arkime expressions take Arkime's own names (`ip.src`, `port.dst`), and
-  `/mapi/fields` reports only the ECS names because Malcolm keys its merged
-  field list by Arkime's `dbField` and drops the expression alias. So an agent
-  had no way to discover a name that works inside an `expression` argument —
-  it had to guess. Each result carries both names, and says which goes where.
+  `/mapi/fields` does not list them: it merges Arkime's field table keyed by
+  `dbField2` and drops the `exp` alias, so the list carries `srcIp` and
+  `source.ip` but never `ip.src`. An agent had no way to discover a name that
+  works inside an `expression` argument — it had to guess. Each result of the
+  new tool carries the expression name and the db name, and says which goes
+  where.
 - An empty `malcolm_search` / `malcolm_aggregate` / `malcolm_field_values`
   result now reports any queried field that Malcolm does not index, together
   with the name it stores the value under. Filtering on a renamed field is not
