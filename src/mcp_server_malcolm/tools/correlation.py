@@ -40,10 +40,10 @@ def register_correlation_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         """Correlate one Zeek UID across sessions via both direct and cross-reference matches.
 
         Use this to pivot from a single connection UID to everything tied to it: it
-        queries zeek.uid (the direct connection) and related.zeek.uid (references from
-        other log types like files, dns, ssl) in one call. For a plain field query
-        without the dual direct/related split, use `malcolm_search` with a zeek.uid
-        filter.
+        queries zeek.uid (the direct connection) and rootId (Malcolm's cross-log link,
+        carrying references from other log types like files, dns, ssl) in one call.
+        For a plain field query without the dual direct/related split, use
+        `malcolm_search` with a zeek.uid filter.
 
         Behavior: runs TWO independent Malcolm searches (one per match kind); `limit`
         caps EACH side separately, so up to 2×limit sessions come back total. The two
@@ -74,10 +74,13 @@ def register_correlation_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         except Exception as exc:  # noqa: BLE001
             results["direct_error"] = str(exc)
 
-        # Related match: sessions referencing this UID
+        # Related match: sessions referencing this UID. Malcolm parks the Zeek
+        # connection UID in Arkime's rootId (1200_zeek_mutate.conf:69,
+        # filescan/11_parse.conf:127), which is what ties a flow's dns/ssl/files
+        # records back to its conn record. There is no related.zeek.uid field.
         try:
             related = await client.search(
-                filters={"related.zeek.uid": uid},
+                filters={"rootId": uid},
                 limit=limit,
             )
             related_hits = related.get("results", related.get("hits", []))

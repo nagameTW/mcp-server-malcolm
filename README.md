@@ -92,6 +92,7 @@ Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearc
 
 | Tool | Description |
 |------|-------------|
+| `arkime_field_search` | Look up the field names Arkime expressions accept (`ip.src`, `port.dst`) — a separate vocabulary from the ECS names `malcolm_field_search` returns |
 | `arkime_sessions` | Search Arkime sessions with Arkime expression syntax |
 | `arkime_session_detail` | Fetch all fields (full SPI document) for one session |
 | `arkime_session_pcap` | Fetch a session's PCAP and report its size and file-magic validity (metadata only, nothing written to disk) |
@@ -290,12 +291,17 @@ Malcolm uses a simple JSON filter syntax, not OpenSearch DSL:
 # Field must exist (not null)
 {"!related.password": null}
 
-# Wildcard
-{"suricata.alert.signature": "*MALWARE*"}
-
 # Combined (AND)
 {"event.dataset": "dns", "source.ip": "192.0.2.77"}
 ```
+
+Values match **exactly**. Malcolm compiles this dict to an OpenSearch `terms`
+query, so there is no wildcard: `{"rule.name": "*MALWARE*"}` looks for a
+signature literally named `*MALWARE*` and quietly finds nothing. For substring
+matching either enumerate the values first with `malcolm_field_values` and pass
+the ones you want as a list, or use `search_dsl` and write the wildcard query
+yourself. `malcolm_alerts` does that enumeration for you on its `signature` and
+`category` arguments.
 
 ## Examples
 
@@ -303,7 +309,7 @@ Malcolm uses a simple JSON filter syntax, not OpenSearch DSL:
 
 ```
 malcolm_search(
-  filters='{"event.dataset": "dns", "zeek.dns.query": "*example.com*"}',
+  filters='{"event.dataset": "dns", "zeek.dns.query": "ntp.ubuntu.com"}',
   limit=20,
   time_from="7 days ago"
 )
@@ -395,6 +401,7 @@ arkime_create_hunt(
 | `/mapi/netbox/*` | GET | `malcolm_netbox_lookup`, `malcolm_netbox_query` |
 | `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert` (write) |
+| `/arkime/api/fields` | GET | `arkime_field_search` |
 | `/arkime/api/sessions` | GET | `arkime_sessions` |
 | `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |

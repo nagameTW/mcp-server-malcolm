@@ -19,6 +19,7 @@ _READ = {
     "malcolm_netbox_lookup",
     "malcolm_netbox_sites",
     "malcolm_netbox_query",
+    "arkime_field_search",
     "arkime_sessions",
     "arkime_session_pcap",
     "arkime_session_detail",

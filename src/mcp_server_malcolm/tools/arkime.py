@@ -43,6 +43,53 @@ _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     """Register Arkime session search and PCAP info tools."""
 
+    @mcp.tool(title="Search Arkime expression fields", annotations=_READ)
+    async def arkime_field_search(
+        keyword: Annotated[
+            str,
+            Field(
+                description="Substring matched against the expression name, db name and "
+                'help text, e.g. "user", "cert", "ja3". Empty = no keyword filter.'
+            ),
+        ] = "",
+        group: Annotated[
+            str,
+            Field(
+                description='Exact Arkime field group to restrict to, e.g. "http", "dns", '
+                '"tls", "general". Empty = any group.'
+            ),
+        ] = "",
+        limit: Annotated[int, Field(description="Max fields to return.", ge=1, le=200)] = 50,
+    ) -> str:
+        """Discover the field names Arkime expressions accept — call before writing one.
+
+        Arkime's expression parser has its own vocabulary (ip.src, port.dst,
+        protocols, country) and rejects the dotted ECS names malcolm_field_search
+        reports (source.ip, destination.port). That makes this the field-discovery
+        tool for every arkime_* tool, exactly as malcolm_field_search is for the
+        malcolm_* ones. Each row gives both names: use "exp" inside an `expression`
+        argument, and "db" where a tool asks for an Arkime db field (arkime_connections,
+        arkime_multiunique). Returns "exp | db | type | group" lines with the help text.
+        """
+        try:
+            results = await client.search_arkime_fields(keyword=keyword, group=group)
+        except Exception as exc:  # noqa: BLE001
+            return f"Arkime field lookup failed: {exc}"
+
+        if not results:
+            return "No Arkime fields matched. Try a shorter keyword, or drop the group filter."
+
+        lines = [f"Found {len(results)} Arkime fields (exp | db | type | group):"]
+        for field in results[:limit]:
+            help_text = f"  — {field['help']}" if field["help"] else ""
+            lines.append(
+                f"  {field['exp']} | {field['db']} | {field['type']} | {field['group']}{help_text}"
+            )
+        if len(results) > limit:
+            lines.append(f"  ... and {len(results) - limit} more")
+
+        return "\n".join(lines)
+
     @mcp.tool(title="Search Arkime sessions", annotations=_READ)
     async def arkime_sessions(
         expression: Annotated[
@@ -51,7 +98,12 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 description="Arkime expression syntax (NOT OpenSearch DSL, NOT a "
                 'Malcolm filter dict). Examples: "ip==192.0.2.77"; '
                 '"ip.src==192.0.2.77 && ip.dst==198.51.100.1"; "protocols==dns"; '
-                '"port.dst==443"; "http.uri==/login*"; "country.dst==CN".'
+                '"port.dst==443"; "http.uri==/login*"; "country.dst==CN". '
+                "Every clause must be field-operator-value — there is no free-text "
+                "search. Field existence is the literal token EXISTS!, as in "
+                '"zeek.ftp.password == EXISTS!". A list is an OR: "port == [80,443]". '
+                "Field names are Arkime's own, NOT the ECS names malcolm_field_search "
+                "returns — look them up with arkime_field_search."
             ),
         ],
         limit: Annotated[int, Field(description="Max sessions to return.", ge=1, le=100)] = 10,

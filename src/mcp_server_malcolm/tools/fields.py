@@ -108,7 +108,9 @@ def register_field_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         you don't invent values. To confirm the field NAME exists first, use
         `malcolm_field_search`; to see which datasets carry the field, use
         `malcolm_field_profile`. For multi-field or nested bucketing, use
-        `malcolm_aggregate`. Returns a text list of "value (N docs)" lines.
+        `malcolm_aggregate`. A "-" in the output is Malcolm's placeholder for
+        documents where the field is absent, not a value you can filter on.
+        Returns a text list of "value (N docs)" lines.
         """
         parsed_filters = None
         if filters and filters.strip() not in ("", "{}", "null"):
@@ -126,7 +128,14 @@ def register_field_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         )
 
         if not buckets:
-            return f"No values found for field '{field}'. The field may not exist or has no data."
+            # Distinguish "wrong name" from "no data": Malcolm renames fields on
+            # ingest, so a plausible name can be one that is simply never stored.
+            if hint := await client.explain_unknown_fields([field]):
+                return hint
+            return (
+                f"No values found for field '{field}'. The field exists but holds no "
+                f"data in this window — widen time_from/time_to or relax the filters."
+            )
 
         lines = [f"Values for '{field}' ({len(buckets)} distinct):"]
         for b in buckets:

@@ -61,7 +61,10 @@ async def test_aggregate_forwards_doctype():
     seen = {}
 
     def handler(req):
-        seen["body"] = req.content.decode()
+        # An empty agg result triggers the field-name diagnostic, which fetches
+        # /mapi/fields — capture only the aggregation request itself.
+        if "/mapi/agg/" in str(req.url):
+            seen["body"] = req.content.decode()
         return httpx.Response(200, json={})
 
     mcp = FastMCP("t")
@@ -79,6 +82,13 @@ async def test_alerts_category_action_sid_use_ecs_fields():
     seen = {}
 
     def handler(req):
+        # A category substring is resolved against the recorded values first —
+        # Malcolm's filter is an exact terms query, so there is no wildcard to
+        # push down.
+        if req.url.path.startswith("/mapi/agg/"):
+            return httpx.Response(
+                200, json={"values": [{"key": "A Network Trojan was detected", "doc_count": 3}]}
+            )
         seen["body"] = req.content.decode()
         return httpx.Response(200, json={"hits": []})
 

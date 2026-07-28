@@ -16,10 +16,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Iterable
 from difflib import get_close_matches
 from typing import Any
 
 import httpx
+
+from mcp_server_malcolm.field_aliases import alias_for
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +65,7 @@ class MalcolmClient:
         self._http: httpx.AsyncClient | None = None
         self._http_lock = asyncio.Lock()
         self._field_cache: dict[str, str] | None = None
+        self._arkime_field_cache: list[dict[str, str]] | None = None
 
     @property
     def base_url(self) -> str:
@@ -227,8 +231,76 @@ class MalcolmClient:
         return self._field_cache
 
     def invalidate_field_cache(self) -> None:
-        """Force re-fetch of field list on next call."""
+        """Force re-fetch of both field lists on next call."""
         self._field_cache = None
+        self._arkime_field_cache = None
+
+    async def arkime_fields(self) -> list[dict[str, str]]:
+        """Return Arkime's field table (cached), expression name paired with db name.
+
+        Arkime's expression parser accepts only Arkime's own names — `ip.src`,
+        `port.dst`, `protocols` — and /mapi/fields does not list them: Malcolm
+        merges Arkime's field table keyed by `dbField2` and drops the `exp`
+        alias, so that list holds `srcIp` and `source.ip` but never `ip.src`.
+        This endpoint is the only place an agent can discover a name that will
+        work inside an `expression` argument.
+
+        Returns:
+            One dict per field with "exp" (use in expressions), "db" (use where
+            a tool asks for an Arkime db field, e.g. arkime_connections), plus
+            "type", "group" and "help". Sorted by expression name.
+        """
+        if self._arkime_field_cache is not None:
+            return self._arkime_field_cache
+
+        data = await self.get("/arkime/api/fields", params={"array": "true"})
+        # Arkime returns an array with array=true, a map keyed by exp without it;
+        # tolerate both so a viewer version change cannot blank the tool.
+        entries = data.values() if isinstance(data, dict) else data
+        fields = sorted(
+            (
+                {
+                    "exp": entry.get("exp", ""),
+                    "db": entry.get("dbField2") or entry.get("dbField", ""),
+                    "type": entry.get("type", ""),
+                    "group": entry.get("group", ""),
+                    "help": entry.get("help", ""),
+                }
+                for entry in entries
+                if isinstance(entry, dict) and entry.get("exp")
+            ),
+            key=lambda field: field["exp"],
+        )
+        self._arkime_field_cache = fields
+        logger.info("[malcolm] Cached %d Arkime expression fields", len(fields))
+        return fields
+
+    async def search_arkime_fields(
+        self, keyword: str = "", group: str = ""
+    ) -> list[dict[str, str]]:
+        """Filter the Arkime field table by substring and/or group.
+
+        Args:
+            keyword: Matched against the expression name, db name and help text.
+            group: Exact Arkime field group, e.g. "http", "dns", "general".
+
+        Returns:
+            The matching subset of arkime_fields(); everything when both
+            arguments are empty.
+        """
+        keyword = keyword.lower().strip()
+        group = group.lower().strip()
+        results = []
+        for field in await self.arkime_fields():
+            if group and field["group"].lower() != group:
+                continue
+            if (
+                keyword
+                and keyword not in " ".join((field["exp"], field["db"], field["help"])).lower()
+            ):
+                continue
+            results.append(field)
+        return results
 
     async def search_fields(
         self,
@@ -252,11 +324,26 @@ class MalcolmClient:
         return results
 
     async def resolve_field(self, name: str, max_suggestions: int = 5) -> dict[str, Any]:
-        """Check if a field exists; if not, suggest alternatives."""
+        """Check if a field exists; if not, suggest alternatives.
+
+        A known pipeline rename wins over string similarity: for a field like
+        suricata.alert.signature, difflib returns real-but-wrong siblings
+        (suricata.alert.rev, ...) with no way for the caller to tell them from
+        the truth, whereas the alias table names the one correct target.
+        """
         fields = await self.get_fields()
 
         if name in fields:
             return {"exists": True, "field": name, "type": fields[name]}
+
+        if (renamed := alias_for(name)) and renamed in fields:
+            return {
+                "exists": False,
+                "field": name,
+                "suggestion": renamed,
+                "type": fields[renamed],
+                "reason": "renamed by Malcolm's ingest pipeline",
+            }
 
         all_names = list(fields.keys())
 
@@ -280,6 +367,48 @@ class MalcolmClient:
 
         suggestions = {s: fields[s] for s in similar}
         return {"exists": False, "field": name, "suggestions": suggestions}
+
+    async def explain_unknown_fields(self, names: Iterable[str]) -> str:
+        """Report which of these field names are absent from the index.
+
+        Intended for the moment a query comes back empty: a filter on a field
+        Malcolm renamed during ingest returns zero documents and no error, so
+        without this an agent sees a valid-looking "no results" and concludes
+        the traffic is not there. Costs nothing on the happy path — callers
+        only ask once a result set is already empty.
+
+        Args:
+            names: Filter keys as written by the caller; a leading "!"
+                (Malcolm's negation prefix) is ignored.
+
+        Returns:
+            A multi-line explanation, or "" when every name exists (an empty
+            result set is then genuine) or when the field list is unreachable.
+        """
+        lines: list[str] = []
+        try:
+            for raw in names:
+                name = raw.lstrip("!").strip()
+                if not name:
+                    continue
+                resolution = await self.resolve_field(name, max_suggestions=3)
+                if resolution.get("exists"):
+                    continue
+                if suggestion := resolution.get("suggestion"):
+                    lines.append(f"  {name} is not indexed — Malcolm stores this as {suggestion}")
+                elif suggestions := resolution.get("suggestions"):
+                    lines.append(f"  {name} is not indexed — similar: {', '.join(suggestions)}")
+                else:
+                    lines.append(f"  {name} is not indexed and has no close match")
+        except Exception as exc:  # noqa: BLE001
+            # A diagnostic must never turn a successful (if empty) query into a
+            # failure — drop the hint and let the empty result stand.
+            logger.debug("[malcolm] field diagnostic unavailable: %s", exc)
+            return ""
+
+        if not lines:
+            return ""
+        return "No documents matched. These filter fields do not exist:\n" + "\n".join(lines)
 
     # -- Health & Status ------------------------------------------------
 
