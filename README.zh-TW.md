@@ -160,7 +160,9 @@ Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原
 
 ## 快速開始
 
-### 安裝
+你不需要寫任何程式碼。MCP 客戶端（Claude Code、Claude Desktop、Cursor 等）會把這個 server 當子行程啟動，用 stdio 跟它溝通；你要做的只是告訴客戶端怎麼啟動它、以及要注入哪些憑證。
+
+### 1. 安裝
 
 ```bash
 pip install mcp-server-malcolm
@@ -174,44 +176,43 @@ cd mcp-server-malcolm
 pip install -e .
 ```
 
-### 設定
+### 2. 註冊到你的客戶端
 
-設定連到你的 Malcolm 的環境變數：
-
-```bash
-export MALCOLM_URL="https://malcolm.example"
-export MALCOLM_USERNAME="admin"
-export MALCOLM_PASSWORD="admin"
-# TLS 驗證預設開啟。Malcolm 用自簽憑證，所以請把這個指向 Malcolm 的 CA 憑證，
-# 而不是關掉驗證：
-export MALCOLM_SSL_VERIFY="/path/to/malcolm-ca.crt"
-# 只有在隔離的 localhost 實驗環境才用 MALCOLM_SSL_VERIFY="false" 完全關閉驗證 —
-# 千萬不要對遠端主機這樣做（憑證和查詢結果會走沒有驗證的通道）。
-export MALCOLM_TIMEOUT="30"
-```
-
-write 開關都不設，就是唯讀跑。要開某個 class，設它的開關：
+**Claude Code** — 一行指令，不用找設定檔在哪：
 
 ```bash
-export MALCOLM_MCP_ENABLE_ALERTING="true"
-export MALCOLM_MCP_AUDIT_FILE="/var/log/malcolm-mcp-audit.jsonl"
+claude mcp add malcolm \
+  -e MALCOLM_URL=https://malcolm.example \
+  -e MALCOLM_USERNAME=analyst \
+  -e MALCOLM_PASSWORD='your-password' \
+  -e MALCOLM_SSL_VERIFY=/path/to/malcolm-ca.crt \
+  -- mcp-server-malcolm
 ```
 
-### 執行
+`--` 之後是啟動指令，前面每個 `-e` 是要注入的環境變數。用 `-s` 決定這筆設定存在哪：
 
-```bash
-# 作為 MCP server 啟動（stdio 傳輸）
-mcp-server-malcolm
+| scope | 存放位置 | 適用情境 |
+| --- | --- | --- |
+| `local`（預設） | 你個人的設定，只在這個專案目錄生效 | 含密碼的設定，不會被 commit |
+| `user` | 你個人的設定，所有專案都看得到 | 到哪都會用到的 Malcolm |
+| `project` | 專案根目錄的 `.mcp.json`，**會進 git** | 團隊共用，密碼絕對不要放這裡 |
 
-# 或透過 Python module 啟動
-python -m mcp_server_malcolm
+用 `claude mcp list` 確認是否連上（它會對每個 server 做健康檢查），`claude mcp get malcolm` 看細節。
+
+若要用 `project` scope 給團隊共用，把密碼留在各人的 shell 裡：
+
+```json
+{
+  "mcpServers": {
+    "malcolm": {
+      "command": "mcp-server-malcolm",
+      "env": { "MALCOLM_PASSWORD": "${MALCOLM_PASSWORD}" }
+    }
+  }
+}
 ```
 
-## 使用方式
-
-### MCP 客戶端（設定檔）
-
-把這個 server 加進你的 MCP 客戶端設定：
+**其他 MCP 客戶端** — 沒有對應的 CLI，要自己編輯客戶端的 JSON 設定檔，格式一樣：
 
 ```json
 {
@@ -220,8 +221,8 @@ python -m mcp_server_malcolm
       "command": "mcp-server-malcolm",
       "env": {
         "MALCOLM_URL": "https://malcolm.example",
-        "MALCOLM_USERNAME": "admin",
-        "MALCOLM_PASSWORD": "admin",
+        "MALCOLM_USERNAME": "analyst",
+        "MALCOLM_PASSWORD": "your-password",
         "MALCOLM_SSL_VERIFY": "/path/to/malcolm-ca.crt"
       }
     }
@@ -229,7 +230,41 @@ python -m mcp_server_malcolm
 }
 ```
 
-設定檔的確切位置請查你的 MCP 客戶端文件。多數用專案層級的 `.mcp.json` 或全域設定檔。
+Claude Desktop 讀 `claude_desktop_config.json`；其他客戶端位置不一，查各自的文件。
+
+如果 `mcp-server-malcolm` 不在客戶端看得到的 `PATH` 上（用 virtualenv 時很常見），改填執行檔的絕對路徑：`/path/to/.venv/bin/mcp-server-malcolm`。
+
+### 3. 連線設定
+
+| 變數 | 說明 |
+| --- | --- |
+| `MALCOLM_URL` | Malcolm base URL，例如 `https://malcolm.example` |
+| `MALCOLM_USERNAME` / `MALCOLM_PASSWORD` | Malcolm 的 basic auth 帳密 |
+| `MALCOLM_SSL_VERIFY` | `true`（預設）、`false`、或 CA bundle 的路徑 |
+| `MALCOLM_TIMEOUT` | HTTP timeout 秒數，預設 `30` |
+
+關於 TLS：驗證預設開啟，而 Malcolm 出廠是自簽憑證。把 `MALCOLM_SSL_VERIFY` 指向 Malcolm 的 CA bundle，只有在 Malcolm 的 server 憑證帶有對應你連線主機名的 `subjectAltName` 時才有用 — Malcolm 自己的 setup 產出的憑證沒有 SAN 擴充欄位，所以就算 CA 指對了驗證還是會失敗。遠端的 Malcolm 請換上 SAN 正確的憑證。`MALCOLM_SSL_VERIFY="false"` 是完全關閉驗證，只有隔離的 localhost 實驗環境能接受；走網路的話，憑證和查詢結果都會經過未經驗證的通道。
+
+### 4. 開啟 write 工具（選用）
+
+五個 write class 不設開關就是關的，所以預設安裝是唯讀。要開就把開關加進同一組 `-e` / `env`：
+
+```bash
+-e MALCOLM_MCP_ENABLE_ALERTING=true
+-e MALCOLM_MCP_AUDIT_FILE=/var/log/malcolm-mcp-audit.jsonl
+```
+
+完整開關列表見 [設定](#設定-1)。
+
+### 手動執行
+
+只在除錯時有用。stdio MCP server 沒有互動介面：從終端機啟動它會安靜地停在那裡等 stdin 上的 JSON-RPC，這就是正常運作的樣子。它啟動時會把已開啟的 write class 印到 stderr，所以這可以確認開關有生效：
+
+```bash
+mcp-server-malcolm          # 或：python -m mcp_server_malcolm
+```
+
+## 使用方式
 
 ### Python（直接 import）
 

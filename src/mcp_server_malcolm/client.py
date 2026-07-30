@@ -506,30 +506,53 @@ class MalcolmClient:
         return await self.get("/arkime/api/hunts", params=params)
 
     async def arkime_session_detail(self, session_id: str) -> dict[str, Any]:
-        """All fields for one session via GET /arkime/api/session/<id>.
+        """Full SPI document for one session, via the sessions search.
 
-        The list search (arkime_sessions) returns a trimmed view; this returns
-        the full SPI document for a single session id.
+        GET /arkime/api/session/<id> serves the Arkime SPA HTML shell, not JSON,
+        so a single session is fetched through /arkime/api/sessions with an
+        `id ==` expression and date=-1 (all time). The id is indexed, so this
+        stays a point lookup rather than a scan.
+
+        The id is reduced to its bare form first. arkime_sessions hands out the
+        node-prefixed id ("3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw") but Arkime's
+        `id ==` matches only the part after the last ':' — measured on 26.07.1,
+        the prefixed form returns 0 rows and the bare one returns the session.
+        Feeding this tool the id its sibling produced therefore always missed.
+        Only this expression needs the bare form: sessions.pcap takes the
+        prefixed id as-is, so arkime_session_pcap passes it through untouched.
+
+        Returns {} when no session matches the id.
         """
-        return await self.get(f"/arkime/api/session/{session_id}")
+        bare_id = session_id.rsplit(":", 1)[-1].rsplit("@", 1)[-1]
+        result = await self.get(
+            "/arkime/api/sessions",
+            params={"expression": f"id == {bare_id}", "date": -1, "length": 1},
+        )
+        data = result.get("data") if isinstance(result, dict) else None
+        return data[0] if data else {}
 
     async def arkime_unique(
         self,
         expression: str,
         field: str,
         counts: bool = True,
+        time_from: str = "",
+        time_to: str = "",
     ) -> str:
         """Distinct values of one field via GET /arkime/api/unique.
+
+        Omitting the range uses Arkime's default (recent) window, which returns
+        nothing on a historical capture — pass epoch-seconds strings to reach it.
+        Verified on 26.07.1: with no window this endpoint returned an empty body
+        over a 6M-session index whose data is a year old, and the same call with
+        startTime/stopTime returned the value list.
 
         Returns text (one value per line), not JSON — this Arkime endpoint
         streams a plain-text body, optionally suffixed with counts.
         """
-        params: dict[str, Any] = {
-            "exp": field,
-            "counts": 1 if counts else 0,
-        }
-        if expression:
-            params["expression"] = expression
+        params: dict[str, Any] = _arkime_query_params(expression, time_from, time_to)
+        params["exp"] = field
+        params["counts"] = 1 if counts else 0
         resp = await self.get_raw("/arkime/api/unique", params=params)
         resp.raise_for_status()
         return resp.text

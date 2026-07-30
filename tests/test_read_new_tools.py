@@ -44,13 +44,67 @@ async def test_session_detail_hits_endpoint_and_returns_fields():
 
     def handler(req):
         seen["path"] = req.url.path
-        return httpx.Response(200, json={"src.ip": "192.0.2.77", "protocols": ["dns"]})
+        seen["expression"] = req.url.params.get("expression")
+        seen["date"] = req.url.params.get("date")
+        # /arkime/api/sessions wraps records in a "data" array.
+        return httpx.Response(
+            200, json={"data": [{"source": {"ip": "192.0.2.77"}, "protocols": ["dns"]}]}
+        )
 
     mcp = FastMCP("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_detail", {"session_id": "240601-X"})
-    assert seen["path"] == "/arkime/api/session/240601-X"
+    # GET /arkime/api/session/<id> serves the SPA HTML, not JSON; a single
+    # session comes from the sessions search with an id== expression + date=-1.
+    assert seen["path"] == "/arkime/api/sessions"
+    assert seen["expression"] == "id == 240601-X"
+    assert seen["date"] == "-1"
     assert "192.0.2.77" in str(out)
+
+
+@pytest.mark.asyncio
+async def test_session_detail_strips_the_node_prefix_from_the_id():
+    """arkime_sessions returns "3@240425:240425-xxx" but Arkime's `id ==`
+    matches only the bare id after the last ':' — measured live on 26.07.1 the
+    prefixed form returns 0 rows, so the documented workflow (search, then drill
+    into the id you got back) always missed."""
+    seen = {}
+
+    def handler(req):
+        seen["expression"] = req.url.params.get("expression")
+        return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    await mcp.call_tool(
+        "arkime_session_detail", {"session_id": "3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw"}
+    )
+    assert seen["expression"] == "id == 240425-IrHoGmqqp7SR6TWIWoG0Dw"
+
+
+@pytest.mark.asyncio
+async def test_session_detail_accepts_an_already_bare_id():
+    seen = {}
+
+    def handler(req):
+        seen["expression"] = req.url.params.get("expression")
+        return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    await mcp.call_tool("arkime_session_detail", {"session_id": "240425-IrHoGmqqp7SR6TWIWoG0Dw"})
+    assert seen["expression"] == "id == 240425-IrHoGmqqp7SR6TWIWoG0Dw"
+
+
+@pytest.mark.asyncio
+async def test_session_detail_reports_not_found():
+    def handler(req):
+        return httpx.Response(200, json={"data": []})
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    out = await mcp.call_tool("arkime_session_detail", {"session_id": "240601-X"})
+    assert "no arkime session" in str(out).lower()
 
 
 @pytest.mark.asyncio
@@ -77,6 +131,46 @@ async def test_unique_returns_plain_text_lines():
     text = str(out)
     assert "dns" in text
     assert "tls" in text
+
+
+@pytest.mark.asyncio
+async def test_unique_passes_the_time_window():
+    """Without a window Arkime answers from its default recent range, which is
+    empty on a historical capture — verified live on 26.07.1."""
+    seen = {}
+
+    def handler(req):
+        seen["start"] = req.url.params.get("startTime")
+        seen["stop"] = req.url.params.get("stopTime")
+        return httpx.Response(200, text="dns\n")
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    await mcp.call_tool(
+        "arkime_unique",
+        {"field": "protocols", "time_from": "1714003200", "time_to": "1714089600"},
+    )
+    assert seen["start"] == "1714003200"
+    assert seen["stop"] == "1714089600"
+
+
+@pytest.mark.asyncio
+async def test_sessions_reports_matches_not_the_whole_index():
+    """recordsFiltered is what the expression matched; recordsTotal is the size
+    of the index. Reporting the latter said `protocols == ssh` matched 6,030,807
+    sessions when it matched 134."""
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "240425-A"}], "recordsTotal": 6030807, "recordsFiltered": 134},
+        )
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    out = str(await mcp.call_tool("arkime_sessions", {"expression": "protocols == ssh"}))
+    assert "134" in out
+    assert "6030807" not in out
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,53 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-30
+
+### Fixed
+
+- `arkime_session_detail` now returns the session document instead of failing.
+  Two separate faults had to go:
+  - It fetched `GET /arkime/api/session/<id>`, which serves the Arkime SPA HTML
+    shell rather than JSON, so every call died parsing HTML as JSON
+    (`Expecting value: line 1 column 1`). It now queries `/arkime/api/sessions`
+    with an `id ==` expression and `date=-1`, returning the single record, and
+    reports a clear message when no session matches.
+  - It then passed the id through verbatim. `arkime_sessions` — the tool this
+    one's own docstring tells you to get the id from — returns it node-prefixed
+    (`3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw`), while Arkime's `id ==` matches
+    only the bare id after the last `:`. Measured on 26.07.1, the prefixed form
+    returns 0 rows and the bare one returns the session, so the documented
+    workflow reported "No Arkime session found" for every valid id. The id is
+    now reduced to its bare form for this expression only; `sessions.pcap`
+    accepts the prefixed id, so `arkime_session_pcap` still passes it through
+    unchanged.
+
+  Verified live end to end against Malcolm 26.07.1: an id taken from
+  `arkime_sessions` now resolves and comes back carrying that same id. The
+  prior unit tests passed only because their mock returned JSON for the HTML
+  endpoint and never asserted the expression that was sent.
+- `arkime_sessions` reported the size of the whole index as the result count.
+  It returned Arkime's `recordsTotal`, not `recordsFiltered`, so a search for
+  `protocols == ssh` that matched 134 sessions came back as
+  `total: 6030807` — an agent reading that would conclude ssh was everywhere.
+  The key is now `matched` and carries the number the expression actually
+  found. Measured on 26.07.1.
+- `arkime_unique` could not reach historical data. It was the only Arkime tool
+  with no `time_from` / `time_to`, so every call used Arkime's default recent
+  window and returned "(no values)" against a capture older than that — while
+  its siblings (`arkime_multiunique`, `arkime_spigraph`, `arkime_spiview`)
+  answered the same question fine. It takes the window now, and says in its
+  description that an empty result without one usually means the data is older
+  than the default range rather than missing.
+- Pin the MCP SDK to `mcp>=1.0,<2`. The 0.4.0 requirement was `mcp>=1.0` with
+  no upper bound, so a fresh `pip install mcp-server-malcolm` resolved to
+  `mcp` 2.0.0 and the server failed at import with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. SDK 2.0 renamed
+  `FastMCP` to `MCPServer` and moved it to `mcp.server.mcpserver`; every tool
+  module here imports the 1.x path. Installs that already resolved to 1.x were
+  unaffected. Porting to the 2.0 API (and with it the stateless `2026-07-28`
+  protocol revision) is separate work.
+
 ## [0.4.0] - 2026-07-28
 
 Audited Malcolm's ingest pipelines (`logstash/pipelines/`) against the fields
