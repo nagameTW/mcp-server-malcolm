@@ -529,12 +529,22 @@ class MalcolmClient:
         GET /arkime/api/session/<id> serves the Arkime SPA HTML shell, not JSON,
         so a single session is fetched through /arkime/api/sessions with an
         `id ==` expression and date=-1 (all time). The id is indexed, so this
-        stays a point lookup rather than a scan. Verified live against Malcolm
-        25.12.1. Returns {} when no session matches the id.
+        stays a point lookup rather than a scan.
+
+        The id is reduced to its bare form first. arkime_sessions hands out the
+        node-prefixed id ("3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw") but Arkime's
+        `id ==` matches only the part after the last ':' — measured on 26.07.1,
+        the prefixed form returns 0 rows and the bare one returns the session.
+        Feeding this tool the id its sibling produced therefore always missed.
+        Only this expression needs the bare form: sessions.pcap takes the
+        prefixed id as-is, so arkime_session_pcap passes it through untouched.
+
+        Returns {} when no session matches the id.
         """
+        bare_id = session_id.rsplit(":", 1)[-1].rsplit("@", 1)[-1]
         result = await self.get(
             "/arkime/api/sessions",
-            params={"expression": f"id == {session_id}", "date": -1, "length": 1},
+            params={"expression": f"id == {bare_id}", "date": -1, "length": 1},
         )
         data = result.get("data") if isinstance(result, dict) else None
         return data[0] if data else {}

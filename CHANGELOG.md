@@ -54,13 +54,26 @@ than an empty list.
 ### Fixed
 
 - `arkime_session_detail` now returns the session document instead of failing.
-  It fetched `GET /arkime/api/session/<id>`, which serves the Arkime SPA HTML
-  shell rather than JSON, so every call died parsing HTML as JSON
-  (`Expecting value: line 1 column 1`). It now queries `/arkime/api/sessions`
-  with an `id ==` expression and `date=-1`, returning the single record, and
-  reports a clear message when no session matches. Verified live against
-  Malcolm 25.12.1. The prior unit test passed only because its mock returned
-  JSON for the HTML endpoint.
+  Two separate faults had to go:
+  - It fetched `GET /arkime/api/session/<id>`, which serves the Arkime SPA HTML
+    shell rather than JSON, so every call died parsing HTML as JSON
+    (`Expecting value: line 1 column 1`). It now queries `/arkime/api/sessions`
+    with an `id ==` expression and `date=-1`, returning the single record, and
+    reports a clear message when no session matches.
+  - It then passed the id through verbatim. `arkime_sessions` — the tool this
+    one's own docstring tells you to get the id from — returns it node-prefixed
+    (`3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw`), while Arkime's `id ==` matches
+    only the bare id after the last `:`. Measured on 26.07.1, the prefixed form
+    returns 0 rows and the bare one returns the session, so the documented
+    workflow reported "No Arkime session found" for every valid id. The id is
+    now reduced to its bare form for this expression only; `sessions.pcap`
+    accepts the prefixed id, so `arkime_session_pcap` still passes it through
+    unchanged.
+
+  Verified live end to end against Malcolm 26.07.1: an id taken from
+  `arkime_sessions` now resolves and comes back carrying that same id. The
+  prior unit tests passed only because their mock returned JSON for the HTML
+  endpoint and never asserted the expression that was sent.
 - Pin the MCP SDK to `mcp>=1.0,<2`. The 0.4.0 requirement was `mcp>=1.0` with
   no upper bound, so a fresh `pip install mcp-server-malcolm` resolved to
   `mcp` 2.0.0 and the server failed at import with
