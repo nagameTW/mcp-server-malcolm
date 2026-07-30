@@ -6,6 +6,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Annotated
 
+import httpx
 from pydantic import Field
 
 if TYPE_CHECKING:
@@ -34,6 +35,10 @@ _HASH_RE = re.compile(r"[A-Fa-f0-9]{16,128}")
 # Extracted-file guard: bodyhash streams the file into memory, same OOM concern
 # as the PCAP download.
 _FILE_MAX_MB = 100
+
+# The two CSV export routes. Anything else would be a path segment an agent
+# invented, so the kind is matched against this rather than interpolated.
+_CSV_KINDS = ("sessions", "connections")
 
 # Shared: every Arkime tool here reads from the external Arkime (via Malcolm)
 # server, never mutates it.
@@ -670,3 +675,88 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             },
             indent=2,
         )
+
+    @mcp.tool(title="Export sessions or connections as CSV", annotations=_READ)
+    async def arkime_export_csv(
+        kind: Annotated[
+            str,
+            Field(
+                description='Which table to export: "sessions" (one row per '
+                'session) or "connections" (one row per source/destination pair '
+                "with its totals)."
+            ),
+        ],
+        expression: Annotated[
+            str,
+            Field(
+                description="Arkime expression syntax to scope the rows, "
+                'e.g. "ip == 192.0.2.7 && protocols == dns". Empty = all sessions.'
+            ),
+        ] = "",
+        fields: Annotated[
+            str,
+            Field(
+                description="Comma-separated columns, as ECS DOTTED names "
+                '("source.ip,destination.port") — the names malcolm_field_search '
+                "returns, NOT Arkime db names (srcIp) or expression names "
+                "(ip.src). A name Arkime does not accept is never reported as an "
+                "error: measured on 6.6.0 it either comes back as an empty column "
+                "or the request hangs until it times out. Leave empty for "
+                "Arkime's default columns, which always work. "
+                "sessions only; ignored for connections."
+            ),
+        ] = "",
+        limit: Annotated[int, Field(description="Max rows to export.", ge=1, le=10000)] = 100,
+        time_from: Annotated[
+            str,
+            Field(
+                description="Start time as EPOCH SECONDS (NOT a dateparser string). "
+                "Empty = Arkime's default recent window."
+            ),
+        ] = "",
+        time_to: Annotated[
+            str,
+            Field(description="End time as EPOCH SECONDS (NOT a dateparser string). Empty = now."),
+        ] = "",
+    ) -> str:
+        """Export many sessions, or a source/destination summary, as a compact CSV table.
+
+        Use this when you want a lot of rows cheaply: CSV costs roughly half the
+        tokens of the same rows as JSON, so it suits "show me every DNS session
+        this host made" or a who-talked-to-whom summary you intend to read as a
+        table. Use arkime_sessions instead when you need a session id to drill
+        into (this returns none), and arkime_connections when you want the
+        source/destination graph as structured nodes and links rather than rows.
+
+        Returns raw CSV TEXT with a header row, not JSON. `connections` totals
+        each source/destination pair over the whole window; `sessions` gives one
+        row each. A request that names a column Arkime does not accept hangs
+        rather than failing, so a timeout here is reported as a probable `fields`
+        problem.
+        """
+        target = kind.strip().lower()
+        if target not in _CSV_KINDS:
+            return f"Error: kind must be one of {', '.join(_CSV_KINDS)} (got {kind!r})."
+
+        wanted = ",".join(f.strip() for f in fields.split(",") if f.strip())
+        try:
+            text = await client.arkime_export_csv(
+                kind=target,
+                expression=expression.strip(),
+                limit=min(max(1, limit), 10000),
+                fields=wanted if target == "sessions" else "",
+                time_from=time_from.strip(),
+                time_to=time_to.strip(),
+            )
+        except httpx.TimeoutException:
+            return (
+                "Arkime CSV export timed out. When `fields` is set this almost "
+                "always means a column name Arkime does not accept: it takes ECS "
+                "dotted names such as source.ip and destination.port, and never "
+                "answers for a db name (srcIp) or an expression name (ip.src). "
+                "Retry with no fields to get the default columns."
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"Arkime CSV export failed: {exc}"
+
+        return text or "(no rows)"

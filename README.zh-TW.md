@@ -107,6 +107,17 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | `arkime_spigraphhierarchy` | 跨欄位的階層式 top-N 分解（巢狀 drill-down） |
 | `arkime_connections` | 來源/目的連線圖（nodes 與 links） |
 | `arkime_file_by_hash` | 依 md5/sha256 萃取傳輸過的檔案（只回 metadata，不落地） |
+| `arkime_export_csv` | 把 session、或來源/目的的統計摘要匯出成精簡 CSV 表（同樣的資料，token 大約是 JSON 的一半） |
+
+### Arkime 儲存物件與擷取健康度
+
+| 工具 | 說明 |
+|------|------|
+| `arkime_views` | 列出團隊存下來的搜尋 view，附各自的 expression |
+| `arkime_shortcuts` | 列出具名值清單（IOC 集合）與內容，並給出在 expression 裡引用的 `$name` |
+| `arkime_reverse_dns` | 把單一 IP 反解成 PTR 主機名 |
+| `arkime_pcap_files` | 列出 Arkime 已索引的 PCAP 檔，含大小、封包/session 數與時間範圍 |
+| `arkime_node_stats` | 擷取節點健康度：丟包、磁碟、記憶體、佇列——節點正在丟包時會特別警告，因為那會讓「資料缺口」看起來像「沒有這種流量」 |
 
 ### 檔案分析
 
@@ -461,6 +472,11 @@ arkime_create_hunt(
 | `/arkime/api/sessions/bodyhash/<hash>` | GET | `arkime_file_by_hash` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags`（write） |
 | `/extracted-files/<name>` | GET | `malcolm_extract_file` |
+| `/arkime/api/sessions.csv`、`/arkime/api/connections.csv` | GET | `arkime_export_csv` |
+| `/arkime/api/views`、`/arkime/api/shortcuts` | GET | `arkime_views`、`arkime_shortcuts` |
+| `/arkime/api/reversedns` | GET | `arkime_reverse_dns` |
+| `/arkime/api/files` | GET | `arkime_pcap_files` |
+| `/arkime/api/stats` | GET | `arkime_node_stats` |
 | `/arkime/api/hunt`、`/arkime/api/hunts` | POST、GET | `arkime_create_hunt`、`arkime_hunt_status`（write + read） |
 | `/arkime/api/view`、`/arkime/api/shortcut` | POST | `arkime_create_view`、`arkime_create_shortcut`（write） |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |

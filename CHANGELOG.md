@@ -6,6 +6,39 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-30
+
+Closes the Arkime read gaps: everything the viewer API exposes that an analyst
+would ask for, minus the operational-monitoring and UI-personalisation routes
+that carry nothing an agent can act on. Every endpoint below was probed against
+a live Malcolm v26.07.1 / Arkime v6.6.0 first, which is where the parameter and
+failure-mode notes come from.
+
+### Added
+
+- `arkime_views` and `arkime_shortcuts`: read back the saved searches and named
+  value lists the team curated. The write classes could already create both, but
+  nothing could list them, so an agent had no way to reference a `$name` IOC list
+  or reuse a colleague's query. Each shortcut row carries the exact `$name` token
+  to paste into an expression.
+- `arkime_reverse_dns`: PTR lookup for one address. Arkime answers `200` with the
+  body `reverse error` when there is no record, so the tool reads the body rather
+  than the status and reports `resolved: false` — an absent PTR is normal for a
+  private address, not a failure.
+- `arkime_pcap_files`: the capture inventory — which PCAP files are indexed, their
+  size, packet and session counts, and the span each covers.
+- `arkime_node_stats`: capture-node health. A node that is currently dropping
+  packets gets an explicit warning, because a gap in the capture is
+  indistinguishable from "no such traffic" in every search built on top of it.
+  Narrowing uses `filter`; Arkime accepts `nodeName` and silently ignores it,
+  which returns every node and reads as though the filter matched.
+- `arkime_export_csv`: sessions or a source/destination summary as CSV, which
+  costs roughly half the tokens of the same rows as JSON. Its `fields` argument
+  takes ECS dotted names (`source.ip`), and a name Arkime does not accept is
+  never reported as an error — it comes back as an empty column, or the request
+  hangs until it times out. The tool says so, and turns that timeout into a
+  message naming the likely cause instead of a bare stall.
+
 ## [0.5.0] - 2026-07-30
 
 File analysis was the largest hole in this server's coverage: Malcolm carves
