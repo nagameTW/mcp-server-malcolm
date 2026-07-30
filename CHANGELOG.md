@@ -6,6 +6,49 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-30
+
+File analysis was the largest hole in this server's coverage: Malcolm carves
+every file it sees out of the traffic (Zeek's file extractor, then Strelka with
+YARA/ClamAV on top), and none of it was reachable from an agent. Field names and
+response shapes below were read off a live Malcolm v26.07.1 with `all` extraction
+and Strelka running, not from the docs.
+
+### Added
+
+- `malcolm_file_scans`: list the files Zeek carved out of traffic. Filters
+  `event.dataset=files` for you and returns one trimmed row per file — name,
+  MIME type, size, md5/sha256, both endpoints, Malcolm's severity, and any
+  Strelka scan hits — instead of the raw document, which runs to several KB of
+  hashes, geo and pipeline metadata each. `executables_only=True` is a shortcut
+  for the executable MIME types (Malcolm records PE files as
+  `application/x-dosexec`, which is not a name an agent guesses).
+  `file_hash=<md5|sha1|sha256|ssdeep|tlsh>` pivots from a hash IOC back to the
+  sessions that carried it, matched on `related.hash`, which holds all five.
+- `malcolm_extract_file`: fetch one carved file from Malcolm's extracted-files
+  server (`GET /extracted-files/<name>`, served when
+  `FILESCAN_HTTP_SERVER_ENABLE` is on) and report size, sha256 and the leading
+  file-magic bytes. Metadata only, nothing written to disk: an extracted file
+  may be live malware, so the bytes never enter the MCP response. A size cap is
+  enforced against the streamed body, and `url_only=True` returns just the URL.
+  A 404 is reported as `found: false` — the record can outlive the file, which
+  Malcolm prunes.
+- The `hunt_workflow` prompt gained a file-chasing step between session
+  drill-down and aggregation.
+
+Both tool definitions are written to Glama's TDQS rubric: purpose in the first
+sentence, named alternatives for the cases each tool excludes, the return shape
+stated, and behavior disclosed that the annotations cannot carry — that a file
+can come back as two rows (Zeek's transfer record and Strelka's scan record both
+sit under `event.dataset=files`), and that no match returns a sentence rather
+than an empty list.
+
+### Fixed
+
+- The README endpoint tables listed `GET /arkime/api/session/<id>` for
+  `arkime_session_detail`; 0.4.1 moved that tool to `/arkime/api/sessions` with
+  an `id ==` expression and the tables were not updated with it.
+
 ## [0.4.1] - 2026-07-30
 
 ### Fixed

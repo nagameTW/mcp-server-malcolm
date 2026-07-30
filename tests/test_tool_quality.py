@@ -72,7 +72,16 @@ def test_read_only_tools_do_not_describe_writes(monkeypatch):
     assert not offenders, f"read-only tools with write words in description: {offenders}"
 
 
-@pytest.mark.parametrize("name", ["malcolm_search", "arkime_sessions", "arkime_create_hunt"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "malcolm_search",
+        "arkime_sessions",
+        "arkime_create_hunt",
+        "malcolm_file_scans",
+        "malcolm_extract_file",
+    ],
+)
 def test_representative_tools_name_an_alternative(monkeypatch, name):
     """TDQS Usage Guidelines: a tool's description should point to a sibling.
 

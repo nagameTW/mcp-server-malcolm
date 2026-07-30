@@ -19,6 +19,7 @@ import os
 from collections.abc import Iterable
 from difflib import get_close_matches
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -485,20 +486,37 @@ class MalcolmClient:
         c = await self._client()
         async with c.stream("GET", "/arkime/api/sessions.pcap", params={"ids": session_id}) as resp:
             resp.raise_for_status()
-            if max_bytes:
-                declared = resp.headers.get("content-length")
-                if declared is not None and int(declared) > max_bytes:
-                    raise ValueError(
-                        f"PCAP too large: {int(declared)} bytes exceeds cap {max_bytes}"
-                    )
-            chunks: list[bytes] = []
-            total = 0
-            async for chunk in resp.aiter_bytes():
-                total += len(chunk)
-                if max_bytes and total > max_bytes:
-                    raise ValueError(f"PCAP exceeds cap {max_bytes} bytes")
-                chunks.append(chunk)
-            return b"".join(chunks)
+            return await _read_capped(resp, max_bytes, "PCAP")
+
+    async def extracted_file(self, name: str, max_bytes: int = 0) -> tuple[int, bytes]:
+        """Download one Zeek-extracted file from Malcolm's extracted-files server.
+
+        GET /extracted-files/<name>, the directory Malcolm serves when
+        FILESCAN_HTTP_SERVER_ENABLE is on (the same path zeek.files.extracted_uri
+        records). The name is percent-encoded here because httpx does not escape
+        it: a '#' or '?' in a carved SMB filename would otherwise be parsed as a
+        fragment or query and fetch the wrong file.
+
+        Args:
+            name: Bare filename, no directory part (the directory is flat).
+            max_bytes: Refuse a download larger than this (0 = no cap). The body
+                is streamed so an oversized response is aborted before it is all
+                read into memory.
+
+        Returns:
+            (status_code, body). The body is empty for an error status, so a 404
+            — the record is indexed but the file was pruned or never preserved —
+            is reportable without raising.
+
+        Raises:
+            ValueError: the response exceeds max_bytes.
+        """
+        c = await self._client()
+        path = f"/extracted-files/{quote(name, safe='')}"
+        async with c.stream("GET", path) as resp:
+            if resp.status_code >= 400:
+                return resp.status_code, b""
+            return resp.status_code, await _read_capped(resp, max_bytes, "Extracted file")
 
     async def arkime_hunts(self, length: int = 50, history: bool = False) -> dict[str, Any]:
         """List Arkime hunt jobs (READ). Ships with the hunt-job write class."""
@@ -839,6 +857,36 @@ def _extract_buckets(data: dict[str, Any], field: str) -> list[dict[str, Any]]:
 
     logger.warning("[malcolm] Could not extract buckets from agg response for field=%s", field)
     return []
+
+
+async def _read_capped(resp: httpx.Response, max_bytes: int, what: str) -> bytes:
+    """Read an open streaming response into memory, refusing to exceed max_bytes.
+
+    Args:
+        resp: An open streaming response whose status is already checked.
+        max_bytes: Hard cap in bytes; 0 disables it.
+        what: Noun for the error message, e.g. "PCAP".
+
+    Returns:
+        The whole body.
+
+    Raises:
+        ValueError: the declared or streamed length exceeds max_bytes. Checking
+            Content-Length first refuses the oversized body before reading it;
+            the running total catches a server that does not declare one.
+    """
+    if max_bytes:
+        declared = resp.headers.get("content-length")
+        if declared is not None and int(declared) > max_bytes:
+            raise ValueError(f"{what} too large: {int(declared)} bytes exceeds cap {max_bytes}")
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in resp.aiter_bytes():
+        total += len(chunk)
+        if max_bytes and total > max_bytes:
+            raise ValueError(f"{what} exceeds cap {max_bytes} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _arkime_query_params(expression: str, time_from: str, time_to: str) -> dict[str, Any]:

@@ -17,6 +17,7 @@ def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     from mcp_server_malcolm.tools.correlation import register_correlation_tools
     from mcp_server_malcolm.tools.dsl import register_dsl_tools
     from mcp_server_malcolm.tools.fields import register_field_tools
+    from mcp_server_malcolm.tools.files import register_file_tools
     from mcp_server_malcolm.tools.health import register_health_tools
     from mcp_server_malcolm.tools.netbox import register_netbox_tools
     from mcp_server_malcolm.tools.query import register_query_tools
@@ -28,6 +29,7 @@ def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     register_netbox_tools(mcp, client)
     register_arkime_tools(mcp, client)
     register_correlation_tools(mcp, client)
+    register_file_tools(mcp, client)
 
 
 def register_write_tools(mcp: FastMCP, client: MalcolmClient, cfg: WriteConfig) -> None:
