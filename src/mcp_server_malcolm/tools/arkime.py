@@ -128,8 +128,9 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         arkime_session_detail; for its PCAP bytes/metadata use
         arkime_session_pcap. To search with Malcolm filter dicts and dateparser
         times instead of Arkime expressions and epoch seconds, use
-        malcolm_search. Returns the total count, the number shown, and the
-        session rows.
+        malcolm_search. Returns `matched` (how many sessions the expression
+        found, which is usually far more than are returned), `showing`, and the
+        session rows. Each row's `id` is what the drill-down tools take.
         """
         if not expression.strip():
             return "Error: expression is required."
@@ -145,10 +146,12 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             return f"Arkime search failed: {exc}"
 
         sessions = data.get("data", [])
-        total = data.get("recordsTotal", 0)
-
+        # recordsFiltered is how many sessions the expression matched;
+        # recordsTotal is how many exist in the index at all. Reporting the
+        # latter as "total" told an agent that `protocols == ssh` matched
+        # 6,030,807 sessions when it matched 134 (measured on 26.07.1).
         result = {
-            "total": total,
+            "matched": data.get("recordsFiltered", 0),
             "showing": len(sessions),
             "sessions": sessions,
         }
@@ -281,6 +284,18 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             bool,
             Field(description="Include a per-value occurrence count (default true)."),
         ] = True,
+        time_from: Annotated[
+            str,
+            Field(
+                description="Start time as EPOCH SECONDS (NOT a dateparser string). "
+                "Empty = Arkime's default recent window, which finds nothing in a "
+                "capture older than it — pass a range to reach historical data."
+            ),
+        ] = "",
+        time_to: Annotated[
+            str,
+            Field(description="End time as EPOCH SECONDS (NOT a dateparser string). Empty = now."),
+        ] = "",
     ) -> str:
         """List distinct values of ONE Arkime field as plain text, optionally with counts.
 
@@ -288,8 +303,11 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         arkime_multiunique; for top values of one field plus a time-series graph
         use arkime_spigraph; to profile many fields in one call use
         arkime_spiview. Lighter than a full aggregation when you only need to see
-        what values a field holds. Returns plain TEXT (one value per line, not
-        JSON) — Arkime streams it directly.
+        what values a field holds.
+
+        Returns plain TEXT (one value per line, not JSON) — Arkime streams it
+        directly. "(no values)" with no time range usually means the data is
+        older than Arkime's default window rather than absent: pass time_from.
         """
         if not field.strip():
             return "Error: field is required."
@@ -299,6 +317,8 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 expression=expression.strip(),
                 field=field.strip(),
                 counts=counts,
+                time_from=time_from.strip(),
+                time_to=time_to.strip(),
             )
         except Exception as exc:  # noqa: BLE001
             return f"Arkime unique failed: {exc}"

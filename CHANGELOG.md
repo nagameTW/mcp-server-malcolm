@@ -31,6 +31,20 @@ All notable changes to this project are recorded here. The format follows
   `arkime_sessions` now resolves and comes back carrying that same id. The
   prior unit tests passed only because their mock returned JSON for the HTML
   endpoint and never asserted the expression that was sent.
+- `arkime_sessions` reported the size of the whole index as the result count.
+  It returned Arkime's `recordsTotal`, not `recordsFiltered`, so a search for
+  `protocols == ssh` that matched 134 sessions came back as
+  `total: 6030807` — an agent reading that would conclude ssh was everywhere.
+  The key is now `matched` and carries the number the expression actually
+  found. Measured on 26.07.1.
+- `arkime_unique` could not reach historical data. It was the only Arkime tool
+  with no `time_from` / `time_to`, so every call used Arkime's default recent
+  window and returned "(no values)" against a capture older than that — while
+  its siblings (`arkime_multiunique`, `arkime_spigraph`, `arkime_spiview`)
+  answered the same question fine. It takes the window now, and says in its
+  description that an empty result without one usually means the data is older
+  than the default range rather than missing.
+
 - Pin the MCP SDK to `mcp>=1.0,<2`. The 0.4.0 requirement was `mcp>=1.0` with
   no upper bound, so a fresh `pip install mcp-server-malcolm` resolved to
   `mcp` 2.0.0 and the server failed at import with

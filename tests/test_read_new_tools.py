@@ -134,6 +134,46 @@ async def test_unique_returns_plain_text_lines():
 
 
 @pytest.mark.asyncio
+async def test_unique_passes_the_time_window():
+    """Without a window Arkime answers from its default recent range, which is
+    empty on a historical capture — verified live on 26.07.1."""
+    seen = {}
+
+    def handler(req):
+        seen["start"] = req.url.params.get("startTime")
+        seen["stop"] = req.url.params.get("stopTime")
+        return httpx.Response(200, text="dns\n")
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    await mcp.call_tool(
+        "arkime_unique",
+        {"field": "protocols", "time_from": "1714003200", "time_to": "1714089600"},
+    )
+    assert seen["start"] == "1714003200"
+    assert seen["stop"] == "1714089600"
+
+
+@pytest.mark.asyncio
+async def test_sessions_reports_matches_not_the_whole_index():
+    """recordsFiltered is what the expression matched; recordsTotal is the size
+    of the index. Reporting the latter said `protocols == ssh` matched 6,030,807
+    sessions when it matched 134."""
+
+    def handler(req):
+        return httpx.Response(
+            200,
+            json={"data": [{"id": "240425-A"}], "recordsTotal": 6030807, "recordsFiltered": 134},
+        )
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    out = str(await mcp.call_tool("arkime_sessions", {"expression": "protocols == ssh"}))
+    assert "134" in out
+    assert "6030807" not in out
+
+
+@pytest.mark.asyncio
 async def test_unique_requires_field():
     def handler(req):
         raise AssertionError("must not call the API without a field")
