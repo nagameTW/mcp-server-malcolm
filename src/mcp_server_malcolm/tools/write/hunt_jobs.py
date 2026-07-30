@@ -16,7 +16,7 @@ from pydantic import Field
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -35,7 +35,7 @@ _WRITE = {
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def register_hunt_job_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
+def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: str | None) -> None:
     """Register hunt create (write) + status (read). Called only when enabled."""
 
     @mcp.tool(title="Create hunt job", annotations=_WRITE)

@@ -9,7 +9,8 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from conftest import tool_text
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.server import create_server
@@ -27,14 +28,9 @@ def _mock_client(handler):
 
 
 def _tools(handler, register=register_arkime_inventory_tools):
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register(mcp, _mock_client(handler))
     return mcp
-
-
-def payload(out):
-    content = out[0] if isinstance(out, tuple) else out
-    return content[0].text
 
 
 def test_batch2_tools_registered():
@@ -70,7 +66,7 @@ async def test_views_lists_saved_searches():
         seen["path"] = req.url.path
         return httpx.Response(200, json={"data": [_VIEW], "recordsTotal": 1})
 
-    out = json.loads(payload(await _tools(handler).call_tool("arkime_views", {})))
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_views", {})))
 
     assert seen["path"] == "/arkime/api/views"
     assert out["count"] == 1
@@ -88,7 +84,7 @@ async def test_views_reports_an_empty_list_plainly():
     def handler(req):
         return httpx.Response(200, json={"data": [], "recordsTotal": 0})
 
-    out = payload(await _tools(handler).call_tool("arkime_views", {}))
+    out = tool_text(await _tools(handler).call_tool("arkime_views", {}))
 
     assert "no saved views" in out.lower()
 
@@ -114,7 +110,7 @@ async def test_shortcuts_lists_value_lists_with_their_expression_reference():
             },
         )
 
-    out = json.loads(payload(await _tools(handler).call_tool("arkime_shortcuts", {})))
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_shortcuts", {})))
     row = out["shortcuts"][0]
 
     assert row["name"] == "c2_ips"
@@ -129,7 +125,7 @@ async def test_shortcuts_says_where_they_come_from_when_empty():
     def handler(req):
         return httpx.Response(200, json={"data": [], "recordsTotal": 0})
 
-    out = payload(await _tools(handler).call_tool("arkime_shortcuts", {}))
+    out = tool_text(await _tools(handler).call_tool("arkime_shortcuts", {}))
 
     assert "no shortcuts" in out.lower()
 
@@ -146,7 +142,7 @@ async def test_reverse_dns_returns_the_ptr_name():
         return httpx.Response(200, text="dns.google\n")
 
     out = json.loads(
-        payload(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": "8.8.8.8"}))
+        tool_text(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": "8.8.8.8"}))
     )
 
     assert seen["ip"] == "8.8.8.8"
@@ -163,7 +159,7 @@ async def test_reverse_dns_translates_arkimes_error_text():
         return httpx.Response(200, text="reverse error")
 
     out = json.loads(
-        payload(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": "192.0.2.7"}))
+        tool_text(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": "192.0.2.7"}))
     )
 
     assert out["resolved"] is False
@@ -176,7 +172,7 @@ async def test_reverse_dns_rejects_a_non_ip(bad):
     def handler(req):
         raise AssertionError(f"must not query for {bad!r}")
 
-    out = payload(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": bad}))
+    out = tool_text(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": bad}))
 
     assert "error" in out.lower()
 
@@ -186,7 +182,7 @@ async def test_reverse_dns_accepts_ipv6():
     def handler(req):
         return httpx.Response(200, text="localhost")
 
-    out = payload(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": "::1"}))
+    out = tool_text(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": "::1"}))
 
     assert "localhost" in out
 
@@ -218,7 +214,7 @@ async def test_pcap_files_lists_the_capture_inventory():
         seen["length"] = req.url.params.get("length")
         return httpx.Response(200, json={"data": [_FILE], "recordsTotal": 29})
 
-    out = json.loads(payload(await _tools(handler).call_tool("arkime_pcap_files", {"limit": 5})))
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_pcap_files", {"limit": 5})))
 
     assert seen["path"] == "/arkime/api/files"
     assert seen["length"] == "5"
@@ -239,7 +235,7 @@ async def test_pcap_files_drops_the_internal_bookkeeping_fields():
     def handler(req):
         return httpx.Response(200, json={"data": [_FILE], "recordsTotal": 1})
 
-    out = payload(await _tools(handler).call_tool("arkime_pcap_files", {}))
+    out = tool_text(await _tools(handler).call_tool("arkime_pcap_files", {}))
 
     assert "packetPosEncoding" not in out
 
@@ -277,7 +273,7 @@ async def test_node_stats_surfaces_capture_health():
         seen["path"] = req.url.path
         return httpx.Response(200, json={"data": [_NODE], "recordsTotal": 1})
 
-    out = json.loads(payload(await _tools(handler).call_tool("arkime_node_stats", {})))
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_node_stats", {})))
     node = out["nodes"][0]
 
     assert seen["path"] == "/arkime/api/stats"
@@ -299,7 +295,7 @@ async def test_node_stats_flags_a_node_that_is_dropping_packets():
     def handler(req):
         return httpx.Response(200, json={"data": [dropping], "recordsTotal": 1})
 
-    out = payload(await _tools(handler).call_tool("arkime_node_stats", {}))
+    out = tool_text(await _tools(handler).call_tool("arkime_node_stats", {}))
 
     assert "dropping" in out.lower()
 
@@ -331,7 +327,7 @@ async def test_sessions_csv_hits_the_csv_route_and_bounds_the_rows():
         seen["params"] = dict(req.url.params)
         return httpx.Response(200, text="IP Protocol, Src IP\nudp,192.0.2.7\n")
 
-    out = payload(
+    out = tool_text(
         await _tools(handler, register_arkime_tools).call_tool(
             "arkime_sessions_csv",
             {
@@ -386,7 +382,7 @@ async def test_sessions_csv_explains_a_timeout_as_a_bad_field_name():
     def handler(req):
         raise httpx.ReadTimeout("timed out")
 
-    out = payload(
+    out = tool_text(
         await _tools(handler, register_arkime_tools).call_tool(
             "arkime_sessions_csv", {"fields": "srcIp,dstIp"}
         )
@@ -416,7 +412,9 @@ async def test_sessions_csv_reports_a_transport_failure():
     def handler(req):
         raise httpx.ConnectError("connection refused")
 
-    out = payload(await _tools(handler, register_arkime_tools).call_tool("arkime_sessions_csv", {}))
+    out = tool_text(
+        await _tools(handler, register_arkime_tools).call_tool("arkime_sessions_csv", {})
+    )
 
     assert "failed" in out.lower()
 
@@ -441,7 +439,7 @@ async def test_every_inventory_tool_reports_a_transport_failure(tool, args):
     def handler(req):
         raise httpx.ConnectError("connection refused")
 
-    out = payload(await _tools(handler).call_tool(tool, args))
+    out = tool_text(await _tools(handler).call_tool(tool, args))
 
     assert "failed" in out.lower()
     assert "connection refused" in out
@@ -452,7 +450,7 @@ async def test_pcap_files_says_so_when_nothing_is_indexed():
     def handler(req):
         return httpx.Response(200, json={"data": [], "recordsTotal": 0})
 
-    out = payload(await _tools(handler).call_tool("arkime_pcap_files", {}))
+    out = tool_text(await _tools(handler).call_tool("arkime_pcap_files", {}))
 
     assert "no indexed pcap" in out.lower()
 
@@ -462,7 +460,7 @@ async def test_node_stats_says_so_when_no_node_matches():
     def handler(req):
         return httpx.Response(200, json={"data": [], "recordsTotal": 0})
 
-    out = payload(await _tools(handler).call_tool("arkime_node_stats", {"node": "ghost"}))
+    out = tool_text(await _tools(handler).call_tool("arkime_node_stats", {"node": "ghost"}))
 
     assert "ghost" in out
 
@@ -476,7 +474,7 @@ async def test_node_stats_omits_cpu_when_arkime_sends_no_number():
     def handler(req):
         return httpx.Response(200, json={"data": [no_cpu], "recordsTotal": 1})
 
-    out = payload(await _tools(handler).call_tool("arkime_node_stats", {}))
+    out = tool_text(await _tools(handler).call_tool("arkime_node_stats", {}))
 
     assert "cpu_percent" not in out
 
@@ -490,6 +488,6 @@ async def test_node_stats_tolerates_counters_arriving_as_strings():
     def handler(req):
         return httpx.Response(200, json={"data": [stringy], "recordsTotal": 1})
 
-    out = payload(await _tools(handler).call_tool("arkime_node_stats", {}))
+    out = tool_text(await _tools(handler).call_tool("arkime_node_stats", {}))
 
     assert "dropping" in out.lower()

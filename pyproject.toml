@@ -7,7 +7,7 @@ where = ["src"]
 
 [project]
 name = "mcp-server-malcolm"
-version = "0.7.0"
+version = "0.8.0"
 description = "MCP server for the Malcolm network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch + NetBox) — full read surface plus opt-in, audited write tools"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,10 +23,11 @@ classifiers = [
     "Topic :: System :: Networking :: Monitoring",
 ]
 dependencies = [
-    # mcp 2.0 dropped mcp.server.fastmcp (FastMCP is now MCPServer in
-    # mcp.server.mcpserver), which every tool module here imports. Pin to 1.x
-    # until the server is ported.
-    "mcp>=1.0,<2",
+    # Pinned to the 2.x line. 2.0 renamed FastMCP to MCPServer and moved it to
+    # mcp.server.mcpserver with no compatibility shim, and renamed Tool's
+    # inputSchema/outputSchema to snake_case, so 1.x and 2.x cannot both be
+    # supported without a shim this server does not need.
+    "mcp>=2,<3",
     "httpx>=0.27",
 ]
 

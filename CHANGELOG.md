@@ -6,6 +6,49 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-30
+
+Ported to the MCP Python SDK 2.x. 0.4.1 pinned the SDK to `<2` as an emergency
+fix, because 2.0 removed `mcp.server.fastmcp` and every module here imported it;
+this replaces that pin with the port it was standing in for.
+
+> **Upgrading:** this release requires `mcp>=2,<3`. The two SDK lines cannot both
+> be supported without a shim — 2.0 removed `mcp.server.fastmcp` outright, with no
+> alias — so an environment holding `mcp` 1.x must upgrade it alongside. No tool
+> name, argument or output changed; all 41 tools were exercised over a real MCP
+> stdio session against a live Malcolm before and after.
+
+### Changed
+
+- `FastMCP` is now `MCPServer`, from `mcp.server.mcpserver`. Titles, tool
+  annotations and per-parameter descriptions all survive the move unchanged,
+  verified against the running server rather than assumed.
+- Tests read `Tool.input_schema` and `annotations.read_only_hint`, which 2.0
+  renamed from `inputSchema` and `readOnlyHint`, and call results are unwrapped
+  through one shared helper (`tests/conftest.py`): 2.0 returns a
+  `CallToolResult` object where 1.x returned a `(content, structured)` tuple, and
+  the next such change should touch one file rather than every test module.
+
+### Not done, deliberately
+
+Giving every tool a typed return so it carries a meaningful output schema — the
+one item on Glama's TDQS improvement checklist this server does not satisfy in
+spirit. Two things came out of investigating it:
+
+- Every tool already *has* an output schema. A `-> str` tool auto-generates
+  `{"result": {"type": "string"}}`, so the checklist item is met literally and
+  uselessly.
+- The useful version conflicts with a deliberate design here. These tools return
+  a plain sentence when a search is empty or a lookup is unavailable, because an
+  empty list reads to an agent as "no such traffic" while a sentence explains
+  which. A typed return cannot express "either this object or an English
+  sentence", so every one of the 41 tools would have to fold its prose paths into
+  a status field, taking the ~235 tests with it.
+
+That is a large, regression-prone rewrite of a shipped server for a
+10%-weighted rubric dimension that is already nominally satisfied. It is worth
+doing as its own change with its own review, not as a rider on an SDK port.
+
 ## [0.7.0] - 2026-07-30
 
 The last planned coverage gap: what Malcolm's Dashboards layer already knows.

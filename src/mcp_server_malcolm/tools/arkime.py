@@ -10,7 +10,7 @@ import httpx
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -41,7 +41,7 @@ _FILE_MAX_MB = 100
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register Arkime session search and PCAP info tools."""
 
     @mcp.tool(title="Search Arkime expression fields", annotations=_READ)

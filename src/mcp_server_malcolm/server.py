@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import sys
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.config import WriteConfig
@@ -56,14 +56,14 @@ default; a disabled class's tools are absent entirely. Destructive actions \
 (delete, tag removal, NetBox writes) are deliberately NOT exposed."""
 
 
-def create_server() -> FastMCP:
+def create_server() -> MCPServer:
     """Build and return a fully configured MCP server.
 
     Read tools are always registered. Write tools are registered only for the
     classes enabled via MALCOLM_MCP_ENABLE_* — a disabled class's tools are not
     registered at all (an unregistered tool cannot be called).
     """
-    mcp = FastMCP("mcp-server-malcolm", instructions=_INSTRUCTIONS)
+    mcp = MCPServer("mcp-server-malcolm", instructions=_INSTRUCTIONS)
     client = MalcolmClient.from_env()
     cfg = WriteConfig.from_env()
 

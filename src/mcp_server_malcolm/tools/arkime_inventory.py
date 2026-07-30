@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -21,7 +21,7 @@ _NO_PTR = "reverse error"
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def register_arkime_inventory_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register saved-object, capture-inventory and node-health reads."""
 
     @mcp.tool(title="List saved Arkime views", annotations=_READ)

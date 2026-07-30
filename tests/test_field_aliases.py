@@ -11,7 +11,7 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.field_aliases import alias_for
@@ -143,7 +143,7 @@ async def test_diagnostic_failure_never_breaks_the_caller():
 
 @pytest.mark.asyncio
 async def test_empty_search_explains_a_renamed_filter_field():
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(
         mcp, _mock_client(_fields_handler(lambda req: httpx.Response(200, json={"results": []})))
     )
@@ -160,7 +160,7 @@ async def test_non_empty_search_adds_no_hint():
     def extra(req):
         return httpx.Response(200, json={"results": [{"_id": "1"}]})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(_fields_handler(extra)))
 
     result = await mcp.call_tool(
@@ -203,7 +203,7 @@ async def test_alerts_signature_resolves_substring_to_exact_rule_names():
     # Malcolm's filter is a terms query — a "*ET MALWARE*" value would match a
     # signature literally spelled that way, i.e. nothing.
     seen = {}
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(_alert_handler(seen)))
     await mcp.call_tool("malcolm_alerts", {"signature": "et malware"})
 
@@ -217,7 +217,7 @@ async def test_alerts_signature_resolves_substring_to_exact_rule_names():
 async def test_alerts_says_so_when_no_signature_contains_the_substring():
     # "no signature by that name" must not look like "no alerts fired".
     seen = {}
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(_alert_handler(seen)))
 
     result = str(await mcp.call_tool("malcolm_alerts", {"signature": "log4shell"}))
@@ -237,7 +237,7 @@ async def test_related_sessions_pivots_on_root_id():
             bodies.append(req.content.decode())
         return httpx.Response(200, json={"results": []})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_correlation_tools(mcp, _mock_client(_fields_handler(extra)))
     await mcp.call_tool("malcolm_related_sessions", {"uid": "CYeji2z7CKmPRGyga"})
 
@@ -265,7 +265,7 @@ def _arkime_handler(payload):
 
 @pytest.mark.asyncio
 async def test_arkime_field_search_surfaces_expression_and_db_names():
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(_arkime_handler(_ARKIME_FIELDS)))
 
     result = str(await mcp.call_tool("arkime_field_search", {"keyword": "src"}))
@@ -278,7 +278,7 @@ async def test_arkime_field_search_surfaces_expression_and_db_names():
 
 @pytest.mark.asyncio
 async def test_arkime_field_search_filters_by_group():
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(_arkime_handler(_ARKIME_FIELDS)))
 
     result = str(await mcp.call_tool("arkime_field_search", {"group": "http"}))

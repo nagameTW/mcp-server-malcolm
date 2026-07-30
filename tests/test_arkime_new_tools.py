@@ -5,7 +5,7 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.tools.arkime import register_arkime_tools
@@ -33,7 +33,7 @@ async def test_multiunique_sends_exp_and_returns_text():
         seen["counts"] = req.url.params.get("counts")
         return httpx.Response(200, text="1.2.3.4, 443\n5.6.7.8, 80\n")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(handler))
     out = await mcp.call_tool("arkime_multiunique", {"fields": "source.ip,destination.port"})
     assert seen["path"] == "/arkime/api/multiunique"
@@ -44,7 +44,7 @@ async def test_multiunique_sends_exp_and_returns_text():
 
 @pytest.mark.asyncio
 async def test_multiunique_requires_fields():
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(lambda r: httpx.Response(200, text="")))
     out = await mcp.call_tool("arkime_multiunique", {"fields": "  "})
     assert "required" in str(out).lower()
@@ -57,7 +57,7 @@ async def test_spigraphhierarchy_sends_exp_and_returns_json():
         assert req.url.params.get("exp") == "source.ip,destination.ip"
         return httpx.Response(200, json={"hierarchicalResults": {"name": "root"}})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(handler))
     out = await mcp.call_tool("arkime_spigraphhierarchy", {"fields": "source.ip,destination.ip"})
     assert "hierarchicalResults" in str(out)
@@ -65,7 +65,7 @@ async def test_spigraphhierarchy_sends_exp_and_returns_json():
 
 @pytest.mark.asyncio
 async def test_file_by_hash_rejects_non_hex():
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(lambda r: httpx.Response(200)))
     out = await mcp.call_tool("arkime_file_by_hash", {"file_hash": "../etc/passwd"})
     assert "invalid" in str(out).lower()
@@ -79,7 +79,7 @@ async def test_file_by_hash_returns_metadata_not_bytes():
         assert req.url.path == f"/arkime/api/sessions/bodyhash/{md5}"
         return httpx.Response(200, content=b"MZ\x90\x00some-exe-bytes")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(handler))
     out = await mcp.call_tool("arkime_file_by_hash", {"file_hash": md5})
     text = str(out)
@@ -92,7 +92,7 @@ async def test_file_by_hash_no_match_reports_not_found():
     def handler(req):
         return httpx.Response(400, text="No Match Found")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(handler))
     out = await mcp.call_tool("arkime_file_by_hash", {"file_hash": "b" * 64})
     assert '"found": false' in str(out).lower() or "no match" in str(out).lower()
@@ -103,7 +103,7 @@ async def test_file_by_hash_url_only_skips_download():
     def handler(req):
         raise AssertionError("no download expected")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(handler))
     out = await mcp.call_tool("arkime_file_by_hash", {"file_hash": "c" * 32, "url_only": True})
     assert "download_url" in str(out) and "bodyhash" in str(out)
@@ -133,7 +133,7 @@ def _mock_with_cookie(post_capture):
 @pytest.mark.asyncio
 async def test_create_view_primes_cookie_and_posts(tmp_path):
     cap = {}
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_view_tools(mcp, _mock_with_cookie(cap), None)
     out = await mcp.call_tool(
         "arkime_create_view", {"name": "hunt_c2", "expression": "ip==1.2.3.4"}
@@ -146,7 +146,7 @@ async def test_create_view_primes_cookie_and_posts(tmp_path):
 
 @pytest.mark.asyncio
 async def test_create_view_requires_name_and_expression():
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_view_tools(mcp, _mock_with_cookie({}), None)
     assert (
         "required"
@@ -157,7 +157,7 @@ async def test_create_view_requires_name_and_expression():
 @pytest.mark.asyncio
 async def test_create_shortcut_validates_type_and_posts():
     cap = {}
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_view_tools(mcp, _mock_with_cookie(cap), None)
     out = await mcp.call_tool(
         "arkime_create_shortcut",
@@ -171,7 +171,7 @@ async def test_create_shortcut_validates_type_and_posts():
 
 @pytest.mark.asyncio
 async def test_create_shortcut_rejects_bad_type():
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_view_tools(mcp, _mock_with_cookie({}), None)
     out = await mcp.call_tool(
         "arkime_create_shortcut",
@@ -184,7 +184,7 @@ async def test_create_shortcut_rejects_bad_type():
 async def test_create_shortcut_audits(tmp_path):
     audit = tmp_path / "a.jsonl"
     cap = {}
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_view_tools(mcp, _mock_with_cookie(cap), str(audit))
     await mcp.call_tool(
         "arkime_create_shortcut", {"name": "c2", "value": "1.2.3.4", "shortcut_type": "ip"}

@@ -15,7 +15,7 @@ from pydantic import Field
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -31,7 +31,9 @@ _WRITE = {
 }
 
 
-def register_arkime_tag_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
+def register_arkime_tag_tools(
+    mcp: MCPServer, client: MalcolmClient, audit_file: str | None
+) -> None:
     """Register the additive Arkime tagging tool (called only when enabled)."""
 
     @mcp.tool(title="Tag Arkime sessions", annotations=_WRITE)

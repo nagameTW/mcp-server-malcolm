@@ -20,7 +20,7 @@ from pydantic import Field
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -37,7 +37,9 @@ _WRITE = {
 }
 
 
-def register_arkime_view_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
+def register_arkime_view_tools(
+    mcp: MCPServer, client: MalcolmClient, audit_file: str | None
+) -> None:
     """Register saved-view + shortcut create tools (called only when enabled)."""
 
     @mcp.tool(title="Save Arkime view", annotations=_WRITE)

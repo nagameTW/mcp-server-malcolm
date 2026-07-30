@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def register_field_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register field search, value enumeration, and profile tools."""
 
     @mcp.tool(title="Search index fields", annotations=_READ)

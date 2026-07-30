@@ -2,7 +2,7 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.tools.write.pcap_upload import register_pcap_upload_tools
@@ -28,7 +28,7 @@ async def test_upload_reads_file_and_posts_multipart(tmp_path):
         seen["body"] = req.content
         return httpx.Response(200, text="ok")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_pcap_upload_tools(mcp, _mock(handler), str(audit), str(tmp_path))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(pcap), "tags": "hunt7"})
     assert seen["path"] == "/server/php/submit.php"
@@ -44,7 +44,7 @@ async def test_upload_missing_file(tmp_path):
     def handler(req):
         raise AssertionError("no POST expected")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_pcap_upload_tools(mcp, _mock(handler), None, str(tmp_path))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(tmp_path / "nope.pcap")})
     assert "not found" in str(out).lower()
@@ -58,7 +58,7 @@ async def test_upload_rejects_oversize(tmp_path):
     def handler(req):
         raise AssertionError("no POST expected")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_pcap_upload_tools(mcp, _mock(handler), None, str(tmp_path))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(pcap), "max_mb": 1})
     assert "exceeds" in str(out).lower() or "too large" in str(out).lower()
@@ -73,7 +73,7 @@ async def test_upload_disabled_without_upload_dir(tmp_path):
     def handler(req):
         raise AssertionError("no POST expected")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_pcap_upload_tools(mcp, _mock(handler), None, None)
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(pcap)})
     assert "disabled" in str(out).lower() and "MALCOLM_MCP_UPLOAD_DIR" in str(out)
@@ -90,7 +90,7 @@ async def test_upload_rejects_path_outside_upload_dir(tmp_path):
     def handler(req):
         raise AssertionError("no POST expected")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_pcap_upload_tools(mcp, _mock(handler), None, str(staging))
     # Traversal out of the staging dir.
     out = await mcp.call_tool(
@@ -112,7 +112,7 @@ async def test_upload_rejects_symlink_escape(tmp_path):
     def handler(req):
         raise AssertionError("no POST expected")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_pcap_upload_tools(mcp, _mock(handler), None, str(staging))
     out = await mcp.call_tool("malcolm_upload_pcap", {"file_path": str(link)})
     assert "inside" in str(out).lower()

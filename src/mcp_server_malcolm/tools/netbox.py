@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -30,7 +30,7 @@ def _netbox_path_error(path: str) -> str | None:
     return None
 
 
-def register_netbox_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register NetBox asset and network lookup tools."""
 
     @mcp.tool(title="Look up NetBox asset", annotations=_READ)

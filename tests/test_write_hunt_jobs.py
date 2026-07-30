@@ -2,7 +2,7 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.tools.write.hunt_jobs import register_hunt_job_tools
@@ -37,7 +37,7 @@ async def test_create_hunt_builds_body_and_primes_cookie(tmp_path):
         assert body["query"]["stopTime"] == 1717203600
         return httpx.Response(200, json={"success": True, "hunt": {"id": "H1"}})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_hunt_job_tools(mcp, _mock(handler), str(audit))
     out = await mcp.call_tool(
         "arkime_create_hunt",
@@ -63,7 +63,7 @@ async def test_create_hunt_rejects_bad_search_type(tmp_path):
     def handler(req):
         return httpx.Response(200, json={"data": []}, headers={"set-cookie": "ARKIME-COOKIE=t"})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_hunt_job_tools(mcp, _mock(handler), None)
     out = await mcp.call_tool(
         "arkime_create_hunt",
@@ -89,7 +89,7 @@ async def test_hunt_status_is_read_and_unaudited(tmp_path):
             200, json={"data": [{"id": "H1", "status": "running"}], "recordsTotal": 1}
         )
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_hunt_job_tools(mcp, _mock(handler), str(audit))
     out = await mcp.call_tool("arkime_hunt_status", {})
     assert "running" in str(out)

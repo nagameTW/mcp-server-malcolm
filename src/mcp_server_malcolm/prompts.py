@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
 
 _HUNT_WORKFLOW = """\
@@ -87,7 +87,7 @@ seconds while Malcolm/DSL tools take strings like "7 days ago"; only
 arkime_sessions yields an id you can feed to the PCAP/payload/tag tools."""
 
 
-def register_prompts(mcp: FastMCP) -> None:
+def register_prompts(mcp: MCPServer) -> None:
     """Register workflow prompts (always available, read-only)."""
 
     @mcp.prompt(
