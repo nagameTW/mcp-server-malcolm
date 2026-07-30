@@ -1,7 +1,9 @@
 import asyncio
+import json
 
 import httpx
 import pytest
+from conftest import tool_text
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
@@ -71,7 +73,10 @@ async def test_pcap_tool_flags_non_pcap_body(tmp_path, monkeypatch):
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_pcap", {"session_id": "240601-X"})
-    assert "false" in str(out).lower()
+    # Assert the field, not str(out): SDK 2.0's CallToolResult repr carries
+    # `is_error=False`, which satisfies a bare "false" check for free and made
+    # this guard vacuous — an HTML login page would have passed as a PCAP.
+    assert json.loads(tool_text(out))["valid_pcap"] is False
 
 
 @pytest.mark.asyncio

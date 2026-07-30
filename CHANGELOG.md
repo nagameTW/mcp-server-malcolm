@@ -31,23 +31,29 @@ this replaces that pin with the port it was standing in for.
 
 ### Not done, deliberately
 
-Giving every tool a typed return so it carries a meaningful output schema — the
-one item on Glama's TDQS improvement checklist this server does not satisfy in
-spirit. Two things came out of investigating it:
+Giving every tool a typed return so it carries a meaningful output schema —
+item 5 on Glama's TDQS improvement checklist. Investigating it turned up three
+things, one of which contradicts the reason first recorded here:
 
 - Every tool already *has* an output schema. A `-> str` tool auto-generates
   `{"result": {"type": "string"}}`, so the checklist item is met literally and
   uselessly.
-- The useful version conflicts with a deliberate design here. These tools return
-  a plain sentence when a search is empty or a lookup is unavailable, because an
-  empty list reads to an agent as "no such traffic" while a sentence explains
-  which. A typed return cannot express "either this object or an English
-  sentence", so every one of the 41 tools would have to fold its prose paths into
-  a status field, taking the ~235 tests with it.
+- A typed return **can** coexist with the prose-on-empty behaviour these tools
+  rely on. A first draft of this entry claimed it could not; that was wrong.
+  Annotating a tool `-> Report | str` produces a real `anyOf` output schema and
+  still returns a plain sentence as text when a search comes back empty
+  (verified against the SDK this release pins).
+- The real obstacle is narrower. Roughly half these tools pass an upstream
+  response straight through — `malcolm_search` returns Malcolm's
+  `/mapi/document` body, `search_dsl` returns OpenSearch's — and those have no
+  shape this repo can declare, so they would land back on `dict[str, Any]` and
+  the same empty schema. The remainder, the tools that build a trimmed row,
+  would each need a declared payload type and a rewritten return, with the test
+  churn that follows.
 
-That is a large, regression-prone rewrite of a shipped server for a
-10%-weighted rubric dimension that is already nominally satisfied. It is worth
-doing as its own change with its own review, not as a rider on an SDK port.
+So the outcome is unchanged — not in this release — but the reason is that the
+win is partial and the work is per-tool, not that the technique does not fit.
+It is worth doing as its own change, on the tools that build their own rows.
 
 ## [0.7.0] - 2026-07-30
 
@@ -487,7 +493,12 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.1...v0.3.2

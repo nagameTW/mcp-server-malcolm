@@ -7,6 +7,7 @@ import sys
 
 from mcp.server.mcpserver import MCPServer
 
+from mcp_server_malcolm import __version__
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.config import WriteConfig
 from mcp_server_malcolm.prompts import register_prompts
@@ -63,7 +64,10 @@ def create_server() -> MCPServer:
     classes enabled via MALCOLM_MCP_ENABLE_* — a disabled class's tools are not
     registered at all (an unregistered tool cannot be called).
     """
-    mcp = MCPServer("mcp-server-malcolm", instructions=_INSTRUCTIONS)
+    # version is passed explicitly: SDK 2.0 defaults it to "" and never
+    # substitutes one, where 1.x filled in the SDK's own version. Unset, the
+    # initialize response advertises an empty server version.
+    mcp = MCPServer("mcp-server-malcolm", version=__version__, instructions=_INSTRUCTIONS)
     client = MalcolmClient.from_env()
     cfg = WriteConfig.from_env()
 

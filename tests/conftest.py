@@ -8,13 +8,16 @@ such change touches one file rather than every test module.
 
 from __future__ import annotations
 
-from typing import Any
+from mcp.types import CallToolResult
 
 
-def tool_text(result: Any) -> str:
-    """The text a tool returned, whatever envelope the SDK wrapped it in."""
-    content = getattr(result, "content", None)
-    if content is None:
-        # SDK 1.x handed back (content, structured_output).
-        content = result[0] if isinstance(result, tuple) else result
-    return "".join(block.text for block in content if getattr(block, "type", None) == "text")
+def tool_text(result: CallToolResult) -> str:
+    """The text a tool returned, unwrapped from the SDK's result envelope.
+
+    Always use this rather than str(result). The 2.0 envelope reprs as
+    `... structured_content={...} is_error=False result_type='complete'`, so a
+    substring assertion against str(result) can be satisfied by the envelope
+    rather than by the tool — which silently emptied two guards during the 2.0
+    port before this helper existed.
+    """
+    return "".join(block.text for block in result.content if getattr(block, "type", None) == "text")

@@ -2,6 +2,7 @@ import json
 
 import httpx
 import pytest
+from conftest import tool_text
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
@@ -53,7 +54,10 @@ async def test_create_alert_audits_http_error(tmp_path):
     mcp = MCPServer("t")
     register_alerting_tools(mcp, _mock(handler), str(audit))
     out = await mcp.call_tool("malcolm_create_alert", {"title": "x", "severity": 3})
-    assert "failed" in str(out).lower() or "error" in str(out).lower()
+    # Unwrap first: SDK 2.0's repr carries `is_error=False`, which satisfied
+    # the "error" branch for free and let a 500 be reported as success.
+    message = tool_text(out).lower()
+    assert "failed" in message or "error" in message
     row = json.loads(audit.read_text().splitlines()[-1])
     assert row["outcome"] == "http_5xx"
 
