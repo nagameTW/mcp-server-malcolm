@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
 
 from pydantic import Field
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -58,6 +59,55 @@ _EXECUTABLE_MIMES = (
 
 # Lengths of the hex digests (md5, sha1, sha256) every pipeline writes lowercase.
 _HEX_DIGEST_LENGTHS = (32, 40, 64)
+
+
+class FileRow(TypedDict, total=False):
+    """One carved file. Every key is optional: the server populates what it has
+    and the row drops the rest rather than carrying nulls."""
+
+    # Malcolm writes @timestamp as an ISO string on Zeek records and as epoch
+    # milliseconds on Arkime session records; both are real, so both are
+    # declared. Every other scalar here is normalised through _first(), which is
+    # what keeps this declaration true of the data.
+    timestamp: str | int
+    filename: str
+    mime_type: str
+    bytes: str | int  # Zeek sends a string, Strelka an int
+    transport: str
+    source_ip: str
+    destination_ip: str
+    md5: str
+    sha256: str
+    severity: int
+    severity_tags: list[str]
+    scan_hits: int
+    scan_rules: list[str]
+    scan_scanners: list[str]
+    zeek_uid: str
+    extracted: str
+    note: str
+    truncated: str
+
+
+class FileScanResult(TypedDict):
+    """What malcolm_file_scans returns when anything matched."""
+
+    count: int
+    files: list[FileRow]
+
+
+class ExtractedFile(TypedDict, total=False):
+    """What malcolm_extract_file returns: metadata, never the bytes."""
+
+    filename: str
+    found: bool
+    size_bytes: int
+    sha256: str
+    magic: str
+    download_url: str
+    status: int
+    note: str
+
 
 # Shared: both tools read from the external Malcolm server, never mutate it.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
@@ -122,7 +172,7 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         time_to: Annotated[
             str, Field(description="End time, dateparser format. Empty = now.")
         ] = "",
-    ) -> str:
+    ) -> FileScanResult | str:
         """List the files Zeek saw cross the wire, with their hashes and scan verdicts.
 
         Use this for any file-centric question — it filters event.dataset=files
@@ -178,9 +228,7 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             )
 
         files = [_file_row(row.get("_source") or {}) for row in rows]
-        return json.dumps(
-            {"count": len(files), "files": files}, indent=2, ensure_ascii=False, default=str
-        )
+        return {"count": len(files), "files": files}
 
     @mcp.tool(title="Fetch a Zeek-extracted file", annotations=_READ)
     async def malcolm_extract_file(
@@ -200,7 +248,7 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 "download (use for a file larger than the size cap)."
             ),
         ] = False,
-    ) -> str:
+    ) -> ExtractedFile | str:
         """Fetch one Zeek-extracted file from Malcolm's extracted-files server; returns METADATA ONLY.
 
         Use this after malcolm_file_scans, which supplies the filename. Use
@@ -234,14 +282,11 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         url = f"{client.base_url}/{_EXTRACTED_PREFIX}/{quote(name, safe='')}"
         if url_only:
-            return json.dumps(
-                {
-                    "filename": name,
-                    "download_url": url,
-                    "note": "Download requires Malcolm authentication (Basic auth).",
-                },
-                indent=2,
-            )
+            return {
+                "filename": name,
+                "download_url": url,
+                "note": "Download requires Malcolm authentication (Basic auth).",
+            }
 
         try:
             status, content = await client.extracted_file(name, max_bytes=_MAX_BYTES)
@@ -251,17 +296,14 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             return f"Extracted-file download failed: {exc}"
 
         if status == 404:
-            return json.dumps(
-                {
-                    "filename": name,
-                    "found": False,
-                    "status": 404,
-                    "note": "No such file on the extracted-files server — the index record "
-                    "outlives the file, which Malcolm prunes, and the preservation "
-                    "setting may keep only quarantined files.",
-                },
-                indent=2,
-            )
+            return {
+                "filename": name,
+                "found": False,
+                "status": 404,
+                "note": "No such file on the extracted-files server — the index record "
+                "outlives the file, which Malcolm prunes, and the preservation "
+                "setting may keep only quarantined files.",
+            }
         if status >= 400:
             # Anything but a 404 says nothing about whether the file exists, and
             # reporting it as "pruned" would end the hunt on a fixable problem:
@@ -274,17 +316,14 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 f"account may read extracted files."
             )
 
-        return json.dumps(
-            {
-                "filename": name,
-                "found": True,
-                "size_bytes": len(content),
-                "sha256": hashlib.sha256(content).hexdigest(),
-                "magic": content[:4].hex(),
-                "download_url": url,
-            },
-            indent=2,
-        )
+        return {
+            "filename": name,
+            "found": True,
+            "size_bytes": len(content),
+            "sha256": hashlib.sha256(content).hexdigest(),
+            "magic": content[:4].hex(),
+            "download_url": url,
+        }
 
 
 def _parse_filters(raw: str) -> dict[str, Any]:
@@ -357,7 +396,7 @@ def _disk_name(source: dict[str, Any]) -> Any:
     return scanned.rsplit("/", 1)[-1] if isinstance(scanned, str) and scanned else None
 
 
-def _file_row(source: dict[str, Any]) -> dict[str, Any]:
+def _file_row(source: dict[str, Any]) -> FileRow:
     """Reduce one files/strelka document to the fields worth triaging.
 
     The raw document runs to several KB of hashes, geo, and pipeline metadata;
@@ -372,17 +411,22 @@ def _file_row(source: dict[str, Any]) -> dict[str, Any]:
     rules = scan.get("rules") or {}
 
     row: dict[str, Any] = {
-        "timestamp": source.get("@timestamp"),
+        "timestamp": _first(source.get("@timestamp")),
         "filename": _first(file_info.get("name")),
         "mime_type": _first(file_info.get("mime_type")) or zeek_files.get("mime_type"),
         # Zeek only sets total_bytes when the protocol declared a length; on a
         # chunked HTTP body it writes seen_bytes alone, which is 12.5% of the
         # files records on the v26.07.1 lab -- without this last fallback every
         # one of those rows comes back with no size at all.
-        "bytes": (
+        #
+        # _first() matters on both of these: profiled across all 47 datasets on
+        # v26.07.1, file.size arrives as list[int] on alert records and
+        # file.source as list[str], so passing them through raw put a list where
+        # a scalar was declared.
+        "bytes": _first(
             file_info.get("size") or zeek_files.get("total_bytes") or zeek_files.get("seen_bytes")
         ),
-        "transport": file_info.get("source"),
+        "transport": _first(file_info.get("source")),
         "source_ip": _first((source.get("source") or {}).get("ip")),
         "destination_ip": _first((source.get("destination") or {}).get("ip")),
         "md5": _first(hashes.get("md5")),

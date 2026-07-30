@@ -148,6 +148,8 @@ Arkime's `connections.csv` is deliberately not wrapped: on Arkime 6.6.0 it emits
 | `malcolm_alerting_monitors` | List OpenSearch alerting monitors, what each watches, and whether any have fired — flags when every monitor is disabled |
 | `malcolm_anomaly_detectors` | List anomaly detectors, what each models, and how many anomalies exist — flags when none were ever recorded |
 
+The ten tools that build their own rows — the file, Arkime-inventory and Dashboards ones — declare a typed return, so a client receives `structuredContent` as well as the text. The rest pass an upstream response through verbatim and have no shape to declare.
+
 ## Write tools (opt-in)
 
 Each class is enabled by setting its flag to `true`. Nothing here runs unless you ask for it.

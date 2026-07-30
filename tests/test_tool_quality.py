@@ -94,3 +94,45 @@ def test_representative_tools_name_an_alternative(monkeypatch, name):
     assert any(other in desc for other in ("malcolm_", "arkime_", "search_dsl", "count")), (
         f"{name} description names no alternative tool"
     )
+
+
+# The tools that build their own payload rather than passing an upstream
+# response through. Those are the only ones with a shape this repo can declare,
+# so those are the ones that carry a real output schema.
+_TYPED_OUTPUT = {
+    "malcolm_file_scans",
+    "malcolm_extract_file",
+    "arkime_views",
+    "arkime_shortcuts",
+    "arkime_reverse_dns",
+    "arkime_pcap_files",
+    "arkime_node_stats",
+    "malcolm_saved_objects",
+    "malcolm_alerting_monitors",
+    "malcolm_anomaly_detectors",
+}
+
+
+def test_row_building_tools_declare_a_real_output_schema(monkeypatch):
+    """A `-> str` tool auto-generates {"result": {"type": "string"}}, which is a
+    schema in name only. A tool that constructs its own rows has a shape it can
+    declare, and losing that annotation would silently fall back to the useless
+    one."""
+    tools = {t.name: t for t in _all_tools(monkeypatch)}
+    weak = [
+        name for name in sorted(_TYPED_OUTPUT) if not (tools[name].output_schema or {}).get("$defs")
+    ]
+    assert not weak, f"these lost their typed return: {weak}"
+
+
+def test_typed_tools_can_still_return_a_sentence(monkeypatch):
+    """The prose path is load-bearing — an empty list reads to an agent as "no
+    such traffic" while a sentence explains which. The union return keeps it, so
+    the schema must admit a bare string alongside the object."""
+    tools = {t.name: t for t in _all_tools(monkeypatch)}
+    for name in sorted(_TYPED_OUTPUT):
+        schema = tools[name].output_schema["properties"]["result"]
+        options = schema.get("anyOf") or [schema]
+        assert any(o.get("type") == "string" for o in options), (
+            f"{name} can no longer return an explanatory sentence"
+        )

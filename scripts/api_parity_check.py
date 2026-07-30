@@ -59,7 +59,18 @@ def check(tool: str, ok: bool, detail: str) -> None:
 
 
 def jtext(result) -> str:
-    return "".join(b.text for b in result.content if getattr(b, "type", None) == "text")
+    """The tool's text, refusing an error result.
+
+    A server-side failure does not raise on the client: it arrives as a normal
+    CallToolResult with is_error set, carrying the traceback or validation dump
+    as its text. Without this check a tool that fails for every input still
+    reads as "answered", which is exactly how a broken guard looks like a
+    working one.
+    """
+    text = "".join(b.text for b in result.content if getattr(b, "type", None) == "text")
+    if getattr(result, "is_error", False):
+        raise RuntimeError(f"tool returned an error result: {text[:300]}")
+    return text
 
 
 async def main() -> None:
@@ -605,8 +616,75 @@ async def main() -> None:
             f"{top['key']} ({top['doc_count']:,}) reported",
         )
 
+        # ---- shape robustness ---------------------------------------------
+        # A typed return turns an unexpected field shape into a hard failure
+        # rather than a slightly odd row, so the declared types have to hold
+        # across every record type the deployment actually stores -- not just
+        # the one each tool is aimed at. This is the check that catches a
+        # TypedDict narrower than the data; a text-substring test cannot.
+        print("\n=== typed tools over every dataset ===")
+        datasets = [
+            b["key"]
+            for b in (
+                await api.post(
+                    "/mapi/agg/event.dataset",
+                    json={"limit": 100, "from": "2000-01-01", "to": "2030-01-01"},
+                )
+            ).json()["event.dataset"]["buckets"]
+        ]
+        broke = []
+        for dataset in datasets:
+            try:
+                await call(
+                    "malcolm_file_scans",
+                    {
+                        "filters": json.dumps({"event.dataset": dataset}),
+                        "limit": 20,
+                        "time_from": "2000-01-01",
+                        "time_to": "2030-01-01",
+                    },
+                )
+            except Exception as exc:  # noqa: BLE001 - any failure is a broken shape
+                broke.append(f"{dataset}: {type(exc).__name__}")
+        check(
+            "malcolm_file_scans/shapes",
+            not broke,
+            f"{len(datasets)} datasets, all rows matched the declared shape"
+            if not broke
+            else f"failed on {broke}",
+        )
+
+        typed_paths = [
+            ("arkime_views", {}),
+            ("arkime_shortcuts", {}),
+            ("arkime_reverse_dns", {"ip": "8.8.8.8"}),
+            ("arkime_reverse_dns", {"ip": "192.0.2.7"}),
+            ("arkime_pcap_files", {"limit": 50}),
+            ("arkime_node_stats", {}),
+            ("arkime_node_stats", {"node": "nosuchnode"}),
+            ("malcolm_saved_objects", {"object_type": "dashboard,search,visualization"}),
+            ("malcolm_saved_objects", {"object_type": "index-pattern"}),
+            ("malcolm_alerting_monitors", {}),
+            ("malcolm_anomaly_detectors", {}),
+            ("malcolm_extract_file", {"filename": "definitely-not-here.bin"}),
+            ("malcolm_extract_file", {"filename": "a.bin", "url_only": True}),
+        ]
+        failed = []
+        for tool, args in typed_paths:
+            try:
+                await call(tool, args)
+            except Exception as exc:  # noqa: BLE001 - any failure is a broken path
+                failed.append(f"{tool}{args}: {type(exc).__name__}")
+        check(
+            "typed tools/all paths",
+            not failed,
+            f"{len(typed_paths)} calls across success, empty and error paths"
+            if not failed
+            else f"failed: {failed}",
+        )
+
         # ---- coverage accounting ------------------------------------------
-        covered = {name for name, _, _ in results}
+        covered = {name for name, _, _ in results if "/" not in name}
         missing = sorted(set(names) - covered)
         print(f"\n{'=' * 66}")
         passed = sum(1 for _, ok, _ in results if ok)

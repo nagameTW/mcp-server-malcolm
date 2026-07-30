@@ -482,3 +482,66 @@ async def test_extract_file_refuses_an_oversized_file(monkeypatch):
 
     assert "url_only" in out
     assert "4" in out
+
+
+# -- shapes the live server actually sends -------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        # Profiled across all 47 datasets on v26.07.1: file.size arrives as a
+        # list on alert records, file.source as a list, and @timestamp as epoch
+        # milliseconds on session records. Each of these made the tool fail
+        # outright once the return type was declared, because a row that does
+        # not match the declared shape cannot fall back to the string arm.
+        ("size", [385], 385),
+        ("source", ["http"], "http"),
+    ],
+)
+async def test_file_row_unwraps_list_valued_scalars(field, value, expected):
+    doc = json.loads(json.dumps(_FILE_DOC))
+    doc["_source"]["file"][field] = value
+    mcp = _tools(_docs_handler([doc]))
+    row = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+
+    key = {"size": "bytes", "source": "transport"}[field]
+    assert row[key] == expected
+
+
+@pytest.mark.asyncio
+async def test_file_row_accepts_an_epoch_timestamp():
+    """Arkime session records carry @timestamp as epoch milliseconds, not an
+    ISO string; the tool must return the row rather than fail validation."""
+    doc = json.loads(json.dumps(_FILE_DOC))
+    doc["_source"]["@timestamp"] = 1785382587946
+    mcp = _tools(_docs_handler([doc]))
+    row = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+
+    assert row["timestamp"] == 1785382587946
+
+
+@pytest.mark.asyncio
+async def test_file_scans_survives_a_row_of_entirely_list_valued_fields():
+    """The dataset-override path is documented — the file_hash description tells
+    callers to add {"event.dataset":"strelka"} to filters — so the tool meets
+    record types whose fields are all arrays."""
+    doc = json.loads(json.dumps(_FILE_DOC))
+    src = doc["_source"]
+    src["@timestamp"] = 1785382587946
+    src["file"]["size"] = [385]
+    src["file"]["source"] = ["http"]
+    src["file"]["mime_type"] = ["text/plain"]
+    src["file"]["name"] = ["a.txt"]
+    mcp = _tools(_docs_handler([doc]))
+    out = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))
+
+    assert out["count"] == 1
+    row = out["files"][0]
+    assert (row["bytes"], row["transport"], row["mime_type"], row["filename"]) == (
+        385,
+        "http",
+        "text/plain",
+        "a.txt",
+    )
