@@ -6,6 +6,19 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-30
+
+### Fixed
+
+- Pin the MCP SDK to `mcp>=1.0,<2`. The 0.4.0 requirement was `mcp>=1.0` with
+  no upper bound, so a fresh `pip install mcp-server-malcolm` resolved to
+  `mcp` 2.0.0 and the server failed at import with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. SDK 2.0 renamed
+  `FastMCP` to `MCPServer` and moved it to `mcp.server.mcpserver`; every tool
+  module here imports the 1.x path. Installs that already resolved to 1.x were
+  unaffected. Porting to the 2.0 API (and with it the stateless `2026-07-28`
+  protocol revision) is separate work.
+
 ## [0.4.0] - 2026-07-28
 
 Audited Malcolm's ingest pipelines (`logstash/pipelines/`) against the fields
