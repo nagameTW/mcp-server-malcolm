@@ -123,7 +123,7 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 | `malcolm_file_scans` | List the files Zeek carved out of traffic — name, MIME type, size, md5/sha256, both endpoints, Malcolm's severity, and any Strelka/YARA/ClamAV hits |
 | `malcolm_extract_file` | Fetch one carved file from Malcolm's extracted-files server and report its size, sha256, and file-magic (metadata only, nothing written to disk) |
 
-These need Zeek file extraction on (`ZEEK_EXTRACTOR_MODE`), and `malcolm_extract_file` also needs the extracted-files HTTP server (`FILESCAN_HTTP_SERVER_ENABLE`). A carved file may be live malware, so the bytes never enter the MCP response.
+`malcolm_file_scans` reads Zeek's record of every file transfer it saw, which does not require the file extractor. Reaching the file itself does: `malcolm_extract_file` needs `ZEEK_EXTRACTOR_MODE` set and the extracted-files HTTP server on (`FILESCAN_HTTP_SERVER_ENABLE`), and a scan row only appears where Strelka is running. A carved file may be live malware, so the bytes never enter the MCP response.
 
 ### Correlation and export
 

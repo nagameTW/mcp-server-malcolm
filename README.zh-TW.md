@@ -115,7 +115,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | `malcolm_file_scans` | 列出 Zeek 從流量裡切出來的檔案——檔名、MIME type、大小、md5/sha256、來源與目的、Malcolm 的 severity，以及 Strelka/YARA/ClamAV 的掃描命中 |
 | `malcolm_extract_file` | 從 Malcolm 的 extracted-files server 抓一個切出來的檔案，回報大小、sha256、file-magic（只回 metadata，不落地） |
 
-這兩個工具需要 Zeek 檔案萃取開著（`ZEEK_EXTRACTOR_MODE`），`malcolm_extract_file` 還需要 extracted-files HTTP server（`FILESCAN_HTTP_SERVER_ENABLE`）。切出來的檔案可能就是活的惡意程式，所以檔案內容不會進到 MCP 回應裡。
+`malcolm_file_scans` 讀的是 Zeek 對每次檔案傳輸的記錄，不需要開檔案萃取。要拿到檔案本身才需要：`malcolm_extract_file` 需要 `ZEEK_EXTRACTOR_MODE` 有設、extracted-files HTTP server 開著（`FILESCAN_HTTP_SERVER_ENABLE`），而掃描結果那幾個欄位只有跑 Strelka 才會有。切出來的檔案可能就是活的惡意程式，所以檔案內容不會進到 MCP 回應裡。
 
 ### 關聯與匯出
 

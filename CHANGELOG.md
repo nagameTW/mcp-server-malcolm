@@ -36,6 +36,13 @@ and Strelka running, not from the docs.
 - The `hunt_workflow` prompt gained a file-chasing step between session
   drill-down and aggregation.
 
+Both tool definitions are written to Glama's TDQS rubric: purpose in the first
+sentence, named alternatives for the cases each tool excludes, the return shape
+stated, and behavior disclosed that the annotations cannot carry — that a file
+can come back as two rows (Zeek's transfer record and Strelka's scan record both
+sit under `event.dataset=files`), and that no match returns a sentence rather
+than an empty list.
+
 ### Fixed
 
 - The README endpoint tables listed `GET /arkime/api/session/<id>` for

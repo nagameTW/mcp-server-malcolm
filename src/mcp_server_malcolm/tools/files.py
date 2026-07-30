@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import string
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
 
@@ -29,18 +30,33 @@ _PATH_CHARS = ("/", "\\")
 # anything larger to url_only. Same cap as arkime.py's file download.
 _MAX_BYTES = 100 * 1024 * 1024
 
-# file.mime_type values Zeek/libmagic assigns to native executables -- the
-# shortcut behind executables_only, so an agent hunting dropped binaries does
-# not have to know Malcolm records PE files as application/x-dosexec.
+# The file.mime_type values that mean "native executable" -- the shortcut
+# behind executables_only, so an agent hunting dropped binaries does not have to
+# know that Malcolm labels a PE application/x-dosexec.
+#
+# Two labelling vocabularies land in this one field and both are needed. Zeek's
+# own signatures (base/frameworks/files/magic/executable.sig, read out of the
+# running Zeek) split ELF by e_type -- x-object for ET_REL, x-executable for
+# ET_EXEC, x-sharedlib for ET_DYN, which is every PIE binary and so the default
+# build on current distros -- and label Mach-O x-mach-o-executable. Strelka
+# labels the same files with libmagic, which says
+# vnd.microsoft.portable-executable, x-pie-executable and x-mach-binary instead.
+# Zeek emits no "application/x-elf" at all. Core dumps (x-coredump) are left
+# out: they are not a dropped binary. A deployment can still surprise this list
+# -- if the shortcut comes back empty, check the real values with
+# malcolm_field_values(field="file.mime_type").
 _EXECUTABLE_MIMES = (
     "application/x-dosexec",
     "application/vnd.microsoft.portable-executable",
     "application/x-executable",
-    "application/x-elf",
+    "application/x-sharedlib",
+    "application/x-object",
+    "application/x-pie-executable",
+    "application/x-mach-o-executable",
     "application/x-mach-binary",
 )
 
-# Lengths of the hex digests Zeek writes lowercase (md5, sha1, sha256).
+# Lengths of the hex digests (md5, sha1, sha256) every pipeline writes lowercase.
 _HEX_DIGEST_LENGTHS = (32, 40, 64)
 
 # Shared: both tools read from the external Malcolm server, never mutate it.
@@ -65,8 +81,12 @@ def register_file_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         executables_only: Annotated[
             bool,
             Field(
-                description="Shortcut for the executable MIME types (PE, ELF, "
-                "Mach-O). Use when hunting dropped binaries."
+                description="Shortcut for the eight MIME labels that mean a native "
+                "executable — PE, ELF (including the x-sharedlib every PIE binary "
+                "gets), and Mach-O — in both the Zeek and the Strelka vocabulary. "
+                "Use when hunting dropped binaries. A deployment can still use a "
+                "label outside that set; if this returns nothing, check "
+                'malcolm_field_values(field="file.mime_type").'
             ),
         ] = False,
         file_hash: Annotated[
@@ -74,7 +94,12 @@ def register_file_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             Field(
                 description="Pivot from a hash IOC to the file records carrying it. "
                 "Matched on related.hash, which holds md5, sha1, sha256, ssdeep and "
-                "tlsh together, so any of those works. Empty = no hash filter."
+                "tlsh together, so any of those works, in either case (a tlsh is "
+                "stored uppercase by Zeek and lowercase by Strelka; both are "
+                "searched). One file usually has many records — one per session "
+                "that carried it, plus a scan record — and they can exceed limit; "
+                'add {"event.dataset":"strelka"} to filters to see the scan '
+                "verdict on its own. Empty = no hash filter."
             ),
         ] = "",
         filters: Annotated[
@@ -98,21 +123,27 @@ def register_file_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             str, Field(description="End time, dateparser format. Empty = now.")
         ] = "",
     ) -> str:
-        """List the files Zeek carved out of network traffic, with hashes and scan verdicts.
+        """List the files Zeek saw cross the wire, with their hashes and scan verdicts.
 
-        Use this to answer "what files crossed the wire": it filters
-        event.dataset=files for you and returns one trimmed row per file
-        (filename, MIME type, size, md5/sha256, the two endpoints, Malcolm's
-        severity, and any Strelka/YARA/ClamAV hits) instead of the very large
-        raw document. Each row's `extracted` value is the argument
-        malcolm_extract_file takes to fetch the file itself.
+        Use this for any file-centric question — it filters event.dataset=files
+        for you and returns one compact row per file instead of the multi-KB raw
+        document. Use malcolm_search instead for any other record type (conn,
+        dns, http); search_dsl for a substring or wildcard filename match, which
+        Malcolm's exact-match filters cannot express; arkime_file_by_hash to
+        pull bytes by a hash Arkime recorded on a session rather than by Zeek's
+        file record.
 
-        Filenames are matched exactly, like every Malcolm filter — for a
-        substring ("*.exe", a path fragment) use search_dsl with a wildcard
-        query. To pivot the other way, from an Arkime session's http.md5 /
-        http.sha256 to the bytes, use arkime_file_by_hash. Rows with no
-        `extracted` value were seen but never written to disk (outside the
-        extractor's size limits, pruned since, or extraction disabled).
+        Both record types Malcolm files under this dataset are returned: Zeek's
+        record of the transfer and, for a scanned file, Strelka's — which adds
+        the scan verdict — so one file can come back as two rows. A row's
+        `extracted` value is the argument malcolm_extract_file takes; a row
+        carrying `note` instead was seen on the wire but is not on disk.
+
+        Returns JSON {"count", "files"}: per file the timestamp, name, MIME
+        type, size, both endpoints, md5/sha256, Malcolm's severity, any
+        Strelka/YARA/ClamAV hits, and the `extracted` name — absent values are
+        omitted. No match returns a sentence saying so, naming the field if a
+        filter used one Malcolm does not index, rather than an empty list.
         """
         try:
             extra = _parse_filters(filters)
@@ -139,9 +170,11 @@ def register_file_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         if not rows:
             hint = await client.explain_unknown_fields(extra) if extra else ""
             return (f"{hint}\n\n" if hint else "") + (
-                "No extracted-file records matched. Widen the time range, or check "
-                "that this Malcolm runs Zeek file extraction (ZEEK_EXTRACTOR_MODE) "
-                'with malcolm_field_values(field="event.dataset").'
+                "No extracted-file records matched. Widen the time range, or confirm "
+                "this Malcolm records file transfers at all with "
+                'malcolm_field_values(field="event.dataset") — the "files" dataset '
+                "should be there. If executables_only returned this, check the MIME "
+                'labels actually in use with malcolm_field_values(field="file.mime_type").'
             )
 
         files = [_file_row(row.get("_source") or {}) for row in rows]
@@ -170,17 +203,23 @@ def register_file_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     ) -> str:
         """Fetch one Zeek-extracted file from Malcolm's extracted-files server; returns METADATA ONLY.
 
-        Downloads the carved file, hashes it, and returns metadata (size, sha256,
-        leading file-magic bytes) — the bytes themselves never enter the
-        response and nothing is written to disk, because an extracted file may
-        be live malware. Enforces a size cap and refuses an oversized file
-        before reading it; use url_only then.
+        Use this after malcolm_file_scans, which supplies the filename. Use
+        arkime_file_by_hash instead when you hold a content hash but no Zeek
+        file record, and arkime_session_pcap for a session's packets rather than
+        one carved file.
 
-        Get the filename from malcolm_file_scans. To reach a file by its content
-        hash instead of its name, use arkime_file_by_hash; for a session's
-        packets rather than a carved file, arkime_session_pcap. A 404 here means
-        the record exists but the file does not: Malcolm prunes this directory,
-        and the preservation setting may keep only quarantined files.
+        The bytes never enter the response and nothing is written to disk — a
+        carved file may be live malware. The body is streamed against a size cap
+        and an oversized file is refused before it is read; url_only=True
+        returns the URL alone, without contacting Malcolm at all. Names are
+        flat, so a filename containing a path separator is rejected unsent.
+
+        Returns JSON: found, size_bytes, sha256 of the bytes actually served
+        (compare it against the record's sha256), the first four magic bytes as
+        hex, and the download URL. A 404 comes back as found:false — the index
+        record outlives the file, which Malcolm prunes. Any other error status
+        is reported as a failure, not as a missing file: it says nothing about
+        whether the file is on disk.
         """
         name = filename.strip()
         if name.startswith(f"{_EXTRACTED_PREFIX}/"):
@@ -211,16 +250,28 @@ def register_file_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         except Exception as exc:  # noqa: BLE001
             return f"Extracted-file download failed: {exc}"
 
-        if status >= 400:
+        if status == 404:
             return json.dumps(
                 {
                     "filename": name,
                     "found": False,
-                    "status": status,
-                    "note": "No such file on the extracted-files server — it may have "
-                    "been pruned, or preservation may keep only quarantined files.",
+                    "status": 404,
+                    "note": "No such file on the extracted-files server — the index record "
+                    "outlives the file, which Malcolm prunes, and the preservation "
+                    "setting may keep only quarantined files.",
                 },
                 indent=2,
+            )
+        if status >= 400:
+            # Anything but a 404 says nothing about whether the file exists, and
+            # reporting it as "pruned" would end the hunt on a fixable problem:
+            # Malcolm gates /extracted-files behind basic auth and, with
+            # role-based access on, ROLE_EXTRACTED_FILES.
+            return (
+                f"Extracted-file download failed: the extracted-files server answered "
+                f"{status}, so whether {name} is on disk is unknown. Check that "
+                f"FILESCAN_HTTP_SERVER_ENABLE is on, its container is up, and this "
+                f"account may read extracted files."
             )
 
         return json.dumps(
@@ -258,17 +309,25 @@ def _parse_filters(raw: str) -> dict[str, Any]:
     return parsed
 
 
-def _normalize_hash(value: str) -> str:
-    """Lowercase a hex digest, leave every other hash form untouched.
+def _normalize_hash(value: str) -> str | list[str]:
+    """Expand a hash into the case forms Malcolm actually indexed.
 
-    Zeek writes md5/sha1/sha256 lowercase but tlsh uppercase, and all of them
-    land in related.hash — so folding every input to lowercase would silently
-    break a tlsh lookup, while leaving an uppercase md5 (how VirusTotal prints
-    it) alone would silently break that one.
+    related.hash is matched as an exact term and the two pipelines writing it
+    disagree on case: Zeek stores md5/sha1/sha256 lowercase but tlsh uppercase
+    and ssdeep as-is, while Strelka lowercases all of them. Measured on
+    v26.07.1, one TLSH digest matches 17,883 Zeek records in uppercase and zero
+    Strelka ones, with the reverse in lowercase — the two forms partition the
+    same file's records, so sending one case would return the carve records and
+    silently no scan verdicts (or the other way round).
+
+    Returns:
+        The single lowercase form for a hex digest — the only case any pipeline
+        writes it in — otherwise both forms, which Malcolm's filter ORs.
     """
-    if len(value) in _HEX_DIGEST_LENGTHS and all(c in "0123456789abcdefABCDEF" for c in value):
+    if len(value) in _HEX_DIGEST_LENGTHS and all(c in string.hexdigits for c in value):
         return value.lower()
-    return value
+    lowered = value.lower()
+    return value if value == lowered else [value, lowered]
 
 
 def _first(value: Any) -> Any:
@@ -316,7 +375,13 @@ def _file_row(source: dict[str, Any]) -> dict[str, Any]:
         "timestamp": source.get("@timestamp"),
         "filename": _first(file_info.get("name")),
         "mime_type": _first(file_info.get("mime_type")) or zeek_files.get("mime_type"),
-        "bytes": file_info.get("size") or zeek_files.get("total_bytes"),
+        # Zeek only sets total_bytes when the protocol declared a length; on a
+        # chunked HTTP body it writes seen_bytes alone, which is 12.5% of the
+        # files records on the v26.07.1 lab -- without this last fallback every
+        # one of those rows comes back with no size at all.
+        "bytes": (
+            file_info.get("size") or zeek_files.get("total_bytes") or zeek_files.get("seen_bytes")
+        ),
         "transport": file_info.get("source"),
         "source_ip": _first((source.get("source") or {}).get("ip")),
         "destination_ip": _first((source.get("destination") or {}).get("ip")),

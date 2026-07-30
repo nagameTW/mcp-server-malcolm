@@ -68,6 +68,16 @@ def _tools(handler):
     return mcp
 
 
+def str_payload(out):
+    """The text a tool returned, unwrapped from FastMCP's content envelope.
+
+    Tests that only look for a phrase use str(out); the ones that assert an
+    exact row need the JSON itself.
+    """
+    content = out[0] if isinstance(out, tuple) else out
+    return content[0].text
+
+
 def _docs_handler(results, seen=None):
     """Handler answering /mapi/document, recording the request body in `seen`."""
 
@@ -102,6 +112,34 @@ async def test_file_scans_filters_the_files_dataset():
 
 
 @pytest.mark.asyncio
+async def test_file_scans_maps_every_row_field():
+    """Pin the whole row, not substrings of it.
+
+    A substring assertion cannot tell source_ip from destination_ip, so it would
+    pass with the two swapped — the tool would report the transfer direction
+    backwards. Compare the parsed row exactly instead.
+    """
+    mcp = _tools(_docs_handler([_FILE_DOC]))
+    out = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))
+
+    assert out["count"] == 1
+    assert out["files"][0] == {
+        "timestamp": "2024-04-25T13:09:30.055000064Z",
+        "filename": "HTTP-FsoPNn4V2BTsEGEGE6-CkjbVOHoIUv3SvCnc-20240425130930.exe",
+        "mime_type": "application/x-dosexec",
+        "bytes": "11776",
+        "transport": "HTTP",
+        "source_ip": "192.0.2.7",
+        "destination_ip": "198.51.100.1",
+        "md5": "52ad569e4fd4739f640fc3de54a1c063",
+        "sha256": "6acb154e1adf5287e82169fd40feef7469efe14689ef377ff2812386091068d3",
+        "severity": 75,
+        "zeek_uid": "CkjbVOHoIUv3SvCnc",
+        "extracted": "HTTP-FsoPNn4V2BTsEGEGE6-CkjbVOHoIUv3SvCnc-20240425130930.exe",
+    }
+
+
+@pytest.mark.asyncio
 async def test_file_scans_trims_the_raw_document():
     """The raw files record is huge; only the triage fields may come back."""
     mcp = _tools(_docs_handler([_FILE_DOC]))
@@ -109,8 +147,37 @@ async def test_file_scans_trims_the_raw_document():
 
     assert "ssdeep" not in out
     assert "extracted_uri" not in out
-    assert "192.0.2.7" in out
-    assert "11776" in out
+
+
+@pytest.mark.asyncio
+async def test_file_scans_unwraps_single_element_arrays():
+    """file.name / file.mime_type arrive as arrays from Zeek and as scalars from
+    other pipelines; a row must carry the value either way."""
+    doc = json.loads(json.dumps(_FILE_DOC))
+    doc["_source"]["file"]["name"] = "scalar-name.exe"
+    doc["_source"]["file"]["mime_type"] = "text/plain"
+    mcp = _tools(_docs_handler([doc]))
+    row = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+
+    assert row["filename"] == "scalar-name.exe"
+    assert row["mime_type"] == "text/plain"
+
+
+@pytest.mark.asyncio
+async def test_file_scans_falls_back_through_the_zeek_size_fields():
+    """Zeek writes total_bytes only when the protocol declared a length; on a
+    chunked HTTP body only seen_bytes is set (12.5% of the lab's files rows)."""
+    doc = json.loads(json.dumps(_FILE_DOC))
+    del doc["_source"]["file"]["size"]
+    del doc["_source"]["zeek"]["files"]["total_bytes"]
+    doc["_source"]["zeek"]["files"]["seen_bytes"] = "146"
+    doc["_source"]["file"]["mime_type"] = []
+    mcp = _tools(_docs_handler([doc]))
+    row = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+
+    assert row["bytes"] == "146"
+    # file.mime_type empty -> fall back to Zeek's own scalar copy.
+    assert row["mime_type"] == "application/x-dosexec"
 
 
 @pytest.mark.asyncio
@@ -120,8 +187,13 @@ async def test_file_scans_executables_only_filters_on_executable_mimes():
     await mcp.call_tool("malcolm_file_scans", {"executables_only": True})
 
     mimes = seen["body"]["filter"]["file.mime_type"]
+    # Zeek's own executable.sig splits ELF by e_type and never emits
+    # "application/x-elf"; ET_DYN (x-sharedlib) is every PIE binary, i.e. the
+    # default build on current distros, so missing it misses Linux drops.
     assert "application/x-dosexec" in mimes
-    assert "application/x-elf" in mimes
+    assert "application/x-sharedlib" in mimes
+    assert "application/x-mach-o-executable" in mimes
+    assert "application/x-elf" not in mimes
 
 
 @pytest.mark.asyncio
@@ -155,14 +227,26 @@ async def test_file_scans_pivots_on_a_hash():
 
 
 @pytest.mark.asyncio
-async def test_file_scans_leaves_a_non_hex_hash_alone():
-    """TLSH is stored uppercase — folding every hash to lowercase would break it."""
+async def test_file_scans_searches_both_cases_of_a_non_hex_hash():
+    """Zeek stores tlsh uppercase, Strelka stores the same digest lowercase, and
+    related.hash matches exactly — one case finds one record family and misses
+    the other, so both forms have to go into the filter."""
     tlsh = "AB71D80F63A72A0AE7E387A3FE70936790245605A78E65E578DC11BCBF84050C1F63D9"
     seen = {}
     mcp = _tools(_docs_handler([_FILE_DOC], seen))
     await mcp.call_tool("malcolm_file_scans", {"file_hash": tlsh})
 
-    assert seen["body"]["filter"]["related.hash"] == tlsh
+    assert seen["body"]["filter"]["related.hash"] == [tlsh, tlsh.lower()]
+
+
+@pytest.mark.asyncio
+async def test_file_scans_does_not_duplicate_an_already_lowercase_hash():
+    ssdeep = "12:3gr2klupkxaedoas1myw+1rvq1jsv1zsn6ql:3gnlu3eymywebgjstzsnd"
+    seen = {}
+    mcp = _tools(_docs_handler([_FILE_DOC], seen))
+    await mcp.call_tool("malcolm_file_scans", {"file_hash": ssdeep})
+
+    assert seen["body"]["filter"]["related.hash"] == ssdeep
 
 
 @pytest.mark.asyncio
@@ -224,11 +308,11 @@ async def test_file_scans_surfaces_the_strelka_verdict():
         "rules": {"name": ["win_dropper", "packed_upx"], "scanner": ["yara", "clamav"]},
     }
     mcp = _tools(_docs_handler([doc]))
-    out = str(await mcp.call_tool("malcolm_file_scans", {}))
+    row = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
 
-    assert "win_dropper" in out
-    assert "packed_upx" in out
-    assert "yara" in out
+    assert row["scan_hits"] == 2
+    assert row["scan_rules"] == ["win_dropper", "packed_upx"]
+    assert row["scan_scanners"] == ["yara", "clamav"]
 
 
 @pytest.mark.asyncio
@@ -313,11 +397,13 @@ async def test_extract_file_percent_encodes_the_name():
         return httpx.Response(200, content=b"MZ")
 
     mcp = _tools(handler)
-    await mcp.call_tool("malcolm_extract_file", {"filename": "SMB-C$Temp#odd.exe"})
+    out = str(await mcp.call_tool("malcolm_extract_file", {"filename": "SMB-C$Temp#odd.exe"}))
 
     assert seen["raw"] == "/extracted-files/SMB-C%24Temp%23odd.exe"
     # Unescaped, the '#' would have cut the path short at "SMB-C$Temp".
     assert seen["path"] == "/extracted-files/SMB-C$Temp#odd.exe"
+    # The reported URL has to be pasteable too, not just the request we sent.
+    assert "/extracted-files/SMB-C%24Temp%23odd.exe" in out
 
 
 @pytest.mark.asyncio
@@ -359,6 +445,25 @@ async def test_extract_file_reports_a_pruned_file():
 
     assert "false" in out.lower()
     assert "404" in out
+    assert "prune" in out.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [401, 403, 500, 502])
+async def test_extract_file_does_not_call_a_server_error_a_missing_file(status):
+    """Only a 404 says the file is gone. Malcolm puts /extracted-files behind
+    basic auth and, with role-based access on, ROLE_EXTRACTED_FILES — reporting
+    a 401/403/502 as "pruned" would end the hunt on a fixable config problem."""
+
+    def handler(req):
+        return httpx.Response(status, text="nope")
+
+    mcp = _tools(handler)
+    out = str(await mcp.call_tool("malcolm_extract_file", {"filename": "a.exe"}))
+
+    assert str(status) in out
+    assert "prune" not in out.lower()
+    assert "failed" in out.lower()
 
 
 @pytest.mark.asyncio
