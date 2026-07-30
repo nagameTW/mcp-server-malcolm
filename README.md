@@ -143,7 +143,10 @@ Arkime's `connections.csv` is deliberately not wrapped: on Arkime 6.6.0 it emits
 | Tool | Description |
 |------|-------------|
 | `malcolm_related_sessions` | Find all sessions related to a Zeek UID |
+| `malcolm_saved_objects` | Find the dashboards, visualizations and saved searches this Malcolm ships (111 dashboards, without their multi-KB layout blobs) |
 | `malcolm_dashboard_export` | Export an OpenSearch Dashboards saved object as JSON |
+| `malcolm_alerting_monitors` | List OpenSearch alerting monitors, what each watches, and whether any have fired — flags when every monitor is disabled |
+| `malcolm_anomaly_detectors` | List anomaly detectors, what each models, and how many anomalies exist — flags when none were ever recorded |
 
 ## Write tools (opt-in)
 
@@ -466,6 +469,9 @@ arkime_create_hunt(
 | `/mapi/ping` | GET | `malcolm_ping` |
 | `/mapi/ingest-stats`, `/mapi/indices` | GET | `malcolm_data_coverage` |
 | `/mapi/dashboard-export/<id>` | GET | `malcolm_dashboard_export` |
+| `/dashboards/api/saved_objects/_find` | GET | `malcolm_saved_objects` |
+| `/mapi/opensearch/_plugins/_alerting/monitors/*` | POST, GET | `malcolm_alerting_monitors` |
+| `/mapi/opensearch/_plugins/_anomaly_detection/detectors/*` | POST | `malcolm_anomaly_detectors` |
 | `/mapi/opensearch/<index>/_search` | POST | `search_dsl` |
 | `/mapi/opensearch/<index>/_count` | POST | `count` |
 | `/mapi/opensearch/_cat/indices` | GET | `list_indices` |

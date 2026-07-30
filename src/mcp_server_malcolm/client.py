@@ -435,6 +435,79 @@ class MalcolmClient:
     async def dashboard_export(self, dashboard_id: str) -> dict[str, Any]:
         return await self.get(f"/mapi/dashboard-export/{dashboard_id}")
 
+    # -- OpenSearch Dashboards & plugins --------------------------------
+
+    async def dashboards_find(
+        self, types: list[str], search: str = "", limit: int = 20
+    ) -> dict[str, Any]:
+        """Saved objects via GET /dashboards/api/saved_objects/_find.
+
+        `fields` is set to title/description so the server trims the payload
+        before sending it: measured on v26.07.1, five dashboards are 19.7 KB in
+        full and 6.0 KB trimmed, because a dashboard is mostly its panelsJSON
+        layout blob.
+
+        Args:
+            types: Object types, repeated as separate `type` params.
+            search: simple_query_string matched against the title only.
+        """
+        params: list[tuple[str, Any]] = [("type", t) for t in types]
+        params += [("fields", "title"), ("fields", "description"), ("per_page", limit)]
+        if search:
+            params += [("search", search), ("search_fields", "title")]
+        return await self.get("/dashboards/api/saved_objects/_find", params=params)
+
+    async def alerting_monitors(self, limit: int = 50) -> dict[str, Any]:
+        """Alerting monitors via POST /_plugins/_alerting/monitors/_search.
+
+        The Dashboards-side route (/dashboards/api/alerting/monitors) needs
+        from/size/search all present and 400s otherwise, so this goes straight
+        to the OpenSearch plugin through Malcolm's proxy.
+        """
+        return await self.post(
+            "/mapi/opensearch/_plugins/_alerting/monitors/_search",
+            {"query": {"match_all": {}}, "size": limit},
+        )
+
+    async def alerting_alerts(self) -> dict[str, Any]:
+        """Currently-raised alerts via GET /_plugins/_alerting/monitors/alerts.
+
+        alertState is pinned to ACTIVE: the API defaults to ALL, which counts
+        COMPLETED and ACKNOWLEDGED history alongside what is firing now, so the
+        default would answer a different question from the one asked.
+        """
+        return await self.get(
+            "/mapi/opensearch/_plugins/_alerting/monitors/alerts",
+            params={"alertState": "ACTIVE"},
+        )
+
+    async def anomaly_detectors(self, limit: int = 50) -> dict[str, Any]:
+        """Anomaly detectors via POST /_plugins/_anomaly_detection/detectors/_search."""
+        return await self.post(
+            "/mapi/opensearch/_plugins/_anomaly_detection/detectors/_search",
+            {"query": {"match_all": {}}, "size": limit},
+        )
+
+    async def anomaly_result_count(self) -> dict[str, Any]:
+        """How many ANOMALOUS results exist, via the detectors results search.
+
+        The results index holds one document per detection interval per entity
+        whether or not anything was anomalous — that is why the documents carry
+        an `is_anomaly` boolean and an `anomaly_grade` at all. A match_all count
+        therefore counts detector runs, which for Malcolm's four shipped
+        MULTI_ENTITY detectors at a ten-minute interval reaches five or six
+        figures within a day of being started. The range filter counts the
+        anomalies themselves.
+
+        track_total_hits is set because OpenSearch otherwise stops counting at
+        10,000 and reports the total as a lower bound, which would silently cap
+        exactly the number this is here to report.
+        """
+        return await self.post(
+            "/mapi/opensearch/_plugins/_anomaly_detection/detectors/results/_search",
+            {"query": {"range": {"anomaly_grade": {"gt": 0}}}, "size": 0, "track_total_hits": True},
+        )
+
     # -- NetBox (forwarded) ---------------------------------------------
 
     async def netbox_get(self, path: str, params: dict[str, Any] | None = None) -> Any:

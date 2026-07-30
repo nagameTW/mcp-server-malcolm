@@ -6,6 +6,50 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-30
+
+The last planned coverage gap: what Malcolm's Dashboards layer already knows.
+Malcolm ships 111 dashboards, 808 visualizations and 141 saved searches, plus
+OpenSearch's alerting and anomaly-detection plugins, and none of it was
+reachable — an agent would rebuild by hand an analysis that already existed.
+Probed against a live Malcolm v26.07.1 (OpenSearch 3.7.0) before implementation.
+
+### Added
+
+- `malcolm_saved_objects`: find the dashboards, visualizations and saved
+  searches this Malcolm ships, by type and title. Pairs with the existing
+  `malcolm_dashboard_export` — this one finds the id, that one reads how it is
+  built. The panel layout is dropped at both ends: `fields=title&description`
+  keeps the server from sending it, and what remains is trimmed again, so all
+  111 dashboards come back as 21 KB against 424 KB for the untrimmed response
+  (both measured on the reference deployment).
+- `malcolm_alerting_monitors`: the standing OpenSearch alerting rules, what each
+  watches, and how many alerts are currently raised. When every monitor is
+  disabled the response says so, because a disabled monitor is silent in exactly
+  the way a healthy one is. The alert count asks for `alertState=ACTIVE`; the
+  API defaults to `ALL`, which would fold COMPLETED history into a number
+  labelled as firing now.
+- `malcolm_anomaly_detectors`: the anomaly detectors, what each models, and how
+  many anomalies exist. The count filters on `anomaly_grade > 0` rather than
+  counting result documents: the results index holds one document per detection
+  interval per entity whether or not anything was anomalous, so a plain count of
+  it reports detector runs — five figures within a day for Malcolm's four
+  MULTI_ENTITY detectors at a ten-minute interval — under a heading that says
+  anomalies. `track_total_hits` is set so the number is not silently capped at
+  10,000. Zero still needs care, and the response says so: a detector that was
+  never started produces the same zero.
+
+Both plugin tools report the server's own `total` alongside `showing`, so a
+truncated page cannot be mistaken for the complete set of standing detections,
+and the all-disabled note says whether it is speaking for every monitor or only
+the page returned.
+
+Both plugin tools reach OpenSearch through Malcolm's `/mapi/opensearch` proxy
+rather than the Dashboards-side routes, which require `from`, `size` and
+`search` to all be present and return 400 otherwise. In both tools the count of
+findings is an enrichment: if that second lookup fails the configuration list is
+still returned, with the error alongside it.
+
 ## [0.6.0] - 2026-07-30
 
 Closes the Arkime read gaps: everything the viewer API exposes that an analyst
