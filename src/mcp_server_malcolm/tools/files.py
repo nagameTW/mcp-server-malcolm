@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import string
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
 
 from pydantic import Field
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer

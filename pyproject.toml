@@ -29,6 +29,9 @@ dependencies = [
     # supported without a shim this server does not need.
     "mcp>=2,<3",
     "httpx>=0.27",
+    # pydantic refuses typing.TypedDict below 3.12, and this package supports
+    # 3.11, so the tools that declare a typed return import it from here.
+    "typing-extensions>=4.12",
 ]
 
 [project.urls]

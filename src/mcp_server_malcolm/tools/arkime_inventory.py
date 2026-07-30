@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import ipaddress
-from typing import TYPE_CHECKING, Annotated, Any, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
+from typing_extensions import TypedDict
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer

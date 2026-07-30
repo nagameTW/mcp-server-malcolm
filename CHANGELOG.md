@@ -35,6 +35,10 @@ Closes the two things left open after 0.8.1.
   tests now hold both halves: that the ten declare a schema, and that every one
   of them can still return an explanatory sentence.
 
+  The TypedDicts import from `typing_extensions`, not `typing`: pydantic refuses
+  `typing.TypedDict` below Python 3.12 and this package supports 3.11. That
+  dependency is now declared explicitly rather than relied on transitively.
+
 ### Changed
 
 - The `hunt_workflow` prompt covers the whole tool set again. It had been
