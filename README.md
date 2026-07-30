@@ -116,6 +116,15 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 | `arkime_connections` | Source/destination connection graph (nodes and links) |
 | `arkime_file_by_hash` | Extract the transferred file whose md5/sha256 matches (metadata only, nothing written to disk) |
 
+### File analysis
+
+| Tool | Description |
+|------|-------------|
+| `malcolm_file_scans` | List the files Zeek carved out of traffic — name, MIME type, size, md5/sha256, both endpoints, Malcolm's severity, and any Strelka/YARA/ClamAV hits |
+| `malcolm_extract_file` | Fetch one carved file from Malcolm's extracted-files server and report its size, sha256, and file-magic (metadata only, nothing written to disk) |
+
+These need Zeek file extraction on (`ZEEK_EXTRACTOR_MODE`), and `malcolm_extract_file` also needs the extracted-files HTTP server (`FILESCAN_HTTP_SERVER_ENABLE`). A carved file may be live malware, so the bytes never enter the MCP response.
+
 ### Correlation and export
 
 | Tool | Description |
@@ -437,7 +446,7 @@ arkime_create_hunt(
 
 | Endpoint | Method | Used by |
 |----------|--------|---------|
-| `/mapi/document` | POST | `malcolm_search`, `malcolm_alerts`, `malcolm_related_sessions` |
+| `/mapi/document` | POST | `malcolm_search`, `malcolm_alerts`, `malcolm_related_sessions`, `malcolm_file_scans` |
 | `/mapi/agg/<fields>` | POST | `malcolm_aggregate`, `malcolm_field_values`, `malcolm_field_profile`, `malcolm_data_coverage` |
 | `/mapi/fields` | GET | `malcolm_field_search`, `malcolm_field_profile` |
 | `/mapi/ready`, `/mapi/version` | GET | `malcolm_service_status` |
@@ -453,8 +462,7 @@ arkime_create_hunt(
 | `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert` (write) |
 | `/arkime/api/fields` | GET | `arkime_field_search` |
-| `/arkime/api/sessions` | GET | `arkime_sessions` |
-| `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
+| `/arkime/api/sessions` | GET | `arkime_sessions`, `arkime_session_detail` (via an `id ==` expression) |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
 | `/arkime/api/unique`, `/arkime/api/multiunique` | GET | `arkime_unique`, `arkime_multiunique` |
 | `/arkime/api/spigraph` | GET | `arkime_spigraph` |
@@ -465,6 +473,7 @@ arkime_create_hunt(
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags` (write) |
 | `/arkime/api/hunt`, `/arkime/api/hunts` | POST, GET | `arkime_create_hunt`, `arkime_hunt_status` (write + read) |
 | `/arkime/api/view`, `/arkime/api/shortcut` | POST | `arkime_create_view`, `arkime_create_shortcut` (write) |
+| `/extracted-files/<name>` | GET | `malcolm_extract_file` |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap` (write) |
 
 These endpoint paths and body shapes match Malcolm `26.06.1` and Arkime `v6.5.0`. Both drift between releases, so re-check against your own version if a write tool returns an unexpected error.

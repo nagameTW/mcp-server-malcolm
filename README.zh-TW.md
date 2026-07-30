@@ -108,6 +108,15 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | `arkime_connections` | 來源/目的連線圖（nodes 與 links） |
 | `arkime_file_by_hash` | 依 md5/sha256 萃取傳輸過的檔案（只回 metadata，不落地） |
 
+### 檔案分析
+
+| 工具 | 說明 |
+|------|------|
+| `malcolm_file_scans` | 列出 Zeek 從流量裡切出來的檔案——檔名、MIME type、大小、md5/sha256、來源與目的、Malcolm 的 severity，以及 Strelka/YARA/ClamAV 的掃描命中 |
+| `malcolm_extract_file` | 從 Malcolm 的 extracted-files server 抓一個切出來的檔案，回報大小、sha256、file-magic（只回 metadata，不落地） |
+
+這兩個工具需要 Zeek 檔案萃取開著（`ZEEK_EXTRACTOR_MODE`），`malcolm_extract_file` 還需要 extracted-files HTTP server（`FILESCAN_HTTP_SERVER_ENABLE`）。切出來的檔案可能就是活的惡意程式，所以檔案內容不會進到 MCP 回應裡。
+
 ### 關聯與匯出
 
 | 工具 | 說明 |
@@ -426,7 +435,7 @@ arkime_create_hunt(
 
 | 端點 | 方法 | 使用者 |
 |------|------|--------|
-| `/mapi/document` | POST | `malcolm_search`、`malcolm_alerts`、`malcolm_related_sessions` |
+| `/mapi/document` | POST | `malcolm_search`、`malcolm_alerts`、`malcolm_related_sessions`、`malcolm_file_scans` |
 | `/mapi/agg/<fields>` | POST | `malcolm_aggregate`、`malcolm_field_values`、`malcolm_field_profile`、`malcolm_data_coverage` |
 | `/mapi/fields` | GET | `malcolm_field_search`、`malcolm_field_profile` |
 | `/mapi/ready`、`/mapi/version` | GET | `malcolm_service_status` |
@@ -442,8 +451,7 @@ arkime_create_hunt(
 | `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert`（write） |
 | `/arkime/api/fields` | GET | `arkime_field_search` |
-| `/arkime/api/sessions` | GET | `arkime_sessions` |
-| `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
+| `/arkime/api/sessions` | GET | `arkime_sessions`、`arkime_session_detail`（`id ==` 表達式） |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
 | `/arkime/api/unique`、`/arkime/api/multiunique` | GET | `arkime_unique`、`arkime_multiunique` |
 | `/arkime/api/spigraph` | GET | `arkime_spigraph` |
@@ -452,6 +460,7 @@ arkime_create_hunt(
 | `/arkime/api/connections` | GET | `arkime_connections` |
 | `/arkime/api/sessions/bodyhash/<hash>` | GET | `arkime_file_by_hash` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags`（write） |
+| `/extracted-files/<name>` | GET | `malcolm_extract_file` |
 | `/arkime/api/hunt`、`/arkime/api/hunts` | POST、GET | `arkime_create_hunt`、`arkime_hunt_status`（write + read） |
 | `/arkime/api/view`、`/arkime/api/shortcut` | POST | `arkime_create_view`、`arkime_create_shortcut`（write） |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |

@@ -30,6 +30,8 @@ _READ = {
     "arkime_spigraphhierarchy",
     "arkime_connections",
     "arkime_file_by_hash",
+    "malcolm_file_scans",
+    "malcolm_extract_file",
     "malcolm_related_sessions",
     "malcolm_ping",
     "malcolm_dashboard_export",

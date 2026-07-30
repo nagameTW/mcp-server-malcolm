@@ -7,7 +7,7 @@ where = ["src"]
 
 [project]
 name = "mcp-server-malcolm"
-version = "0.4.1"
+version = "0.5.0"
 description = "MCP server for the Malcolm network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch + NetBox) — full read surface plus opt-in, audited write tools"
 readme = "README.md"
 requires-python = ">=3.11"
