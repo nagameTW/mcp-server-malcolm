@@ -10,7 +10,8 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from conftest import tool_text
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.server import create_server
@@ -63,19 +64,9 @@ def _mock_client(handler):
 
 
 def _tools(handler):
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_file_tools(mcp, _mock_client(handler))
     return mcp
-
-
-def str_payload(out):
-    """The text a tool returned, unwrapped from FastMCP's content envelope.
-
-    Tests that only look for a phrase use str(out); the ones that assert an
-    exact row need the JSON itself.
-    """
-    content = out[0] if isinstance(out, tuple) else out
-    return content[0].text
 
 
 def _docs_handler(results, seen=None):
@@ -120,7 +111,7 @@ async def test_file_scans_maps_every_row_field():
     backwards. Compare the parsed row exactly instead.
     """
     mcp = _tools(_docs_handler([_FILE_DOC]))
-    out = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))
+    out = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))
 
     assert out["count"] == 1
     assert out["files"][0] == {
@@ -157,7 +148,7 @@ async def test_file_scans_unwraps_single_element_arrays():
     doc["_source"]["file"]["name"] = "scalar-name.exe"
     doc["_source"]["file"]["mime_type"] = "text/plain"
     mcp = _tools(_docs_handler([doc]))
-    row = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+    row = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
 
     assert row["filename"] == "scalar-name.exe"
     assert row["mime_type"] == "text/plain"
@@ -173,7 +164,7 @@ async def test_file_scans_falls_back_through_the_zeek_size_fields():
     doc["_source"]["zeek"]["files"]["seen_bytes"] = "146"
     doc["_source"]["file"]["mime_type"] = []
     mcp = _tools(_docs_handler([doc]))
-    row = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+    row = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
 
     assert row["bytes"] == "146"
     # file.mime_type empty -> fall back to Zeek's own scalar copy.
@@ -308,7 +299,7 @@ async def test_file_scans_surfaces_the_strelka_verdict():
         "rules": {"name": ["win_dropper", "packed_upx"], "scanner": ["yara", "clamav"]},
     }
     mcp = _tools(_docs_handler([doc]))
-    row = json.loads(str_payload(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+    row = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
 
     assert row["scan_hits"] == 2
     assert row["scan_rules"] == ["win_dropper", "packed_upx"]

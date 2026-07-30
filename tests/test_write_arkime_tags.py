@@ -2,7 +2,7 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.tools.write.arkime_tags import register_arkime_tag_tools
@@ -26,7 +26,7 @@ async def test_add_tags_posts_and_audits(tmp_path):
         seen["body"] = json.loads(req.content)
         return httpx.Response(200, json={"success": True, "text": "Tags added successfully"})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tag_tools(mcp, _mock(handler), str(audit))
     out = await mcp.call_tool(
         "arkime_add_tags", {"session_ids": "id1,id2", "tags": "malicious,review"}
@@ -44,7 +44,7 @@ async def test_add_tags_requires_both_args(tmp_path):
     def handler(req):
         raise AssertionError("no POST expected")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tag_tools(mcp, _mock(handler), None)
     assert (
         "required"
@@ -63,7 +63,7 @@ async def test_add_tags_audits_http_error(tmp_path):
     def handler(req):
         return httpx.Response(403, json={"text": "forbidden"})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tag_tools(mcp, _mock(handler), str(audit))
     await mcp.call_tool("arkime_add_tags", {"session_ids": "id1", "tags": "x"})
     row = json.loads(audit.read_text().splitlines()[-1])

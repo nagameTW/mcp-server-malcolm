@@ -23,7 +23,7 @@ from pydantic import Field
 from mcp_server_malcolm import audit
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -63,7 +63,7 @@ def _resolve_in_dir(file_path: str, upload_dir: str | None) -> tuple[Path | None
 
 
 def register_pcap_upload_tools(
-    mcp: FastMCP,
+    mcp: MCPServer,
     client: MalcolmClient,
     audit_file: str | None,
     upload_dir: str | None = None,

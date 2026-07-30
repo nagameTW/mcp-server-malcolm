@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def register_correlation_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register session correlation tools."""
 
     @mcp.tool(title="Find related sessions by UID", annotations=_READ)

@@ -7,7 +7,7 @@
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.tools.arkime import register_arkime_tools
@@ -35,7 +35,7 @@ async def test_search_forwards_doctype():
         seen["body"] = req.content.decode()
         return httpx.Response(200, json={"hits": []})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(handler))
     await mcp.call_tool("malcolm_search", {"doctype": "arkime"})
     assert '"doctype"' in seen["body"]
@@ -50,7 +50,7 @@ async def test_search_omits_doctype_when_empty():
         seen["body"] = req.content.decode()
         return httpx.Response(200, json={"hits": []})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(handler))
     await mcp.call_tool("malcolm_search", {})
     assert "doctype" not in seen["body"]
@@ -67,7 +67,7 @@ async def test_aggregate_forwards_doctype():
             seen["body"] = req.content.decode()
         return httpx.Response(200, json={})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(handler))
     await mcp.call_tool("malcolm_aggregate", {"fields": "host.name", "doctype": "beat"})
     assert '"doctype"' in seen["body"]
@@ -92,7 +92,7 @@ async def test_alerts_category_action_sid_use_ecs_fields():
         seen["body"] = req.content.decode()
         return httpx.Response(200, json={"hits": []})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(handler))
     await mcp.call_tool(
         "malcolm_alerts",
@@ -117,7 +117,7 @@ async def test_alerts_multi_sid_becomes_list():
         seen["body"] = req.content.decode()
         return httpx.Response(200, json={"hits": []})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_query_tools(mcp, _mock_client(handler))
     await mcp.call_tool("malcolm_alerts", {"sid": "111,222"})
     # two sids -> a list of ints, not a single value
@@ -137,7 +137,7 @@ async def test_pcap_accepts_comma_separated_ids():
         # minimal valid pcap-le magic
         return httpx.Response(200, content=b"\xd4\xc3\xb2\xa1rest")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_pcap", {"session_id": "240601-A,240601-B"})
     assert seen["ids"] == "240601-A,240601-B"
@@ -149,7 +149,7 @@ async def test_pcap_rejects_injection_ids():
     def handler(req):
         raise AssertionError("must not download for an injecting id")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_pcap", {"session_id": "1 || ip==0.0.0.0/0"})
     assert "invalid session_id" in str(out).lower()
@@ -167,7 +167,7 @@ async def test_netbox_query_hits_path_and_forwards_params():
         seen["port"] = req.url.params.get("port")
         return httpx.Response(200, json={"results": [{"name": "https"}]})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool(
         "malcolm_netbox_query",
@@ -183,7 +183,7 @@ async def test_netbox_query_rejects_traversal_path():
     def handler(req):
         raise AssertionError("must not query for a traversal path")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("malcolm_netbox_query", {"path": "../../secret"})
     assert "invalid netbox path" in str(out).lower()
@@ -194,7 +194,7 @@ async def test_netbox_query_rejects_absolute_url_path():
     def handler(req):
         raise AssertionError("must not query for an absolute url")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("malcolm_netbox_query", {"path": "http://evil.example/x"})
     assert "invalid netbox path" in str(out).lower()
@@ -205,7 +205,7 @@ async def test_netbox_query_rejects_bad_params_json():
     def handler(req):
         raise AssertionError("must not query with unparseable params")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("malcolm_netbox_query", {"path": "ipam/vlans/", "params": "{bad"})
     assert "invalid json" in str(out).lower()

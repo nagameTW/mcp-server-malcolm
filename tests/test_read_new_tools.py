@@ -6,7 +6,7 @@ import asyncio
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.server import create_server
@@ -51,7 +51,7 @@ async def test_session_detail_hits_endpoint_and_returns_fields():
             200, json={"data": [{"source": {"ip": "192.0.2.77"}, "protocols": ["dns"]}]}
         )
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_detail", {"session_id": "240601-X"})
     # GET /arkime/api/session/<id> serves the SPA HTML, not JSON; a single
@@ -74,7 +74,7 @@ async def test_session_detail_strips_the_node_prefix_from_the_id():
         seen["expression"] = req.url.params.get("expression")
         return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     await mcp.call_tool(
         "arkime_session_detail", {"session_id": "3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw"}
@@ -90,7 +90,7 @@ async def test_session_detail_accepts_an_already_bare_id():
         seen["expression"] = req.url.params.get("expression")
         return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     await mcp.call_tool("arkime_session_detail", {"session_id": "240425-IrHoGmqqp7SR6TWIWoG0Dw"})
     assert seen["expression"] == "id == 240425-IrHoGmqqp7SR6TWIWoG0Dw"
@@ -101,7 +101,7 @@ async def test_session_detail_reports_not_found():
     def handler(req):
         return httpx.Response(200, json={"data": []})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_detail", {"session_id": "240601-X"})
     assert "no arkime session" in str(out).lower()
@@ -112,7 +112,7 @@ async def test_session_detail_rejects_injection_session_id():
     def handler(req):
         raise AssertionError("must not fetch for a non-id session_id")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_detail", {"session_id": "1||ip==0.0.0.0/0"})
     assert "invalid session_id" in str(out).lower()
@@ -125,7 +125,7 @@ async def test_unique_returns_plain_text_lines():
         assert req.url.params.get("exp") == "protocols"
         return httpx.Response(200, text="dns\ntls\nhttp\n")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_unique", {"field": "protocols"})
     text = str(out)
@@ -144,7 +144,7 @@ async def test_unique_passes_the_time_window():
         seen["stop"] = req.url.params.get("stopTime")
         return httpx.Response(200, text="dns\n")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     await mcp.call_tool(
         "arkime_unique",
@@ -166,7 +166,7 @@ async def test_sessions_reports_matches_not_the_whole_index():
             json={"data": [{"id": "240425-A"}], "recordsTotal": 6030807, "recordsFiltered": 134},
         )
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = str(await mcp.call_tool("arkime_sessions", {"expression": "protocols == ssh"}))
     assert "134" in out
@@ -178,7 +178,7 @@ async def test_unique_requires_field():
     def handler(req):
         raise AssertionError("must not call the API without a field")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_unique", {"field": "  "})
     assert "field is required" in str(out).lower()
@@ -190,7 +190,7 @@ async def test_netbox_sites_hits_endpoint():
         assert req.url.path == "/mapi/netbox-sites"
         return httpx.Response(200, json={"sites": [{"id": 1, "name": "hq"}]})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("malcolm_netbox_sites", {})
     assert "hq" in str(out)
@@ -206,7 +206,7 @@ async def test_spigraph_passes_field_and_scopes_time():
         seen["start"] = req.url.params.get("startTime")
         return httpx.Response(200, json={"items": [{"name": "192.0.2.77", "count": 9}]})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_spigraph", {"field": "ip.dst", "time_from": "1717200000"})
     assert seen["path"] == "/arkime/api/spigraph"
@@ -220,7 +220,7 @@ async def test_spigraph_requires_field():
     def handler(req):
         raise AssertionError("must not call the API without a field")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_spigraph", {"field": " "})
     assert "field is required" in str(out).lower()
@@ -235,7 +235,7 @@ async def test_spiview_passes_spi_list():
         seen["spi"] = req.url.params.get("spi")
         return httpx.Response(200, json={"spi": {"protocols": {"buckets": []}}})
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_spiview", {"spi": "protocols:10,ip.dst"})
     assert seen["path"] == "/arkime/api/spiview"
@@ -248,7 +248,7 @@ async def test_spiview_requires_spi():
     def handler(req):
         raise AssertionError("must not call the API without spi")
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_spiview", {"spi": ""})
     assert "required" in str(out).lower()
@@ -266,7 +266,7 @@ async def test_connections_defaults_and_returns_graph():
             200, json={"nodes": [{"id": "192.0.2.10"}], "links": [{"source": 0, "target": 1}]}
         )
 
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_connections", {})
     assert seen["path"] == "/arkime/api/connections"

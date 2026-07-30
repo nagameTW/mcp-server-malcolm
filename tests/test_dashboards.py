@@ -10,7 +10,8 @@ import json
 
 import httpx
 import pytest
-from mcp.server.fastmcp import FastMCP
+from conftest import tool_text
+from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.server import create_server
@@ -27,14 +28,9 @@ def _mock_client(handler):
 
 
 def _tools(handler):
-    mcp = FastMCP("t")
+    mcp = MCPServer("t")
     register_dashboard_tools(mcp, _mock_client(handler))
     return mcp
-
-
-def payload(out):
-    content = out[0] if isinstance(out, tuple) else out
-    return content[0].text
 
 
 def test_batch3_tools_registered():
@@ -80,7 +76,7 @@ async def test_saved_objects_finds_by_type_and_trims_the_layout_blobs():
         )
 
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(handler).call_tool("malcolm_saved_objects", {"object_type": "dashboard"})
         )
     )
@@ -149,7 +145,7 @@ async def test_saved_objects_rejects_an_unknown_type():
     def handler(req):
         raise AssertionError("no request may leave for an unsupported object type")
 
-    out = payload(
+    out = tool_text(
         await _tools(handler).call_tool("malcolm_saved_objects", {"object_type": "widget"})
     )
 
@@ -162,7 +158,7 @@ async def test_saved_objects_reports_no_match():
     def handler(req):
         return httpx.Response(200, json={"total": 0, "saved_objects": []})
 
-    out = payload(
+    out = tool_text(
         await _tools(handler).call_tool(
             "malcolm_saved_objects", {"object_type": "dashboard", "search": "nothing"}
         )
@@ -206,7 +202,7 @@ def _alerting_handler(monitors, alerts, seen=None):
 async def test_alerting_monitors_lists_config_and_whether_it_is_on():
     seen = {}
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_alerting_handler([_MONITOR], [], seen)).call_tool(
                 "malcolm_alerting_monitors", {}
             )
@@ -228,7 +224,7 @@ async def test_alerting_monitors_reports_the_active_alert_count():
     whether it has fired, which is the part an analyst acts on."""
     alerts = [{"id": "a1", "monitor_name": "Malcolm API Loopback Monitor", "state": "ACTIVE"}]
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_alerting_handler([_MONITOR], alerts)).call_tool(
                 "malcolm_alerting_monitors", {}
             )
@@ -241,7 +237,7 @@ async def test_alerting_monitors_reports_the_active_alert_count():
 @pytest.mark.asyncio
 async def test_alerting_monitors_warns_when_every_monitor_is_disabled():
     """A disabled monitor is silent in exactly the way a healthy one is."""
-    out = payload(
+    out = tool_text(
         await _tools(_alerting_handler([_MONITOR], [])).call_tool("malcolm_alerting_monitors", {})
     )
 
@@ -257,7 +253,7 @@ async def test_alerting_monitors_still_answers_when_the_alert_call_fails():
             raise httpx.ConnectError("alerts endpoint down")
         return httpx.Response(200, json={"hits": {"total": {"value": 1}, "hits": [_MONITOR]}})
 
-    out = json.loads(payload(await _tools(handler).call_tool("malcolm_alerting_monitors", {})))
+    out = json.loads(tool_text(await _tools(handler).call_tool("malcolm_alerting_monitors", {})))
 
     assert out["monitors"][0]["name"] == "Malcolm API Loopback Monitor"
     assert "active_alerts" not in out
@@ -265,7 +261,7 @@ async def test_alerting_monitors_still_answers_when_the_alert_call_fails():
 
 @pytest.mark.asyncio
 async def test_alerting_monitors_reports_none_configured():
-    out = payload(
+    out = tool_text(
         await _tools(_alerting_handler([], [])).call_tool("malcolm_alerting_monitors", {})
     )
 
@@ -314,7 +310,7 @@ def _detector_handler(detectors, anomaly_total, seen=None):
 async def test_anomaly_detectors_lists_what_each_one_watches():
     seen = {}
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_detector_handler([_DETECTOR], 0, seen)).call_tool(
                 "malcolm_anomaly_detectors", {}
             )
@@ -335,7 +331,7 @@ async def test_anomaly_detectors_lists_what_each_one_watches():
 @pytest.mark.asyncio
 async def test_anomaly_detectors_reports_how_many_anomalies_exist():
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_detector_handler([_DETECTOR], 42)).call_tool(
                 "malcolm_anomaly_detectors", {}
             )
@@ -349,7 +345,7 @@ async def test_anomaly_detectors_reports_how_many_anomalies_exist():
 async def test_anomaly_detectors_says_when_nothing_has_been_detected():
     """Zero results with detectors configured usually means they were never
     started, which reads identically to "nothing anomalous happened"."""
-    out = payload(
+    out = tool_text(
         await _tools(_detector_handler([_DETECTOR], 0)).call_tool("malcolm_anomaly_detectors", {})
     )
 
@@ -365,7 +361,7 @@ async def test_anomaly_detectors_still_answers_when_the_result_count_fails():
             raise httpx.ConnectError("results index missing")
         return httpx.Response(200, json={"hits": {"total": {"value": 1}, "hits": [_DETECTOR]}})
 
-    out = json.loads(payload(await _tools(handler).call_tool("malcolm_anomaly_detectors", {})))
+    out = json.loads(tool_text(await _tools(handler).call_tool("malcolm_anomaly_detectors", {})))
 
     assert out["detectors"][0]["name"] == "action_result_user"
     assert "recorded_anomalies" not in out
@@ -373,7 +369,9 @@ async def test_anomaly_detectors_still_answers_when_the_result_count_fails():
 
 @pytest.mark.asyncio
 async def test_anomaly_detectors_reports_none_configured():
-    out = payload(await _tools(_detector_handler([], 0)).call_tool("malcolm_anomaly_detectors", {}))
+    out = tool_text(
+        await _tools(_detector_handler([], 0)).call_tool("malcolm_anomaly_detectors", {})
+    )
 
     assert "no anomaly detectors" in out.lower()
 
@@ -394,7 +392,7 @@ async def test_every_dashboard_tool_reports_a_transport_failure(tool, args):
     def handler(req):
         raise httpx.ConnectError("connection refused")
 
-    out = payload(await _tools(handler).call_tool(tool, args))
+    out = tool_text(await _tools(handler).call_tool(tool, args))
 
     assert "failed" in out.lower()
     assert "connection refused" in out
@@ -420,7 +418,7 @@ async def test_alerting_monitor_survives_a_shape_it_does_not_recognise():
         },
     }
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_alerting_handler([odd], [])).call_tool("malcolm_alerting_monitors", {})
         )
     )
@@ -448,7 +446,7 @@ async def test_alerting_monitor_skips_a_non_search_input():
         },
     }
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_alerting_handler([doc_level], [])).call_tool(
                 "malcolm_alerting_monitors", {}
             )
@@ -484,7 +482,9 @@ async def test_saved_objects_rejects_an_empty_type():
     def handler(req):
         raise AssertionError("no request may leave without a type")
 
-    out = payload(await _tools(handler).call_tool("malcolm_saved_objects", {"object_type": " , "}))
+    out = tool_text(
+        await _tools(handler).call_tool("malcolm_saved_objects", {"object_type": " , "})
+    )
 
     assert "error" in out.lower()
 
@@ -498,7 +498,7 @@ async def test_alerting_monitors_does_not_claim_all_disabled_when_one_is_on():
         "_source": {"name": "Live monitor", "enabled": True, "inputs": [], "triggers": []},
     }
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_alerting_handler([_MONITOR, enabled], [])).call_tool(
                 "malcolm_alerting_monitors", {}
             )
@@ -525,7 +525,7 @@ async def test_alerting_monitor_with_an_unrecognised_schedule_kind_omits_it():
         },
     }
     out = json.loads(
-        payload(
+        tool_text(
             await _tools(_alerting_handler([odd], [])).call_tool("malcolm_alerting_monitors", {})
         )
     )
@@ -545,7 +545,7 @@ async def test_alerting_monitors_reports_the_server_total_not_the_page():
             return handler(req)
         return httpx.Response(200, json={"hits": {"total": {"value": 120}, "hits": [_MONITOR]}})
 
-    out = json.loads(payload(await _tools(truncated).call_tool("malcolm_alerting_monitors", {})))
+    out = json.loads(tool_text(await _tools(truncated).call_tool("malcolm_alerting_monitors", {})))
 
     assert out["total"] == 120
     assert out["showing"] == 1
@@ -561,7 +561,7 @@ async def test_anomaly_detectors_reports_the_server_total_not_the_page():
             return httpx.Response(200, json={"hits": {"total": {"value": 0}}})
         return httpx.Response(200, json={"hits": {"total": {"value": 40}, "hits": [_DETECTOR]}})
 
-    out = json.loads(payload(await _tools(handler).call_tool("malcolm_anomaly_detectors", {})))
+    out = json.loads(tool_text(await _tools(handler).call_tool("malcolm_anomaly_detectors", {})))
 
     assert out["total"] == 40
     assert out["showing"] == 1

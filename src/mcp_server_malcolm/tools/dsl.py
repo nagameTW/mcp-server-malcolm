@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Annotated
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -33,7 +33,7 @@ def _index_error(index: str) -> str | None:
     return f"Error: invalid index pattern: {index!r}"
 
 
-def register_dsl_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register the generic DSL-core query tools."""
 
     @mcp.tool(title="Run OpenSearch DSL query", annotations=_READ)

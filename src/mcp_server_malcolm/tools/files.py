@@ -11,7 +11,7 @@ from urllib.parse import quote
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -63,7 +63,7 @@ _HEX_DIGEST_LENGTHS = (32, 40, 64)
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def register_file_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register extracted-file search and download tools."""
 
     @mcp.tool(title="Search extracted files and scan verdicts", annotations=_READ)

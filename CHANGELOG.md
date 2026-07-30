@@ -6,6 +6,55 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-07-30
+
+Ported to the MCP Python SDK 2.x. 0.4.1 pinned the SDK to `<2` as an emergency
+fix, because 2.0 removed `mcp.server.fastmcp` and every module here imported it;
+this replaces that pin with the port it was standing in for.
+
+> **Upgrading:** this release requires `mcp>=2,<3`. The two SDK lines cannot both
+> be supported without a shim — 2.0 removed `mcp.server.fastmcp` outright, with no
+> alias — so an environment holding `mcp` 1.x must upgrade it alongside. No tool
+> name, argument or output changed; all 41 tools were exercised over a real MCP
+> stdio session against a live Malcolm before and after.
+
+### Changed
+
+- `FastMCP` is now `MCPServer`, from `mcp.server.mcpserver`. Titles, tool
+  annotations and per-parameter descriptions all survive the move unchanged,
+  verified against the running server rather than assumed.
+- Tests read `Tool.input_schema` and `annotations.read_only_hint`, which 2.0
+  renamed from `inputSchema` and `readOnlyHint`, and call results are unwrapped
+  through one shared helper (`tests/conftest.py`): 2.0 returns a
+  `CallToolResult` object where 1.x returned a `(content, structured)` tuple, and
+  the next such change should touch one file rather than every test module.
+
+### Not done, deliberately
+
+Giving every tool a typed return so it carries a meaningful output schema —
+item 5 on Glama's TDQS improvement checklist. Investigating it turned up three
+things, one of which contradicts the reason first recorded here:
+
+- Every tool already *has* an output schema. A `-> str` tool auto-generates
+  `{"result": {"type": "string"}}`, so the checklist item is met literally and
+  uselessly.
+- A typed return **can** coexist with the prose-on-empty behaviour these tools
+  rely on. A first draft of this entry claimed it could not; that was wrong.
+  Annotating a tool `-> Report | str` produces a real `anyOf` output schema and
+  still returns a plain sentence as text when a search comes back empty
+  (verified against the SDK this release pins).
+- The real obstacle is narrower. Roughly half these tools pass an upstream
+  response straight through — `malcolm_search` returns Malcolm's
+  `/mapi/document` body, `search_dsl` returns OpenSearch's — and those have no
+  shape this repo can declare, so they would land back on `dict[str, Any]` and
+  the same empty schema. The remainder, the tools that build a trimmed row,
+  would each need a declared payload type and a rewritten return, with the test
+  churn that follows.
+
+So the outcome is unchanged — not in this release — but the reason is that the
+win is partial and the work is per-tool, not that the technique does not fit.
+It is worth doing as its own change, on the tools that build their own rows.
+
 ## [0.7.0] - 2026-07-30
 
 The last planned coverage gap: what Malcolm's Dashboards layer already knows.
@@ -444,7 +493,12 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.7.0...v0.8.0
+[0.7.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.3...v0.4.0
 [0.3.3]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.3.1...v0.3.2

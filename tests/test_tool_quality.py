@@ -44,7 +44,7 @@ def test_every_tool_declares_read_only_hint(monkeypatch):
     missing = [
         t.name
         for t in _all_tools(monkeypatch)
-        if not t.annotations or getattr(t.annotations, "readOnlyHint", None) is None
+        if not t.annotations or getattr(t.annotations, "read_only_hint", None) is None
     ]
     assert not missing, f"tools missing readOnlyHint: {missing}"
 
@@ -52,7 +52,7 @@ def test_every_tool_declares_read_only_hint(monkeypatch):
 def test_every_parameter_has_a_description(monkeypatch):
     offenders = []
     for t in _all_tools(monkeypatch):
-        props = (t.inputSchema or {}).get("properties", {})
+        props = (t.input_schema or {}).get("properties", {})
         for pname, spec in props.items():
             if not spec.get("description"):
                 offenders.append(f"{t.name}.{pname}")
@@ -64,7 +64,7 @@ def test_read_only_tools_do_not_describe_writes(monkeypatch):
     offenders = []
     for t in _all_tools(monkeypatch):
         ann = t.annotations
-        if ann and getattr(ann, "readOnlyHint", None) is True:
+        if ann and getattr(ann, "read_only_hint", None) is True:
             desc = (t.description or "").lower()
             hits = [w for w in _WRITE_WORDS if w in desc]
             if hits:

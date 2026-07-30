@@ -5,13 +5,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
     from mcp_server_malcolm.config import WriteConfig
 
 
-def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_all_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register every tool module with the MCP server."""
     from mcp_server_malcolm.tools.arkime import register_arkime_tools
     from mcp_server_malcolm.tools.arkime_inventory import register_arkime_inventory_tools
@@ -36,7 +36,7 @@ def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     register_dashboard_tools(mcp, client)
 
 
-def register_write_tools(mcp: FastMCP, client: MalcolmClient, cfg: WriteConfig) -> None:
+def register_write_tools(mcp: MCPServer, client: MalcolmClient, cfg: WriteConfig) -> None:
     """Register write tools for enabled classes only (disabled = not registered)."""
     if cfg.alerting:
         from mcp_server_malcolm.tools.write.alerting import register_alerting_tools

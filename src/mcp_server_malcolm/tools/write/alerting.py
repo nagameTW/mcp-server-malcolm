@@ -15,7 +15,7 @@ from pydantic import Field
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -31,7 +31,7 @@ _WRITE = {
 }
 
 
-def register_alerting_tools(mcp: FastMCP, client: MalcolmClient, audit_file: str | None) -> None:
+def register_alerting_tools(mcp: MCPServer, client: MalcolmClient, audit_file: str | None) -> None:
     """Register the alerting write tool (called only when the class is enabled)."""
 
     @mcp.tool(title="Create Malcolm alert", annotations=_WRITE)

@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -21,7 +21,7 @@ _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 _VALUE_SCAN_LIMIT = 500
 
 
-def register_query_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register search, aggregation, and alert tools."""
 
     @mcp.tool(title="Search network traffic (Malcolm filters)", annotations=_READ)

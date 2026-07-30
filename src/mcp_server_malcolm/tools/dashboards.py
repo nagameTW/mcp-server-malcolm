@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
 
@@ -21,7 +21,7 @@ _OBJECT_TYPES = ("dashboard", "visualization", "search", "index-pattern")
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def register_dashboard_tools(mcp: FastMCP, client: MalcolmClient) -> None:
+def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register saved-object, alerting and anomaly-detection reads."""
 
     @mcp.tool(title="Find Dashboards saved objects", annotations=_READ)
