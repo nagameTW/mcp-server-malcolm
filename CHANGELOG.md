@@ -10,6 +10,14 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- `arkime_session_detail` now returns the session document instead of failing.
+  It fetched `GET /arkime/api/session/<id>`, which serves the Arkime SPA HTML
+  shell rather than JSON, so every call died parsing HTML as JSON
+  (`Expecting value: line 1 column 1`). It now queries `/arkime/api/sessions`
+  with an `id ==` expression and `date=-1`, returning the single record, and
+  reports a clear message when no session matches. Verified live against
+  Malcolm 25.12.1. The prior unit test passed only because its mock returned
+  JSON for the HTML endpoint.
 - Pin the MCP SDK to `mcp>=1.0,<2`. The 0.4.0 requirement was `mcp>=1.0` with
   no upper bound, so a fresh `pip install mcp-server-malcolm` resolved to
   `mcp` 2.0.0 and the server failed at import with

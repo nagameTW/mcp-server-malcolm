@@ -44,13 +44,33 @@ async def test_session_detail_hits_endpoint_and_returns_fields():
 
     def handler(req):
         seen["path"] = req.url.path
-        return httpx.Response(200, json={"src.ip": "192.0.2.77", "protocols": ["dns"]})
+        seen["expression"] = req.url.params.get("expression")
+        seen["date"] = req.url.params.get("date")
+        # /arkime/api/sessions wraps records in a "data" array.
+        return httpx.Response(
+            200, json={"data": [{"source": {"ip": "192.0.2.77"}, "protocols": ["dns"]}]}
+        )
 
     mcp = FastMCP("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_detail", {"session_id": "240601-X"})
-    assert seen["path"] == "/arkime/api/session/240601-X"
+    # GET /arkime/api/session/<id> serves the SPA HTML, not JSON; a single
+    # session comes from the sessions search with an id== expression + date=-1.
+    assert seen["path"] == "/arkime/api/sessions"
+    assert seen["expression"] == "id == 240601-X"
+    assert seen["date"] == "-1"
     assert "192.0.2.77" in str(out)
+
+
+@pytest.mark.asyncio
+async def test_session_detail_reports_not_found():
+    def handler(req):
+        return httpx.Response(200, json={"data": []})
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    out = await mcp.call_tool("arkime_session_detail", {"session_id": "240601-X"})
+    assert "no arkime session" in str(out).lower()
 
 
 @pytest.mark.asyncio

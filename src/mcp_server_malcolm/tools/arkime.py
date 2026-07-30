@@ -257,6 +257,9 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
         except Exception as exc:  # noqa: BLE001
             return f"Arkime session detail failed: {exc}"
 
+        if not data:
+            return f"No Arkime session found with id {sid}."
+
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
     @mcp.tool(title="List unique values of one field", annotations=_READ)

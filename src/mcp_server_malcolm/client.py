@@ -506,12 +506,20 @@ class MalcolmClient:
         return await self.get("/arkime/api/hunts", params=params)
 
     async def arkime_session_detail(self, session_id: str) -> dict[str, Any]:
-        """All fields for one session via GET /arkime/api/session/<id>.
+        """Full SPI document for one session, via the sessions search.
 
-        The list search (arkime_sessions) returns a trimmed view; this returns
-        the full SPI document for a single session id.
+        GET /arkime/api/session/<id> serves the Arkime SPA HTML shell, not JSON,
+        so a single session is fetched through /arkime/api/sessions with an
+        `id ==` expression and date=-1 (all time). The id is indexed, so this
+        stays a point lookup rather than a scan. Verified live against Malcolm
+        25.12.1. Returns {} when no session matches the id.
         """
-        return await self.get(f"/arkime/api/session/{session_id}")
+        result = await self.get(
+            "/arkime/api/sessions",
+            params={"expression": f"id == {session_id}", "date": -1, "length": 1},
+        )
+        data = result.get("data") if isinstance(result, dict) else None
+        return data[0] if data else {}
 
     async def arkime_unique(
         self,
