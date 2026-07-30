@@ -64,7 +64,11 @@ class FileRow(TypedDict, total=False):
     """One carved file. Every key is optional: the server populates what it has
     and the row drops the rest rather than carrying nulls."""
 
-    timestamp: str
+    # Malcolm writes @timestamp as an ISO string on Zeek records and as epoch
+    # milliseconds on Arkime session records; both are real, so both are
+    # declared. Every other scalar here is normalised through _first(), which is
+    # what keeps this declaration true of the data.
+    timestamp: str | int
     filename: str
     mime_type: str
     bytes: str | int  # Zeek sends a string, Strelka an int
@@ -406,17 +410,22 @@ def _file_row(source: dict[str, Any]) -> FileRow:
     rules = scan.get("rules") or {}
 
     row: dict[str, Any] = {
-        "timestamp": source.get("@timestamp"),
+        "timestamp": _first(source.get("@timestamp")),
         "filename": _first(file_info.get("name")),
         "mime_type": _first(file_info.get("mime_type")) or zeek_files.get("mime_type"),
         # Zeek only sets total_bytes when the protocol declared a length; on a
         # chunked HTTP body it writes seen_bytes alone, which is 12.5% of the
         # files records on the v26.07.1 lab -- without this last fallback every
         # one of those rows comes back with no size at all.
-        "bytes": (
+        #
+        # _first() matters on both of these: profiled across all 47 datasets on
+        # v26.07.1, file.size arrives as list[int] on alert records and
+        # file.source as list[str], so passing them through raw put a list where
+        # a scalar was declared.
+        "bytes": _first(
             file_info.get("size") or zeek_files.get("total_bytes") or zeek_files.get("seen_bytes")
         ),
-        "transport": file_info.get("source"),
+        "transport": _first(file_info.get("source")),
         "source_ip": _first((source.get("source") or {}).get("ip")),
         "destination_ip": _first((source.get("destination") or {}).get("ip")),
         "md5": _first(hashes.get("md5")),

@@ -18,9 +18,12 @@ Closes the two things left open after 0.8.1.
   `arkime_views`, `arkime_shortcuts`, `arkime_reverse_dns`, `arkime_pcap_files`,
   `arkime_node_stats`, `malcolm_saved_objects`, `malcolm_alerting_monitors` and
   `malcolm_anomaly_detectors`. A client now gets `structuredContent` alongside
-  the text, and the text itself is byte-identical to before — the SDK serializes
-  with the same `indent=2` and `ensure_ascii=False` these tools used, so no
-  existing consumer sees a change.
+  the text, and the text is unchanged on every path but one: the SDK serializes
+  with the same `indent=2` these tools used, but five call sites had omitted
+  `ensure_ascii=False` and so escaped non-ASCII as `\uXXXX`. Those now emit raw
+  UTF-8 — visible on `malcolm_extract_file`'s 404 note, whose em dash was
+  previously escaped. Both forms decode to the same string, so only an exact
+  byte match on that text is affected.
 
   The remaining 31 tools keep `-> str` on purpose. They return an upstream body
   verbatim — `malcolm_search` hands back Malcolm's `/mapi/document` response,
