@@ -140,6 +140,8 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 | `malcolm_alerting_monitors` | 列出 OpenSearch alerting monitor、各自在監看什麼、以及有沒有觸發過——全部都停用時會特別標明 |
 | `malcolm_anomaly_detectors` | 列出 anomaly detector、各自在建模什麼、以及累積了多少異常——從來沒有記錄過異常時會特別標明 |
 
+其中十個會自行組出回傳內容的工具（檔案、Arkime inventory、Dashboards 那幾組）有宣告 typed return，所以客戶端除了文字之外還會拿到 `structuredContent`。其餘的工具是把上游回應原樣透傳，沒有形狀可以宣告。
+
 ## Write 工具（需自行開啟）
 
 每個 class 把它的開關設成 `true` 才會啟用。你不開，這裡什麼都不會跑。

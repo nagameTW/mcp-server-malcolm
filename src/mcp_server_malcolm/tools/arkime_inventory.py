@@ -3,8 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
-import json
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from pydantic import Field
 
@@ -17,6 +16,94 @@ if TYPE_CHECKING:
 # status code cannot distinguish "no such name" from a real answer.
 _NO_PTR = "reverse error"
 
+
+class SavedView(TypedDict, total=False):
+    """One saved Arkime search view."""
+
+    name: str
+    expression: str
+    owner: str
+    roles: list[str]
+    id: str
+
+
+class ViewList(TypedDict):
+    count: int
+    views: list[SavedView]
+
+
+class Shortcut(TypedDict, total=False):
+    """One named value list, plus the token that references it."""
+
+    name: str
+    type: str
+    description: str
+    values: list[str]
+    owner: str
+    use_in_expression: str
+
+
+class ShortcutList(TypedDict):
+    count: int
+    shortcuts: list[Shortcut]
+
+
+class ReverseDns(TypedDict, total=False):
+    """A PTR lookup. `resolved` false with no hostname is a missing record,
+    not a failure."""
+
+    ip: str
+    resolved: bool
+    hostname: str
+    note: str
+
+
+class PcapFile(TypedDict, total=False):
+    """One indexed capture file. Timestamps are epoch MILLISECONDS here, unlike
+    every Arkime query parameter."""
+
+    name: str
+    node: str
+    bytes: int
+    packets: int
+    sessions: int
+    first_packet: int
+    last_packet: int
+
+
+class PcapFileList(TypedDict):
+    total: int
+    showing: int
+    files: list[PcapFile]
+
+
+class NodeStats(TypedDict, total=False):
+    """One capture node's health. `warning` is present only when the node is
+    losing packets right now."""
+
+    node: str
+    hostname: str
+    arkime_version: str
+    disk_free_mb: int
+    disk_free_percent: float
+    memory_percent: float
+    cpu_percent: float
+    total_sessions: int
+    total_packets: int
+    packets_dropped: int
+    dropped_per_sec: float
+    packets_per_sec: float
+    queue_packet: int
+    queue_disk: int
+    queue_opensearch: int
+    warning: str
+
+
+class NodeStatsList(TypedDict):
+    count: int
+    nodes: list[NodeStats]
+
+
 # Shared: every tool here reads from Arkime (via Malcolm), never mutates it.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
@@ -27,7 +114,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
     @mcp.tool(title="List saved Arkime views", annotations=_READ)
     async def arkime_views(
         limit: Annotated[int, Field(description="Max views to return.", ge=1, le=500)] = 100,
-    ) -> str:
+    ) -> ViewList | str:
         """List the saved search views this Arkime holds, with each one's expression.
 
         Use this to find the queries the human team already curated before
@@ -65,14 +152,12 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             )
             for row in rows
         ]
-        return json.dumps(
-            {"count": len(views), "views": views}, indent=2, ensure_ascii=False, default=str
-        )
+        return {"count": len(views), "views": views}
 
     @mcp.tool(title="List saved Arkime value lists", annotations=_READ)
     async def arkime_shortcuts(
         limit: Annotated[int, Field(description="Max shortcuts to return.", ge=1, le=500)] = 100,
-    ) -> str:
+    ) -> ShortcutList | str:
         """List Arkime's named value lists (IOC sets) and what each one contains.
 
         A shortcut is a named list of IPs, strings or numbers that an expression
@@ -110,12 +195,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             )
             for row in rows
         ]
-        return json.dumps(
-            {"count": len(shortcuts), "shortcuts": shortcuts},
-            indent=2,
-            ensure_ascii=False,
-            default=str,
-        )
+        return {"count": len(shortcuts), "shortcuts": shortcuts}
 
     @mcp.tool(title="Reverse-resolve an IP", annotations=_READ)
     async def arkime_reverse_dns(
@@ -126,7 +206,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
                 'e.g. "8.8.8.8". Not a hostname, not a CIDR range.'
             ),
         ],
-    ) -> str:
+    ) -> ReverseDns | str:
         """Resolve one IP address to its PTR hostname, using Arkime's resolver.
 
         Use this to put a name on an external address a session talked to —
@@ -154,20 +234,17 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             return f"Arkime reverse DNS failed: {exc}"
 
         if not text or text.lower().startswith(_NO_PTR):
-            return json.dumps(
-                {
-                    "ip": addr,
-                    "resolved": False,
-                    "note": "No PTR record. Normal for private and unregistered addresses.",
-                },
-                indent=2,
-            )
-        return json.dumps({"ip": addr, "resolved": True, "hostname": text}, indent=2)
+            return {
+                "ip": addr,
+                "resolved": False,
+                "note": "No PTR record. Normal for private and unregistered addresses.",
+            }
+        return {"ip": addr, "resolved": True, "hostname": text}
 
     @mcp.tool(title="List indexed PCAP files", annotations=_READ)
     async def arkime_pcap_files(
         limit: Annotated[int, Field(description="Max files to return.", ge=1, le=500)] = 50,
-    ) -> str:
+    ) -> PcapFileList | str:
         """List the PCAP files Arkime has indexed, with each file's coverage.
 
         Use this to answer "what capture do we actually hold" — which files
@@ -204,12 +281,11 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             )
             for row in rows
         ]
-        return json.dumps(
-            {"total": data.get("recordsTotal", len(files)), "showing": len(files), "files": files},
-            indent=2,
-            ensure_ascii=False,
-            default=str,
-        )
+        return {
+            "total": data.get("recordsTotal", len(files)),
+            "showing": len(files),
+            "files": files,
+        }
 
     @mcp.tool(title="Check capture node health", annotations=_READ)
     async def arkime_node_stats(
@@ -220,7 +296,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
                 'e.g. "spark". Empty = every node.'
             ),
         ] = "",
-    ) -> str:
+    ) -> NodeStatsList | str:
         """Report each Arkime capture node's health: drops, disk, memory, queues.
 
         Use this to decide whether the data can be trusted before concluding
@@ -279,9 +355,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
                 )
             nodes.append(entry)
 
-        return json.dumps(
-            {"count": len(nodes), "nodes": nodes}, indent=2, ensure_ascii=False, default=str
-        )
+        return {"count": len(nodes), "nodes": nodes}
 
 
 def _percent(value: Any) -> Any:

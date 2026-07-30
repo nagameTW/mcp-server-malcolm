@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, TypedDict
 
 from pydantic import Field
 
@@ -16,6 +15,75 @@ if TYPE_CHECKING:
 # (config, url, augment-vis) is UI state an agent cannot act on, and a bad type
 # would otherwise reach the server as an unbounded query.
 _OBJECT_TYPES = ("dashboard", "visualization", "search", "index-pattern")
+
+
+class SavedObject(TypedDict, total=False):
+    """One Dashboards saved object. The panel layout is deliberately absent —
+    several KB of positioning JSON that says nothing about what it shows."""
+
+    type: str
+    id: str
+    title: str
+    description: str
+    updated_at: str
+
+
+class SavedObjectList(TypedDict):
+    total: int
+    showing: int
+    objects: list[SavedObject]
+
+
+class Monitor(TypedDict, total=False):
+    """One alerting monitor. `schedule` is rendered in words and is absent for
+    a schedule shape this server does not recognise."""
+
+    name: str
+    id: str
+    monitor_type: str
+    enabled: bool
+    schedule: str
+    indices: list[str]
+    triggers: list[str]
+
+
+class MonitorList(TypedDict, total=False):
+    """`total` is the server's count, `showing` this page — a short page is not
+    the whole set. `active_alerts` is replaced by `active_alerts_error` when
+    that second lookup fails, since it only enriches the list."""
+
+    total: int
+    showing: int
+    monitors: list[Monitor]
+    active_alerts: int
+    active_alerts_error: str
+    note: str
+
+
+class Detector(TypedDict, total=False):
+    """One anomaly detector and what it models."""
+
+    name: str
+    id: str
+    description: str
+    indices: list[str]
+    detector_type: str
+    category_fields: list[str]
+    interval: str
+    features: list[str]
+
+
+class DetectorList(TypedDict, total=False):
+    """`recorded_anomalies` counts results with anomaly_grade above zero, NOT
+    detector runs, of which there is one per interval per entity."""
+
+    total: int
+    showing: int
+    detectors: list[Detector]
+    recorded_anomalies: int
+    recorded_anomalies_error: str
+    note: str
+
 
 # Shared: every tool here reads, never mutates.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
@@ -45,7 +113,7 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             ),
         ] = "",
         limit: Annotated[int, Field(description="Max objects to return.", ge=1, le=200)] = 20,
-    ) -> str:
+    ) -> SavedObjectList | str:
         """Find the dashboards, visualizations and saved searches this Malcolm ships.
 
         Use this to discover what pre-built analysis already exists before
@@ -99,17 +167,16 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             )
             for row in rows
         ]
-        return json.dumps(
-            {"total": data.get("total", len(objects)), "showing": len(objects), "objects": objects},
-            indent=2,
-            ensure_ascii=False,
-            default=str,
-        )
+        return {
+            "total": data.get("total", len(objects)),
+            "showing": len(objects),
+            "objects": objects,
+        }
 
     @mcp.tool(title="List alerting monitors", annotations=_READ)
     async def malcolm_alerting_monitors(
         limit: Annotated[int, Field(description="Max monitors to return.", ge=1, le=200)] = 50,
-    ) -> str:
+    ) -> MonitorList | str:
         """List OpenSearch alerting monitors, what each watches, and whether any have fired.
 
         Use this to find the standing detections someone already configured, and
@@ -183,12 +250,12 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                     else "; raise limit to see the rest before concluding anything"
                 )
             )
-        return json.dumps(result, indent=2, ensure_ascii=False, default=str)
+        return result
 
     @mcp.tool(title="List anomaly detectors", annotations=_READ)
     async def malcolm_anomaly_detectors(
         limit: Annotated[int, Field(description="Max detectors to return.", ge=1, le=200)] = 50,
-    ) -> str:
+    ) -> DetectorList | str:
         """List OpenSearch anomaly detectors, what each models, and whether any anomalies exist.
 
         Use this to see what machine-learning baselines Malcolm is maintaining
@@ -261,7 +328,7 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         except Exception as exc:  # noqa: BLE001
             result["recorded_anomalies_error"] = str(exc)
 
-        return json.dumps(result, indent=2, ensure_ascii=False, default=str)
+        return result
 
 
 def _server_total(data: Any, fallback: int) -> int:

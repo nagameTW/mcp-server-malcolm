@@ -6,6 +6,45 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-07-30
+
+Closes the two things left open after 0.8.1.
+
+### Added
+
+- The ten tools that build their own rows now declare a typed return, so they
+  carry a real output schema instead of the `{"result": {"type": "string"}}` an
+  untyped tool auto-generates: `malcolm_file_scans`, `malcolm_extract_file`,
+  `arkime_views`, `arkime_shortcuts`, `arkime_reverse_dns`, `arkime_pcap_files`,
+  `arkime_node_stats`, `malcolm_saved_objects`, `malcolm_alerting_monitors` and
+  `malcolm_anomaly_detectors`. A client now gets `structuredContent` alongside
+  the text, and the text itself is byte-identical to before — the SDK serializes
+  with the same `indent=2` and `ensure_ascii=False` these tools used, so no
+  existing consumer sees a change.
+
+  The remaining 31 tools keep `-> str` on purpose. They return an upstream body
+  verbatim — `malcolm_search` hands back Malcolm's `/mapi/document` response,
+  `search_dsl` OpenSearch's — and there is no shape this repo can declare for
+  those; annotating them would land back on `dict[str, Any]` and the same empty
+  schema. 0.8.0 recorded a different and wrong reason for not doing any of this
+  (that a typed return could not also return a sentence); it can, via
+  `-> Payload | str`, and the prose-on-empty path is preserved exactly. Two
+  tests now hold both halves: that the ten declare a schema, and that every one
+  of them can still return an explanatory sentence.
+
+### Changed
+
+- The `hunt_workflow` prompt covers the whole tool set again. It had been
+  updated for 0.5.0 and then left behind by 0.6.0 and 0.7.0, so it taught 24 of
+  48 tools and none of the nine added in those two releases — an agent following
+  it would rebuild by hand what `arkime_views` and `malcolm_saved_objects`
+  already had. It gains two steps: checking the capture can be trusted before
+  reading anything into an absence (`arkime_node_stats` — a dropping node looks
+  exactly like quiet traffic), and reusing what the team already built before
+  writing a query. `tests/test_prompt_currency.py` now fails when a load-bearing
+  tool is missing from it, when it names a tool that does not exist, or when its
+  steps stop being consecutive.
+
 ## [0.8.1] - 2026-07-30
 
 ### Added
