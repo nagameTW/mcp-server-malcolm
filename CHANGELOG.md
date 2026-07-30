@@ -6,6 +6,27 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-07-30
+
+### Added
+
+- `scripts/api_parity_check.py`: proves that what the tools return still matches
+  what Malcolm's own API says. Every tool here reshapes the upstream response —
+  trimming layout blobs, renaming `sources` to `sensors`, scaling Arkime's CPU
+  field, replacing a result count that meant the wrong thing — and each of those
+  is a chance to change a fact rather than just its presentation. For all 41
+  tools the script asks the same question twice, once over a real MCP stdio
+  session and once with a direct HTTP call, and compares the values that carry
+  meaning.
+
+  It exits non-zero if any tool disagrees with the API, and also if a tool is
+  exposed but has no comparison written for it, so adding a tool without a
+  parity check fails the run. Both READMEs document how to point it at a
+  deployment.
+
+  Current result against the reference Malcolm v26.07.1: 41/41 tools compared,
+  41/41 matched.
+
 ## [0.8.0] - 2026-07-30
 
 Ported to the MCP Python SDK 2.x. 0.4.1 pinned the SDK to `<2` as an emergency

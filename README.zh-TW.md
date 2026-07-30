@@ -447,6 +447,23 @@ arkime_create_hunt(
 | `MALCOLM_MCP_UPLOAD_DIR` | 未設 | 允許上傳的檔案必須位於這個 staging 目錄內；未設 ⇒ 拒絕上傳 |
 | `MALCOLM_MCP_AUDIT_FILE` | 未設 | write 稽核檔（未設時走 stderr） |
 
+## 對你自己的 Malcolm 做驗證
+
+這裡每個工具都會重新整理 Malcolm 回來的東西——裁剪、改名，少數地方還會修正它。
+`scripts/api_parity_check.py` 用來證明這些整理從來不會改變事實：41 個工具每一個都問同樣的問題兩次，
+一次走真正的 MCP stdio 連線、一次直接對 Malcolm 發 HTTP，然後比對有意義的那些值。
+
+```bash
+MALCOLM_URL=https://malcolm.example \
+MALCOLM_USERNAME=... MALCOLM_PASSWORD=... \
+PARITY_TIME_FROM=<epoch 秒> PARITY_TIME_TO=<epoch 秒> \
+uv run --with mcp python scripts/api_parity_check.py
+```
+
+時間範圍要給對：Arkime 預設只看近期，所以要指向你的部署實際持有資料的那段期間。
+只要有任何工具跟 API 對不起來，腳本就會以非零狀態結束；工具有曝出來但沒有對應的比對項目時也一樣——
+所以新增工具卻沒寫 parity check 會讓這個檢查失敗。
+
 ## 用到的 Malcolm API 端點
 
 | 端點 | 方法 | 使用者 |
