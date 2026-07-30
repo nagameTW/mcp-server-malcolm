@@ -44,7 +44,6 @@ All notable changes to this project are recorded here. The format follows
   answered the same question fine. It takes the window now, and says in its
   description that an empty result without one usually means the data is older
   than the default range rather than missing.
-
 - Pin the MCP SDK to `mcp>=1.0,<2`. The 0.4.0 requirement was `mcp>=1.0` with
   no upper bound, so a fresh `pip install mcp-server-malcolm` resolved to
   `mcp` 2.0.0 and the server failed at import with
