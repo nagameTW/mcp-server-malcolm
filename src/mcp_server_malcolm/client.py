@@ -554,18 +554,23 @@ class MalcolmClient:
         expression: str,
         field: str,
         counts: bool = True,
+        time_from: str = "",
+        time_to: str = "",
     ) -> str:
         """Distinct values of one field via GET /arkime/api/unique.
+
+        Omitting the range uses Arkime's default (recent) window, which returns
+        nothing on a historical capture — pass epoch-seconds strings to reach it.
+        Verified on 26.07.1: with no window this endpoint returned an empty body
+        over a 6M-session index whose data is a year old, and the same call with
+        startTime/stopTime returned the value list.
 
         Returns text (one value per line), not JSON — this Arkime endpoint
         streams a plain-text body, optionally suffixed with counts.
         """
-        params: dict[str, Any] = {
-            "exp": field,
-            "counts": 1 if counts else 0,
-        }
-        if expression:
-            params["expression"] = expression
+        params: dict[str, Any] = _arkime_query_params(expression, time_from, time_to)
+        params["exp"] = field
+        params["counts"] = 1 if counts else 0
         resp = await self.get_raw("/arkime/api/unique", params=params)
         resp.raise_for_status()
         return resp.text
