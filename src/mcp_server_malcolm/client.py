@@ -470,8 +470,16 @@ class MalcolmClient:
         )
 
     async def alerting_alerts(self) -> dict[str, Any]:
-        """Currently-raised alerts via GET /_plugins/_alerting/monitors/alerts."""
-        return await self.get("/mapi/opensearch/_plugins/_alerting/monitors/alerts")
+        """Currently-raised alerts via GET /_plugins/_alerting/monitors/alerts.
+
+        alertState is pinned to ACTIVE: the API defaults to ALL, which counts
+        COMPLETED and ACKNOWLEDGED history alongside what is firing now, so the
+        default would answer a different question from the one asked.
+        """
+        return await self.get(
+            "/mapi/opensearch/_plugins/_alerting/monitors/alerts",
+            params={"alertState": "ACTIVE"},
+        )
 
     async def anomaly_detectors(self, limit: int = 50) -> dict[str, Any]:
         """Anomaly detectors via POST /_plugins/_anomaly_detection/detectors/_search."""
@@ -481,10 +489,23 @@ class MalcolmClient:
         )
 
     async def anomaly_result_count(self) -> dict[str, Any]:
-        """How many anomaly results exist, via the detectors results search."""
+        """How many ANOMALOUS results exist, via the detectors results search.
+
+        The results index holds one document per detection interval per entity
+        whether or not anything was anomalous — that is why the documents carry
+        an `is_anomaly` boolean and an `anomaly_grade` at all. A match_all count
+        therefore counts detector runs, which for Malcolm's four shipped
+        MULTI_ENTITY detectors at a ten-minute interval reaches five or six
+        figures within a day of being started. The range filter counts the
+        anomalies themselves.
+
+        track_total_hits is set because OpenSearch otherwise stops counting at
+        10,000 and reports the total as a lower bound, which would silently cap
+        exactly the number this is here to report.
+        """
         return await self.post(
             "/mapi/opensearch/_plugins/_anomaly_detection/detectors/results/_search",
-            {"query": {"match_all": {}}, "size": 0},
+            {"query": {"range": {"anomaly_grade": {"gt": 0}}}, "size": 0, "track_total_hits": True},
         )
 
     # -- NetBox (forwarded) ---------------------------------------------

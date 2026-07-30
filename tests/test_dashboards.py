@@ -353,7 +353,9 @@ async def test_anomaly_detectors_says_when_nothing_has_been_detected():
         await _tools(_detector_handler([_DETECTOR], 0)).call_tool("malcolm_anomaly_detectors", {})
     )
 
-    assert "never been started" in out.lower() or "no anomaly results" in out.lower()
+    assert "no anomalous results" in out.lower()
+    # ...and it must still warn that a stopped detector looks the same.
+    assert "never started" in out.lower()
 
 
 @pytest.mark.asyncio
@@ -425,7 +427,9 @@ async def test_alerting_monitor_survives_a_shape_it_does_not_recognise():
     row = out["monitors"][0]
 
     assert row["name"] == "Cron monitor"
-    assert "schedule" not in row  # a cron schedule is not "every N units"
+    # A cron schedule is rendered, not dropped: dropping it showed a monitor
+    # with no schedule at all while the docstring promised one.
+    assert row["schedule"] == "cron 0 */2 * * * (UTC)"
     assert row["triggers"] == ["Bucket trigger"]
     assert "indices" not in row
 
@@ -501,5 +505,101 @@ async def test_alerting_monitors_does_not_claim_all_disabled_when_one_is_on():
         )
     )
 
-    assert out["count"] == 2
+    assert out["total"] == 2
+    assert out["showing"] == 2
     assert "note" not in out
+
+
+@pytest.mark.asyncio
+async def test_alerting_monitor_with_an_unrecognised_schedule_kind_omits_it():
+    """OpenSearch could grow a third schedule shape; guessing at one is worse
+    than saying nothing, but it must not take the monitor down either."""
+    odd = {
+        "_id": "z",
+        "_source": {
+            "name": "Odd schedule",
+            "enabled": True,
+            "schedule": {"something_new": {"every": "fortnight"}},
+            "inputs": [],
+            "triggers": [],
+        },
+    }
+    out = json.loads(
+        payload(
+            await _tools(_alerting_handler([odd], [])).call_tool("malcolm_alerting_monitors", {})
+        )
+    )
+
+    assert out["monitors"][0]["name"] == "Odd schedule"
+    assert "schedule" not in out["monitors"][0]
+
+
+@pytest.mark.asyncio
+async def test_alerting_monitors_reports_the_server_total_not_the_page():
+    """size caps the page; hits.total is what says how many exist. Without it a
+    truncated page reads as the complete set of standing detections."""
+    handler = _alerting_handler([_MONITOR], [])
+
+    def truncated(req):
+        if req.url.path.endswith("/monitors/alerts"):
+            return handler(req)
+        return httpx.Response(200, json={"hits": {"total": {"value": 120}, "hits": [_MONITOR]}})
+
+    out = json.loads(payload(await _tools(truncated).call_tool("malcolm_alerting_monitors", {})))
+
+    assert out["total"] == 120
+    assert out["showing"] == 1
+    # The all-disabled note must not speak for the 119 monitors it never saw.
+    assert "on this page" in out["note"]
+    assert "raise limit" in out["note"]
+
+
+@pytest.mark.asyncio
+async def test_anomaly_detectors_reports_the_server_total_not_the_page():
+    def handler(req):
+        if req.url.path.endswith("/detectors/results/_search"):
+            return httpx.Response(200, json={"hits": {"total": {"value": 0}}})
+        return httpx.Response(200, json={"hits": {"total": {"value": 40}, "hits": [_DETECTOR]}})
+
+    out = json.loads(payload(await _tools(handler).call_tool("malcolm_anomaly_detectors", {})))
+
+    assert out["total"] == 40
+    assert out["showing"] == 1
+
+
+@pytest.mark.asyncio
+async def test_anomaly_count_asks_only_for_anomalous_results():
+    """The results index holds one document per detection interval per entity
+    whether or not anything was anomalous, so match_all counts detector runs.
+    Malcolm's four MULTI_ENTITY detectors at 10-minute intervals reach five
+    figures within a day of being started."""
+    seen = {}
+
+    def handler(req):
+        if req.url.path.endswith("/detectors/results/_search"):
+            seen["body"] = json.loads(req.content)
+            return httpx.Response(200, json={"hits": {"total": {"value": 3}}})
+        return httpx.Response(200, json={"hits": {"total": {"value": 1}, "hits": [_DETECTOR]}})
+
+    await _tools(handler).call_tool("malcolm_anomaly_detectors", {})
+
+    assert seen["body"]["query"] == {"range": {"anomaly_grade": {"gt": 0}}}
+    # Without this OpenSearch stops counting at 10,000 and reports a lower bound.
+    assert seen["body"]["track_total_hits"] is True
+
+
+@pytest.mark.asyncio
+async def test_alert_count_asks_only_for_active_alerts():
+    """The Get Alerts API defaults to alertState=ALL, which counts COMPLETED and
+    ACKNOWLEDGED history as though it were firing now."""
+    seen = {}
+
+    def handler(req):
+        if req.url.path.endswith("/monitors/alerts"):
+            seen["state"] = req.url.params.get("alertState")
+            return httpx.Response(200, json={"alerts": [], "totalAlerts": 0})
+        return httpx.Response(200, json={"hits": {"total": {"value": 1}, "hits": [_MONITOR]}})
+
+    await _tools(handler).call_tool("malcolm_alerting_monitors", {})
+
+    assert seen["state"] == "ACTIVE"
