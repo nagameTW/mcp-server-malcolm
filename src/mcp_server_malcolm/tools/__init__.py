@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     """Register every tool module with the MCP server."""
     from mcp_server_malcolm.tools.arkime import register_arkime_tools
+    from mcp_server_malcolm.tools.arkime_inventory import register_arkime_inventory_tools
     from mcp_server_malcolm.tools.correlation import register_correlation_tools
     from mcp_server_malcolm.tools.dsl import register_dsl_tools
     from mcp_server_malcolm.tools.fields import register_field_tools
@@ -30,6 +31,7 @@ def register_all_tools(mcp: FastMCP, client: MalcolmClient) -> None:
     register_arkime_tools(mcp, client)
     register_correlation_tools(mcp, client)
     register_file_tools(mcp, client)
+    register_arkime_inventory_tools(mcp, client)
 
 
 def register_write_tools(mcp: FastMCP, client: MalcolmClient, cfg: WriteConfig) -> None:

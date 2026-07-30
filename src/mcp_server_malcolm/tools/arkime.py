@@ -6,6 +6,7 @@ import json
 import re
 from typing import TYPE_CHECKING, Annotated
 
+import httpx
 from pydantic import Field
 
 if TYPE_CHECKING:
@@ -670,3 +671,75 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             },
             indent=2,
         )
+
+    @mcp.tool(title="Export sessions as CSV", annotations=_READ)
+    async def arkime_sessions_csv(
+        expression: Annotated[
+            str,
+            Field(
+                description="Arkime expression syntax to scope the rows, "
+                'e.g. "ip == 192.0.2.7 && protocols == dns". Empty = all sessions.'
+            ),
+        ] = "",
+        fields: Annotated[
+            str,
+            Field(
+                description="Comma-separated columns, as ECS DOTTED names "
+                '("source.ip,destination.port") — the names malcolm_field_search '
+                "returns, NOT Arkime db names (srcIp) or expression names "
+                "(ip.src). A name Arkime does not accept is never reported as an "
+                "error: measured on 6.6.0 it either comes back as an empty column "
+                "or the request hangs until it times out. Leave empty for "
+                "Arkime's default columns, which always work."
+            ),
+        ] = "",
+        limit: Annotated[int, Field(description="Max rows to export.", ge=1, le=10000)] = 100,
+        time_from: Annotated[
+            str,
+            Field(
+                description="Start time as EPOCH SECONDS (NOT a dateparser string). "
+                "Empty = Arkime's default recent window."
+            ),
+        ] = "",
+        time_to: Annotated[
+            str,
+            Field(description="End time as EPOCH SECONDS (NOT a dateparser string). Empty = now."),
+        ] = "",
+    ) -> str:
+        """Export many sessions as a compact CSV table, one row each.
+
+        Use this when you want a lot of sessions cheaply: CSV costs roughly half
+        the tokens of the same rows as JSON, so it suits "show me every DNS
+        session this host made" when you intend to read the result as a table.
+        Use arkime_sessions instead when you need a session id to drill into
+        (this returns none), and arkime_connections for a who-talked-to-whom
+        summary — Arkime's connections.csv is not wrapped here because on 6.6.0
+        it emits nine header columns over seven-column rows, so every column
+        after the second is mislabeled.
+
+        Returns raw CSV TEXT with a header row, not JSON. `limit` bounds the
+        rows exactly. A request naming a column Arkime does not accept hangs
+        rather than failing, so a timeout is reported as a probable `fields`
+        problem.
+        """
+        wanted = ",".join(f.strip() for f in fields.split(",") if f.strip())
+        try:
+            text = await client.arkime_sessions_csv(
+                expression=expression.strip(),
+                limit=min(max(1, limit), 10000),
+                fields=wanted,
+                time_from=time_from.strip(),
+                time_to=time_to.strip(),
+            )
+        except httpx.TimeoutException:
+            return (
+                "Arkime CSV export timed out. When `fields` is set this almost "
+                "always means a column name Arkime does not accept: it takes ECS "
+                "dotted names such as source.ip and destination.port, and never "
+                "answers for a db name (srcIp) or an expression name (ip.src). "
+                "Retry with no fields to get the default columns."
+            )
+        except Exception as exc:  # noqa: BLE001
+            return f"Arkime CSV export failed: {exc}"
+
+        return text or "(no rows)"

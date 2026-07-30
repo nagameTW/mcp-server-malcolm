@@ -523,6 +523,78 @@ class MalcolmClient:
         params = {"length": length, "history": "true" if history else "false"}
         return await self.get("/arkime/api/hunts", params=params)
 
+    async def arkime_views(self, length: int = 100) -> dict[str, Any]:
+        """Saved search views via GET /arkime/api/views (the plural route is
+        GET-only; the singular /api/view is the create route)."""
+        return await self.get("/arkime/api/views", params={"length": length})
+
+    async def arkime_shortcuts(self, length: int = 100) -> dict[str, Any]:
+        """Named value lists via GET /arkime/api/shortcuts.
+
+        A shortcut is referenced inside an expression as $<name>.
+        """
+        return await self.get("/arkime/api/shortcuts", params={"length": length})
+
+    async def arkime_reverse_dns(self, ip: str) -> str:
+        """PTR name for an address via GET /arkime/api/reversedns.
+
+        Returns a bare hostname as plain text. Arkime answers 200 with the body
+        "reverse error" when there is no PTR record (verified on 6.6.0 for a
+        private address), so the status code cannot be used to tell the two
+        apart — the caller has to read the body.
+        """
+        resp = await self.get_raw("/arkime/api/reversedns", params={"ip": ip})
+        resp.raise_for_status()
+        return resp.text.strip()
+
+    async def arkime_pcap_files(self, length: int = 100) -> dict[str, Any]:
+        """The PCAP files Arkime has indexed, via GET /arkime/api/files."""
+        return await self.get("/arkime/api/files", params={"length": length})
+
+    async def arkime_node_stats(self, node_filter: str = "") -> dict[str, Any]:
+        """Capture-node statistics via GET /arkime/api/stats.
+
+        Narrowing is done with `filter`, a substring match on the node name.
+        Verified on 6.6.0: `nodeName` is accepted and silently ignored, which
+        returns every node and reads as though the filter matched everything.
+        """
+        params: dict[str, Any] = {}
+        if node_filter:
+            params["filter"] = node_filter
+        return await self.get("/arkime/api/stats", params=params)
+
+    async def arkime_sessions_csv(
+        self,
+        expression: str = "",
+        limit: int = 100,
+        fields: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> str:
+        """Sessions as CSV via GET /arkime/api/sessions.csv.
+
+        There is a matching connections.csv, deliberately not wrapped: on
+        Arkime 6.6.0 it emits a 9-column header over 7-column rows, so every
+        column after "Sessions" is mislabeled. See arkime_connections for the
+        correct source/destination summary.
+
+        Args:
+            fields: Comma-separated ECS dotted names (source.ip, destination.port).
+                Arkime NEVER ANSWERS for a db name (srcIp) or an expression name
+                (ip.src) here: measured on 6.6.0, both hang until the client
+                times out rather than returning an error.
+
+        Returns the CSV text, header row included. `length` bounds the rows
+        exactly here (measured: 1000 in, 1000 out).
+        """
+        params = _arkime_query_params(expression, time_from, time_to)
+        params["length"] = limit
+        if fields:
+            params["fields"] = fields
+        resp = await self.get_raw("/arkime/api/sessions.csv", params=params)
+        resp.raise_for_status()
+        return resp.text
+
     async def arkime_session_detail(self, session_id: str) -> dict[str, Any]:
         """Full SPI document for one session, via the sessions search.
 

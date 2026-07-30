@@ -6,6 +6,53 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-30
+
+Closes the Arkime read gaps: everything the viewer API exposes that an analyst
+would ask for, minus the operational-monitoring and UI-personalisation routes
+that carry nothing an agent can act on. Every endpoint below was probed against
+a live Malcolm v26.07.1 / Arkime v6.6.0 first, which is where the parameter and
+failure-mode notes come from.
+
+### Added
+
+- `arkime_views` and `arkime_shortcuts`: read back the saved searches and named
+  value lists the team curated. The write classes could already create both, but
+  nothing could list them, so an agent had no way to reference a `$name` IOC list
+  or reuse a colleague's query. Each shortcut row carries the exact `$name` token
+  to paste into an expression.
+- `arkime_reverse_dns`: PTR lookup for one address. Arkime answers `200` with the
+  body `reverse error` when there is no record, so the tool reads the body rather
+  than the status and reports `resolved: false` — an absent PTR is normal for a
+  private address, not a failure.
+- `arkime_pcap_files`: the capture inventory — which PCAP files are indexed, their
+  size, packet and session counts, and the span each covers.
+- `arkime_node_stats`: capture-node health. A node that is currently dropping
+  packets gets an explicit warning, because a gap in the capture is
+  indistinguishable from "no such traffic" in every search built on top of it.
+  Narrowing uses `filter`; Arkime accepts `nodeName` and silently ignores it,
+  which returns every node and reads as though the filter matched. CPU is
+  reported as `cpu_percent`, scaled from the hundredths-of-a-percent Arkime
+  stores — raw, an idle node at 1.34% reads as `cpu: 134` next to two keys that
+  really are percents.
+- `arkime_sessions_csv`: sessions as CSV, which costs roughly half the tokens of
+  the same rows as JSON. Its `fields` argument takes ECS dotted names
+  (`source.ip`), and a name Arkime does not accept is never reported as an
+  error — it comes back as an empty column, or the request hangs until it times
+  out. The tool says so, and turns that timeout into a message naming the likely
+  cause instead of a bare stall.
+
+  Arkime's matching `connections.csv` is deliberately **not** wrapped. On
+  6.6.0 it emits a nine-column header over seven-column rows, so positional
+  parsing reads the packet count as "Data bytes" and the node name as
+  "Packets". The cause is upstream — `apiConnections.js` writes one header per
+  `fieldsMap` entry sharing a `dbField`, so `network.bytes` and
+  `network.packets` each emit two headers while the row loop writes one value
+  each. Its `length` is also a cap on graph nodes rather than rows, so the row
+  count silently falls far short of the limit asked for (8 rows for a limit of
+  100, against 458 real pairs). `arkime_connections` answers the same question
+  correctly as JSON.
+
 ## [0.5.0] - 2026-07-30
 
 File analysis was the largest hole in this server's coverage: Malcolm carves
