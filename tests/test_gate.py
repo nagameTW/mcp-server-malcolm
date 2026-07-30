@@ -41,6 +41,9 @@ _READ = {
     "malcolm_related_sessions",
     "malcolm_ping",
     "malcolm_dashboard_export",
+    "malcolm_saved_objects",
+    "malcolm_alerting_monitors",
+    "malcolm_anomaly_detectors",
 }
 _WRITE = {
     "malcolm_create_alert",

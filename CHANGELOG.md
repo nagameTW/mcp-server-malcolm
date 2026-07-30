@@ -6,6 +6,37 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-30
+
+The last planned coverage gap: what Malcolm's Dashboards layer already knows.
+Malcolm ships 111 dashboards, 808 visualizations and 141 saved searches, plus
+OpenSearch's alerting and anomaly-detection plugins, and none of it was
+reachable — an agent would rebuild by hand an analysis that already existed.
+Probed against a live Malcolm v26.07.1 (OpenSearch 3.7.0) before implementation.
+
+### Added
+
+- `malcolm_saved_objects`: find the dashboards, visualizations and saved
+  searches this Malcolm ships, by type and title. Pairs with the existing
+  `malcolm_dashboard_export` — this one finds the id, that one reads how it is
+  built. The panel layout is dropped at both ends: `fields=title&description`
+  keeps the server from sending it, and what remains is trimmed again, so all
+  111 dashboards come back as 21 KB where the raw objects are roughly 600 KB.
+- `malcolm_alerting_monitors`: the standing OpenSearch alerting rules, what each
+  watches, and how many alerts are currently raised. When every monitor is
+  disabled the response says so, because a disabled monitor is silent in exactly
+  the way a healthy one is.
+- `malcolm_anomaly_detectors`: the anomaly detectors, what each models, and how
+  many anomaly results exist. Zero results with detectors configured usually
+  means they were never started, which reads identically to "nothing anomalous
+  happened", so that case is called out rather than left as a bare zero.
+
+Both plugin tools reach OpenSearch through Malcolm's `/mapi/opensearch` proxy
+rather than the Dashboards-side routes, which require `from`, `size` and
+`search` to all be present and return 400 otherwise. In both tools the count of
+findings is an enrichment: if that second lookup fails the configuration list is
+still returned, with the error alongside it.
+
 ## [0.6.0] - 2026-07-30
 
 Closes the Arkime read gaps: everything the viewer API exposes that an analyst

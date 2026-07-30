@@ -135,7 +135,10 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 | 工具 | 說明 |
 |------|------|
 | `malcolm_related_sessions` | 找出與某個 Zeek UID 相關的所有 session |
+| `malcolm_saved_objects` | 找出這套 Malcolm 內建的 dashboard、visualization 與 saved search（111 個 dashboard，不含各自好幾 KB 的版面配置 JSON） |
 | `malcolm_dashboard_export` | 把 OpenSearch Dashboards 的 saved object 匯出成 JSON |
+| `malcolm_alerting_monitors` | 列出 OpenSearch alerting monitor、各自在監看什麼、以及有沒有觸發過——全部都停用時會特別標明 |
+| `malcolm_anomaly_detectors` | 列出 anomaly detector、各自在建模什麼、以及累積了多少異常——從來沒有記錄過異常時會特別標明 |
 
 ## Write 工具（需自行開啟）
 
@@ -455,6 +458,9 @@ arkime_create_hunt(
 | `/mapi/ping` | GET | `malcolm_ping` |
 | `/mapi/ingest-stats`、`/mapi/indices` | GET | `malcolm_data_coverage` |
 | `/mapi/dashboard-export/<id>` | GET | `malcolm_dashboard_export` |
+| `/dashboards/api/saved_objects/_find` | GET | `malcolm_saved_objects` |
+| `/mapi/opensearch/_plugins/_alerting/monitors/*` | POST、GET | `malcolm_alerting_monitors` |
+| `/mapi/opensearch/_plugins/_anomaly_detection/detectors/*` | POST | `malcolm_anomaly_detectors` |
 | `/mapi/opensearch/<index>/_search` | POST | `search_dsl` |
 | `/mapi/opensearch/<index>/_count` | POST | `count` |
 | `/mapi/opensearch/_cat/indices` | GET | `list_indices` |

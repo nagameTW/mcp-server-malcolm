@@ -435,6 +435,58 @@ class MalcolmClient:
     async def dashboard_export(self, dashboard_id: str) -> dict[str, Any]:
         return await self.get(f"/mapi/dashboard-export/{dashboard_id}")
 
+    # -- OpenSearch Dashboards & plugins --------------------------------
+
+    async def dashboards_find(
+        self, types: list[str], search: str = "", limit: int = 20
+    ) -> dict[str, Any]:
+        """Saved objects via GET /dashboards/api/saved_objects/_find.
+
+        `fields` is set to title/description so the server trims the payload
+        before sending it: measured on v26.07.1, five dashboards are 19.7 KB in
+        full and 6.0 KB trimmed, because a dashboard is mostly its panelsJSON
+        layout blob.
+
+        Args:
+            types: Object types, repeated as separate `type` params.
+            search: simple_query_string matched against the title only.
+        """
+        params: list[tuple[str, Any]] = [("type", t) for t in types]
+        params += [("fields", "title"), ("fields", "description"), ("per_page", limit)]
+        if search:
+            params += [("search", search), ("search_fields", "title")]
+        return await self.get("/dashboards/api/saved_objects/_find", params=params)
+
+    async def alerting_monitors(self, limit: int = 50) -> dict[str, Any]:
+        """Alerting monitors via POST /_plugins/_alerting/monitors/_search.
+
+        The Dashboards-side route (/dashboards/api/alerting/monitors) needs
+        from/size/search all present and 400s otherwise, so this goes straight
+        to the OpenSearch plugin through Malcolm's proxy.
+        """
+        return await self.post(
+            "/mapi/opensearch/_plugins/_alerting/monitors/_search",
+            {"query": {"match_all": {}}, "size": limit},
+        )
+
+    async def alerting_alerts(self) -> dict[str, Any]:
+        """Currently-raised alerts via GET /_plugins/_alerting/monitors/alerts."""
+        return await self.get("/mapi/opensearch/_plugins/_alerting/monitors/alerts")
+
+    async def anomaly_detectors(self, limit: int = 50) -> dict[str, Any]:
+        """Anomaly detectors via POST /_plugins/_anomaly_detection/detectors/_search."""
+        return await self.post(
+            "/mapi/opensearch/_plugins/_anomaly_detection/detectors/_search",
+            {"query": {"match_all": {}}, "size": limit},
+        )
+
+    async def anomaly_result_count(self) -> dict[str, Any]:
+        """How many anomaly results exist, via the detectors results search."""
+        return await self.post(
+            "/mapi/opensearch/_plugins/_anomaly_detection/detectors/results/_search",
+            {"query": {"match_all": {}}, "size": 0},
+        )
+
     # -- NetBox (forwarded) ---------------------------------------------
 
     async def netbox_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
