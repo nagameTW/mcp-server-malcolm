@@ -458,6 +458,26 @@ arkime_create_hunt(
 | `MALCOLM_MCP_UPLOAD_DIR` | unset | Staging dir that files must live inside to be uploadable; unset ⇒ uploads refused |
 | `MALCOLM_MCP_AUDIT_FILE` | unset | Write-audit file (stderr when unset) |
 
+## Verifying against your own Malcolm
+
+Every tool here reshapes what Malcolm returns — trimming, renaming, and in a few
+places correcting it. `scripts/api_parity_check.py` proves that reshaping never
+changes the facts: for each of the 41 tools it asks the same question twice, once
+through a real MCP stdio session and once with a direct HTTP call to Malcolm, and
+compares the values that carry meaning.
+
+```bash
+MALCOLM_URL=https://malcolm.example \
+MALCOLM_USERNAME=... MALCOLM_PASSWORD=... \
+PARITY_TIME_FROM=<epoch-seconds> PARITY_TIME_TO=<epoch-seconds> \
+uv run --with mcp python scripts/api_parity_check.py
+```
+
+The time window matters: Arkime defaults to a recent one, so point it at a period
+your deployment actually holds. The script exits non-zero if any tool disagrees
+with the API, and also if a tool is exposed but has no comparison written for it —
+so adding a tool without a parity check fails the run.
+
 ## Malcolm API endpoints used
 
 | Endpoint | Method | Used by |
