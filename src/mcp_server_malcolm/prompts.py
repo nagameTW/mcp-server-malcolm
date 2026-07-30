@@ -106,7 +106,8 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
    - arkime_add_tags(session_ids="<ids>", tags="c2,triaged")
    - arkime_create_view(name="hunt_c2", expression=...) -> save the query for
      the team to rerun, where arkime_views will find it next time.
-   - arkime_create_shortcut(name="c2_ips", value="1.2.3.4\n5.6.7.8", type="ip")
+   - arkime_create_shortcut(name="c2_ips", value="1.2.3.4\n5.6.7.8",
+       shortcut_type="ip")
      -> save an IOC list, then reference it as $c2_ips in later expressions.
 
 Golden rules: confirm field names before you use them; Arkime tools take EPOCH

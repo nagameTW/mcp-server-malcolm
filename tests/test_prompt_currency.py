@@ -59,6 +59,14 @@ _LOAD_BEARING = {
 }
 
 
+def _all_tools_with_writes(monkeypatch):
+    """Every tool object, write classes included — the prompt teaches those too."""
+    for flag in _ALL_WRITE_FLAGS:
+        monkeypatch.setenv(flag, "true")
+    monkeypatch.setenv("MALCOLM_MCP_UPLOAD_DIR", "/tmp")
+    return asyncio.run(create_server().list_tools())
+
+
 def _all_tool_names(monkeypatch) -> set[str]:
     for flag in _ALL_WRITE_FLAGS:
         monkeypatch.setenv(flag, "true")
@@ -88,3 +96,28 @@ def test_prompt_steps_are_numbered_in_order():
     branch that does not exist."""
     steps = [int(n) for n in re.findall(r"^(\d+)\. ", _HUNT_WORKFLOW, re.MULTILINE)]
     assert steps == list(range(1, len(steps) + 1)), f"steps out of order: {steps}"
+
+
+def test_prompt_only_uses_real_parameter_names(monkeypatch):
+    """Every keyword the prompt demonstrates must exist on that tool.
+
+    A wrong argument name is worse than an omitted tool: the SDK drops an
+    unknown key silently, so the call appears to succeed while doing something
+    else. The prompt taught `arkime_create_shortcut(type="ip")` once, which
+    created a string list instead of an IP list with no error signal.
+    """
+    tools = {t.name: t for t in _all_tools_with_writes(monkeypatch)}
+    bad = []
+    # each "tool_name(arg=..., arg=...)" the prompt demonstrates
+    for call in re.finditer(r"\b((?:malcolm|arkime|search)_[a-z_]+)\(([^)]*)\)", _HUNT_WORKFLOW):
+        name, arglist = call.group(1), call.group(2)
+        if name not in tools:
+            continue
+        allowed = set(tools[name].input_schema.get("properties", {}))
+        # Strip quoted literals first: an Arkime expression argument contains
+        # its own "field==value" pairs, which are not keyword arguments.
+        outside_strings = re.sub(r"\"[^\"]*\"|'[^']*'", "", arglist)
+        for kw in re.findall(r"(\w+)\s*=", outside_strings):
+            if kw not in allowed:
+                bad.append(f"{name}({kw}=...) — real parameters: {sorted(allowed)}")
+    assert not bad, "prompt demonstrates parameters that do not exist:\n  " + "\n  ".join(bad)

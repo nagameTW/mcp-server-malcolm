@@ -45,8 +45,12 @@ Closes the two things left open after 0.8.1.
   reading anything into an absence (`arkime_node_stats` — a dropping node looks
   exactly like quiet traffic), and reusing what the team already built before
   writing a query. `tests/test_prompt_currency.py` now fails when a load-bearing
-  tool is missing from it, when it names a tool that does not exist, or when its
-  steps stop being consecutive.
+  tool is missing from it, when it names a tool that does not exist, when its
+  steps stop being consecutive, or when it demonstrates a parameter that tool
+  does not have. That last one was already true: the prompt taught
+  `arkime_create_shortcut(type="ip")` where the parameter is `shortcut_type`,
+  and an unknown keyword is dropped silently — so the call appeared to succeed
+  while creating a string list instead of an IP list.
 
 ## [0.8.1] - 2026-07-30
 
