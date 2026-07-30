@@ -63,6 +63,40 @@ async def test_session_detail_hits_endpoint_and_returns_fields():
 
 
 @pytest.mark.asyncio
+async def test_session_detail_strips_the_node_prefix_from_the_id():
+    """arkime_sessions returns "3@240425:240425-xxx" but Arkime's `id ==`
+    matches only the bare id after the last ':' — measured live on 26.07.1 the
+    prefixed form returns 0 rows, so the documented workflow (search, then drill
+    into the id you got back) always missed."""
+    seen = {}
+
+    def handler(req):
+        seen["expression"] = req.url.params.get("expression")
+        return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    await mcp.call_tool(
+        "arkime_session_detail", {"session_id": "3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw"}
+    )
+    assert seen["expression"] == "id == 240425-IrHoGmqqp7SR6TWIWoG0Dw"
+
+
+@pytest.mark.asyncio
+async def test_session_detail_accepts_an_already_bare_id():
+    seen = {}
+
+    def handler(req):
+        seen["expression"] = req.url.params.get("expression")
+        return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
+
+    mcp = FastMCP("t")
+    register_arkime_tools(mcp, _mock_client(handler))
+    await mcp.call_tool("arkime_session_detail", {"session_id": "240425-IrHoGmqqp7SR6TWIWoG0Dw"})
+    assert seen["expression"] == "id == 240425-IrHoGmqqp7SR6TWIWoG0Dw"
+
+
+@pytest.mark.asyncio
 async def test_session_detail_reports_not_found():
     def handler(req):
         return httpx.Response(200, json={"data": []})
