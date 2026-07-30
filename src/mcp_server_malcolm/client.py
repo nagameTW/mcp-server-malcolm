@@ -563,37 +563,35 @@ class MalcolmClient:
             params["filter"] = node_filter
         return await self.get("/arkime/api/stats", params=params)
 
-    async def arkime_export_csv(
+    async def arkime_sessions_csv(
         self,
-        kind: str,
         expression: str = "",
         limit: int = 100,
         fields: str = "",
         time_from: str = "",
         time_to: str = "",
-        src_field: str = "srcIp",
-        dst_field: str = "dstIp",
     ) -> str:
-        """Sessions or connections as CSV via GET /arkime/api/<kind>.csv.
+        """Sessions as CSV via GET /arkime/api/sessions.csv.
+
+        There is a matching connections.csv, deliberately not wrapped: on
+        Arkime 6.6.0 it emits a 9-column header over 7-column rows, so every
+        column after "Sessions" is mislabeled. See arkime_connections for the
+        correct source/destination summary.
 
         Args:
-            kind: "sessions" or "connections" — the caller has already validated it.
             fields: Comma-separated ECS dotted names (source.ip, destination.port).
                 Arkime NEVER ANSWERS for a db name (srcIp) or an expression name
                 (ip.src) here: measured on 6.6.0, both hang until the client
                 times out rather than returning an error.
-            src_field: connections.csv only; Arkime db name, as for /api/connections.
 
-        Returns the CSV text, header row included.
+        Returns the CSV text, header row included. `length` bounds the rows
+        exactly here (measured: 1000 in, 1000 out).
         """
         params = _arkime_query_params(expression, time_from, time_to)
         params["length"] = limit
         if fields:
             params["fields"] = fields
-        if kind == "connections":
-            params["srcField"] = src_field
-            params["dstField"] = dst_field
-        resp = await self.get_raw(f"/arkime/api/{kind}.csv", params=params)
+        resp = await self.get_raw("/arkime/api/sessions.csv", params=params)
         resp.raise_for_status()
         return resp.text
 

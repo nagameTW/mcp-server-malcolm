@@ -31,13 +31,27 @@ failure-mode notes come from.
   packets gets an explicit warning, because a gap in the capture is
   indistinguishable from "no such traffic" in every search built on top of it.
   Narrowing uses `filter`; Arkime accepts `nodeName` and silently ignores it,
-  which returns every node and reads as though the filter matched.
-- `arkime_export_csv`: sessions or a source/destination summary as CSV, which
-  costs roughly half the tokens of the same rows as JSON. Its `fields` argument
-  takes ECS dotted names (`source.ip`), and a name Arkime does not accept is
-  never reported as an error — it comes back as an empty column, or the request
-  hangs until it times out. The tool says so, and turns that timeout into a
-  message naming the likely cause instead of a bare stall.
+  which returns every node and reads as though the filter matched. CPU is
+  reported as `cpu_percent`, scaled from the hundredths-of-a-percent Arkime
+  stores — raw, an idle node at 1.34% reads as `cpu: 134` next to two keys that
+  really are percents.
+- `arkime_sessions_csv`: sessions as CSV, which costs roughly half the tokens of
+  the same rows as JSON. Its `fields` argument takes ECS dotted names
+  (`source.ip`), and a name Arkime does not accept is never reported as an
+  error — it comes back as an empty column, or the request hangs until it times
+  out. The tool says so, and turns that timeout into a message naming the likely
+  cause instead of a bare stall.
+
+  Arkime's matching `connections.csv` is deliberately **not** wrapped. On
+  6.6.0 it emits a nine-column header over seven-column rows, so positional
+  parsing reads the packet count as "Data bytes" and the node name as
+  "Packets". The cause is upstream — `apiConnections.js` writes one header per
+  `fieldsMap` entry sharing a `dbField`, so `network.bytes` and
+  `network.packets` each emit two headers while the row loop writes one value
+  each. Its `length` is also a cap on graph nodes rather than rows, so the row
+  count silently falls far short of the limit asked for (8 rows for a limit of
+  100, against 458 real pairs). `arkime_connections` answers the same question
+  correctly as JSON.
 
 ## [0.5.0] - 2026-07-30
 

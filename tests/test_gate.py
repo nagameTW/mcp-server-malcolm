@@ -30,7 +30,7 @@ _READ = {
     "arkime_spigraphhierarchy",
     "arkime_connections",
     "arkime_file_by_hash",
-    "arkime_export_csv",
+    "arkime_sessions_csv",
     "arkime_views",
     "arkime_shortcuts",
     "arkime_reverse_dns",

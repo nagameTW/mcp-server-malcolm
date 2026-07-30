@@ -45,7 +45,7 @@ def test_batch2_tools_registered():
         "arkime_reverse_dns",
         "arkime_pcap_files",
         "arkime_node_stats",
-        "arkime_export_csv",
+        "arkime_sessions_csv",
     ):
         assert name in names
 
@@ -253,7 +253,7 @@ _NODE = {
     "freeSpaceM": 1646362,
     "freeSpaceP": 40.83,
     "memoryP": 0.59,
-    "cpu": 0,
+    "cpu": 134,
     "totalPackets": 82217,
     "totalSessions": 6280,
     "totalDropped": 17,
@@ -285,6 +285,9 @@ async def test_node_stats_surfaces_capture_health():
     assert node["arkime_version"] == "6.6.0"
     assert node["packets_dropped"] == 17
     assert node["disk_free_percent"] == 40.83
+    # Arkime stores cpu in hundredths of a percent; raw, 134 reads as 134% busy
+    # on a node that is at 1.34%.
+    assert node["cpu_percent"] == 1.34
 
 
 @pytest.mark.asyncio
@@ -316,11 +319,11 @@ async def test_node_stats_filters_with_the_filter_param():
     assert "nodeName" not in seen["params"]
 
 
-# -- arkime_export_csv --------------------------------------------------
+# -- arkime_sessions_csv ------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_export_csv_sessions_hits_the_csv_route():
+async def test_sessions_csv_hits_the_csv_route_and_bounds_the_rows():
     seen = {}
 
     def handler(req):
@@ -330,52 +333,52 @@ async def test_export_csv_sessions_hits_the_csv_route():
 
     out = payload(
         await _tools(handler, register_arkime_tools).call_tool(
-            "arkime_export_csv",
-            {"kind": "sessions", "expression": "protocols == dns", "time_from": "1714003200"},
+            "arkime_sessions_csv",
+            {
+                "expression": "protocols == dns",
+                "time_from": "1714003200",
+                "time_to": "1714089600",
+                "limit": 250,
+            },
         )
     )
 
     assert seen["path"] == "/arkime/api/sessions.csv"
     assert seen["params"]["expression"] == "protocols == dns"
     assert seen["params"]["startTime"] == "1714003200"
+    assert seen["params"]["stopTime"] == "1714089600"
+    # length is what bounds the export; without it Arkime falls back to its own
+    # default and the agent silently gets a different number of rows.
+    assert seen["params"]["length"] == "250"
     assert "192.0.2.7" in out
 
 
 @pytest.mark.asyncio
-async def test_export_csv_connections_uses_db_field_names():
+async def test_sessions_csv_clamps_the_limit_to_the_documented_ceiling():
     seen = {}
 
     def handler(req):
-        seen["path"] = req.url.path
-        seen["params"] = dict(req.url.params)
-        return httpx.Response(200, text="Source, Destination\n192.0.2.7,192.0.2.8\n")
+        seen["length"] = req.url.params.get("length")
+        return httpx.Response(200, text="Src IP\n192.0.2.7\n")
 
-    await _tools(handler, register_arkime_tools).call_tool(
-        "arkime_export_csv", {"kind": "connections"}
-    )
+    await _tools(handler, register_arkime_tools).call_tool("arkime_sessions_csv", {"limit": 10000})
 
-    assert seen["path"] == "/arkime/api/connections.csv"
-    # connections wants Arkime *db* names; the same 500 that bit arkime_connections.
-    assert seen["params"]["srcField"] == "srcIp"
-    assert seen["params"]["dstField"] == "dstIp"
+    assert seen["length"] == "10000"
 
 
-@pytest.mark.asyncio
-async def test_export_csv_rejects_an_unknown_kind():
-    def handler(req):
-        raise AssertionError("no request may leave for an unvalidated route")
+def test_no_connections_csv_tool_is_exposed():
+    """Arkime 6.6.0's connections.csv emits a 9-column header over 7-column
+    rows (apiConnections.js writes one header per fieldsMap entry sharing a
+    dbField), so every column after "Sessions" is mislabeled. It is not wrapped;
+    arkime_connections answers the same question correctly as JSON."""
+    names = [t.name for t in asyncio.run(create_server().list_tools())]
 
-    out = payload(
-        await _tools(handler, register_arkime_tools).call_tool(
-            "arkime_export_csv", {"kind": "everything"}
-        )
-    )
-
-    assert "must be one of sessions, connections" in out
+    assert "arkime_connections" in names
+    assert not [n for n in names if "connections" in n and "csv" in n]
 
 
 @pytest.mark.asyncio
-async def test_export_csv_explains_a_timeout_as_a_bad_field_name():
+async def test_sessions_csv_explains_a_timeout_as_a_bad_field_name():
     """Measured live: sessions.csv takes ECS dotted names in fields= and simply
     never answers on a db name like srcIp. A bare timeout tells the agent
     nothing, so name the likely cause."""
@@ -385,7 +388,7 @@ async def test_export_csv_explains_a_timeout_as_a_bad_field_name():
 
     out = payload(
         await _tools(handler, register_arkime_tools).call_tool(
-            "arkime_export_csv", {"kind": "sessions", "fields": "srcIp,dstIp"}
+            "arkime_sessions_csv", {"fields": "srcIp,dstIp"}
         )
     )
 
@@ -394,7 +397,7 @@ async def test_export_csv_explains_a_timeout_as_a_bad_field_name():
 
 
 @pytest.mark.asyncio
-async def test_export_csv_passes_the_field_list_through():
+async def test_sessions_csv_passes_the_field_list_through():
     seen = {}
 
     def handler(req):
@@ -402,10 +405,20 @@ async def test_export_csv_passes_the_field_list_through():
         return httpx.Response(200, text="Src IP\n192.0.2.7\n")
 
     await _tools(handler, register_arkime_tools).call_tool(
-        "arkime_export_csv", {"kind": "sessions", "fields": "source.ip, destination.ip"}
+        "arkime_sessions_csv", {"fields": "source.ip, destination.ip"}
     )
 
     assert seen["fields"] == "source.ip,destination.ip"
+
+
+@pytest.mark.asyncio
+async def test_sessions_csv_reports_a_transport_failure():
+    def handler(req):
+        raise httpx.ConnectError("connection refused")
+
+    out = payload(await _tools(handler, register_arkime_tools).call_tool("arkime_sessions_csv", {}))
+
+    assert "failed" in out.lower()
 
 
 # -- failure handling ---------------------------------------------------
@@ -452,6 +465,20 @@ async def test_node_stats_says_so_when_no_node_matches():
     out = payload(await _tools(handler).call_tool("arkime_node_stats", {"node": "ghost"}))
 
     assert "ghost" in out
+
+
+@pytest.mark.asyncio
+async def test_node_stats_omits_cpu_when_arkime_sends_no_number():
+    """A node that has not reported yet sends cpu as null; a bogus percent is
+    worse than none at all in a block an analyst reads as health."""
+    no_cpu = {**_NODE, "cpu": None}
+
+    def handler(req):
+        return httpx.Response(200, json={"data": [no_cpu], "recordsTotal": 1})
+
+    out = payload(await _tools(handler).call_tool("arkime_node_stats", {}))
+
+    assert "cpu_percent" not in out
 
 
 @pytest.mark.asyncio

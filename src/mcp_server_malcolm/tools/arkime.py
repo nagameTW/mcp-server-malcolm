@@ -36,10 +36,6 @@ _HASH_RE = re.compile(r"[A-Fa-f0-9]{16,128}")
 # as the PCAP download.
 _FILE_MAX_MB = 100
 
-# The two CSV export routes. Anything else would be a path segment an agent
-# invented, so the kind is matched against this rather than interpolated.
-_CSV_KINDS = ("sessions", "connections")
-
 # Shared: every Arkime tool here reads from the external Arkime (via Malcolm)
 # server, never mutates it.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
@@ -676,16 +672,8 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             indent=2,
         )
 
-    @mcp.tool(title="Export sessions or connections as CSV", annotations=_READ)
-    async def arkime_export_csv(
-        kind: Annotated[
-            str,
-            Field(
-                description='Which table to export: "sessions" (one row per '
-                'session) or "connections" (one row per source/destination pair '
-                "with its totals)."
-            ),
-        ],
+    @mcp.tool(title="Export sessions as CSV", annotations=_READ)
+    async def arkime_sessions_csv(
         expression: Annotated[
             str,
             Field(
@@ -702,8 +690,7 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
                 "(ip.src). A name Arkime does not accept is never reported as an "
                 "error: measured on 6.6.0 it either comes back as an empty column "
                 "or the request hangs until it times out. Leave empty for "
-                "Arkime's default columns, which always work. "
-                "sessions only; ignored for connections."
+                "Arkime's default columns, which always work."
             ),
         ] = "",
         limit: Annotated[int, Field(description="Max rows to export.", ge=1, le=10000)] = 100,
@@ -719,32 +706,28 @@ def register_arkime_tools(mcp: FastMCP, client: MalcolmClient) -> None:
             Field(description="End time as EPOCH SECONDS (NOT a dateparser string). Empty = now."),
         ] = "",
     ) -> str:
-        """Export many sessions, or a source/destination summary, as a compact CSV table.
+        """Export many sessions as a compact CSV table, one row each.
 
-        Use this when you want a lot of rows cheaply: CSV costs roughly half the
-        tokens of the same rows as JSON, so it suits "show me every DNS session
-        this host made" or a who-talked-to-whom summary you intend to read as a
-        table. Use arkime_sessions instead when you need a session id to drill
-        into (this returns none), and arkime_connections when you want the
-        source/destination graph as structured nodes and links rather than rows.
+        Use this when you want a lot of sessions cheaply: CSV costs roughly half
+        the tokens of the same rows as JSON, so it suits "show me every DNS
+        session this host made" when you intend to read the result as a table.
+        Use arkime_sessions instead when you need a session id to drill into
+        (this returns none), and arkime_connections for a who-talked-to-whom
+        summary — Arkime's connections.csv is not wrapped here because on 6.6.0
+        it emits nine header columns over seven-column rows, so every column
+        after the second is mislabeled.
 
-        Returns raw CSV TEXT with a header row, not JSON. `connections` totals
-        each source/destination pair over the whole window; `sessions` gives one
-        row each. A request that names a column Arkime does not accept hangs
-        rather than failing, so a timeout here is reported as a probable `fields`
+        Returns raw CSV TEXT with a header row, not JSON. `limit` bounds the
+        rows exactly. A request naming a column Arkime does not accept hangs
+        rather than failing, so a timeout is reported as a probable `fields`
         problem.
         """
-        target = kind.strip().lower()
-        if target not in _CSV_KINDS:
-            return f"Error: kind must be one of {', '.join(_CSV_KINDS)} (got {kind!r})."
-
         wanted = ",".join(f.strip() for f in fields.split(",") if f.strip())
         try:
-            text = await client.arkime_export_csv(
-                kind=target,
+            text = await client.arkime_sessions_csv(
                 expression=expression.strip(),
                 limit=min(max(1, limit), 10000),
-                fields=wanted if target == "sessions" else "",
+                fields=wanted,
                 time_from=time_from.strip(),
                 time_to=time_to.strip(),
             )

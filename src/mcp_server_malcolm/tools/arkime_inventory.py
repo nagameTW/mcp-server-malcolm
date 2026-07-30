@@ -254,7 +254,11 @@ def register_arkime_inventory_tools(mcp: FastMCP, client: MalcolmClient) -> None
                     "disk_free_mb": row.get("freeSpaceM"),
                     "disk_free_percent": row.get("freeSpaceP"),
                     "memory_percent": row.get("memoryP"),
-                    "cpu": row.get("cpu"),
+                    # Arkime stores cpu in hundredths of a percent -- its own
+                    # viewer divides by 100 (apiStats.js: item.cpu * 0.01). Left
+                    # raw it reads as 134% busy on a node at 1.34%, and it sits
+                    # next to two keys that really are percents.
+                    "cpu_percent": _percent(row.get("cpu")),
                     "total_sessions": row.get("totalSessions"),
                     "total_packets": row.get("totalPackets"),
                     "packets_dropped": row.get("totalDropped"),
@@ -278,6 +282,14 @@ def register_arkime_inventory_tools(mcp: FastMCP, client: MalcolmClient) -> None
         return json.dumps(
             {"count": len(nodes), "nodes": nodes}, indent=2, ensure_ascii=False, default=str
         )
+
+
+def _percent(value: Any) -> Any:
+    """Arkime's hundredths-of-a-percent CPU value as a plain percent."""
+    try:
+        return round(float(value) / 100, 2)
+    except (TypeError, ValueError):
+        return None
 
 
 def _positive(value: Any) -> bool:

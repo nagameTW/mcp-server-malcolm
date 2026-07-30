@@ -115,7 +115,7 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 | `arkime_spigraphhierarchy` | Hierarchical top-N breakdown across fields (nested drill-down) |
 | `arkime_connections` | Source/destination connection graph (nodes and links) |
 | `arkime_file_by_hash` | Extract the transferred file whose md5/sha256 matches (metadata only, nothing written to disk) |
-| `arkime_export_csv` | Export sessions, or a source/destination summary, as a compact CSV table (about half the tokens of the same rows as JSON) |
+| `arkime_sessions_csv` | Export sessions as a compact CSV table — about half the tokens of the same rows as JSON |
 
 ### Arkime saved objects and capture health
 
@@ -126,6 +126,8 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 | `arkime_reverse_dns` | Reverse-resolve one IP to its PTR hostname |
 | `arkime_pcap_files` | List the PCAP files Arkime has indexed, with each file's size, packet/session counts and time span |
 | `arkime_node_stats` | Capture-node health: dropped packets, disk, memory, queues — warns when a node is losing packets, since that turns a gap into what looks like an absence |
+
+Arkime's `connections.csv` is deliberately not wrapped: on Arkime 6.6.0 it emits a nine-column header over seven-column rows, so every column after the second is mislabeled. `arkime_connections` answers the same question correctly.
 
 ### File analysis
 
@@ -481,7 +483,7 @@ arkime_create_hunt(
 | `/arkime/api/spigraphhierarchy` | GET | `arkime_spigraphhierarchy` |
 | `/arkime/api/connections` | GET | `arkime_connections` |
 | `/arkime/api/sessions/bodyhash/<hash>` | GET | `arkime_file_by_hash` |
-| `/arkime/api/sessions.csv`, `/arkime/api/connections.csv` | GET | `arkime_export_csv` |
+| `/arkime/api/sessions.csv` | GET | `arkime_sessions_csv` |
 | `/arkime/api/views`, `/arkime/api/shortcuts` | GET | `arkime_views`, `arkime_shortcuts` |
 | `/arkime/api/reversedns` | GET | `arkime_reverse_dns` |
 | `/arkime/api/files` | GET | `arkime_pcap_files` |
