@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
@@ -89,17 +90,29 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         arkime_hunt_status. Returns the raw Arkime response.
         """
         if not name.strip():
-            return "Error: name is required."
+            raise ToolInputError('name is required — the hunt name, e.g. "beacon-bytes".')
         if not search.strip():
-            return "Error: search is required."
+            raise ToolInputError(
+                "search is required — the bytes/text/regex to look for inside packet payloads."
+            )
         if search_type not in _SEARCH_TYPES:
-            return f"Error: search_type must be one of {', '.join(_SEARCH_TYPES)}."
+            raise ToolInputError(
+                f"search_type must be one of {', '.join(_SEARCH_TYPES)}; received {search_type!r}."
+            )
         if packet_type not in ("raw", "reassembled"):
-            return "Error: packet_type must be 'raw' or 'reassembled'."
+            raise ToolInputError(
+                f"packet_type must be 'raw' or 'reassembled'; received {packet_type!r}."
+            )
         if not (src or dst):
-            return "Error: at least one of src/dst must be true."
+            raise ToolInputError(
+                "at least one of src/dst must be true — with both false the hunt "
+                "would scan no packets at all."
+            )
         if total_sessions <= 0:
-            return "Error: total_sessions must be > 0."
+            raise ToolInputError(
+                f"total_sessions must be > 0; received {total_sessions!r}. Size the hunt "
+                f"with count or arkime_sessions on the same expression and window first."
+            )
 
         hunt = {
             "name": name.strip(),
@@ -123,7 +136,7 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
             "expression": expression,
         }
 
-        result, err = await run_write(
+        result = await run_write(
             "arkime_create_hunt",
             _CLASS,
             target,
@@ -131,8 +144,6 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
             audit_file,
             lambda: client._write_arkime_hunt(hunt),
         )
-        if err:
-            return f"Hunt creation failed: {err}"
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
     @mcp.tool(title="List hunt jobs", annotations=_READ)
@@ -154,8 +165,5 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         class, so if that class is disabled hunt status is unavailable too.
         Returns the raw Arkime hunts response.
         """
-        try:
-            data = await client.arkime_hunts(length=limit, history=not active_only)
-        except Exception as exc:  # noqa: BLE001
-            return f"Hunt status query failed: {exc}"
+        data = await client.arkime_hunts(length=limit, history=not active_only)
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)

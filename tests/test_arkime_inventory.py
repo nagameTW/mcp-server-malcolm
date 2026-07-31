@@ -9,10 +9,11 @@ import json
 
 import httpx
 import pytest
-from conftest import tool_text
+from conftest import raised_by, tool_text
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.server import create_server
 from mcp_server_malcolm.tools.arkime import register_arkime_tools
 from mcp_server_malcolm.tools.arkime_inventory import register_arkime_inventory_tools
@@ -172,9 +173,9 @@ async def test_reverse_dns_rejects_a_non_ip(bad):
     def handler(req):
         raise AssertionError(f"must not query for {bad!r}")
 
-    out = tool_text(await _tools(handler).call_tool("arkime_reverse_dns", {"ip": bad}))
+    raised = await raised_by(_tools(handler), "arkime_reverse_dns", {"ip": bad})
 
-    assert "error" in out.lower()
+    assert isinstance(raised, ToolInputError)
 
 
 @pytest.mark.asyncio
@@ -382,14 +383,13 @@ async def test_sessions_csv_explains_a_timeout_as_a_bad_field_name():
     def handler(req):
         raise httpx.ReadTimeout("timed out")
 
-    out = tool_text(
-        await _tools(handler, register_arkime_tools).call_tool(
-            "arkime_sessions_csv", {"fields": "srcIp,dstIp"}
-        )
+    raised = await raised_by(
+        _tools(handler, register_arkime_tools), "arkime_sessions_csv", {"fields": "srcIp,dstIp"}
     )
 
-    assert "fields" in out.lower()
-    assert "source.ip" in out
+    assert isinstance(raised, UpstreamError)
+    assert "fields" in str(raised).lower()
+    assert "source.ip" in str(raised)
 
 
 @pytest.mark.asyncio
@@ -412,11 +412,10 @@ async def test_sessions_csv_reports_a_transport_failure():
     def handler(req):
         raise httpx.ConnectError("connection refused")
 
-    out = tool_text(
-        await _tools(handler, register_arkime_tools).call_tool("arkime_sessions_csv", {})
-    )
+    raised = await raised_by(_tools(handler, register_arkime_tools), "arkime_sessions_csv", {})
 
-    assert "failed" in out.lower()
+    assert isinstance(raised, UpstreamError)
+    assert "connection refused" in str(raised)
 
 
 # -- failure handling ---------------------------------------------------
@@ -434,15 +433,17 @@ async def test_sessions_csv_reports_a_transport_failure():
     ],
 )
 async def test_every_inventory_tool_reports_a_transport_failure(tool, args):
-    """A tool must hand the agent a sentence, never raise into the MCP layer."""
+    """A tool must RAISE on a transport failure, so the MCP layer reports
+    isError: true -- a sentence would arrive as a successful answer."""
 
     def handler(req):
         raise httpx.ConnectError("connection refused")
 
-    out = tool_text(await _tools(handler).call_tool(tool, args))
+    raised = await raised_by(_tools(handler), tool, args)
 
-    assert "failed" in out.lower()
-    assert "connection refused" in out
+    assert isinstance(raised, UpstreamError)
+    assert raised.status is None
+    assert "connection refused" in str(raised)
 
 
 @pytest.mark.asyncio

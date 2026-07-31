@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
+
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
@@ -50,13 +52,17 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         searches fail independently — a failure on one side does not abort the other;
         instead the result carries a `direct_error` or `related_error` string for the
         side that failed while still returning the side that succeeded (check for those
-        keys). No time filter is applied — both searches use Malcolm's default window.
+        keys); both failing is reported as an error, since nothing was correlated.
+        No time filter is applied — both searches use Malcolm's default window.
         Requires Malcolm access (Basic auth), inherited from the server config. Returns a
         JSON object with separate "direct" and "related" hit lists plus a "summary" count
         (and per-side error keys only when a side fails).
         """
         if not uid.strip():
-            return "Error: uid is required."
+            raise ToolInputError(
+                'uid is required — a Zeek connection UID such as "CYeji2z7CKmPRGyga", '
+                "taken from a zeek.uid field."
+            )
 
         uid = uid.strip()
         results: dict = {"uid": uid, "direct": [], "related": []}
@@ -89,6 +95,11 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             results["related"] = related_hits if isinstance(related_hits, list) else []
         except Exception as exc:  # noqa: BLE001
             results["related_error"] = str(exc)
+
+        if "direct_error" in results and "related_error" in results:
+            # Neither side answered, so there is no correlation to report and a
+            # document carrying only the two error keys would read as success.
+            raise UpstreamError(f"{results['direct_error']}; {results['related_error']}")
 
         direct_count = len(results.get("direct", []))
         related_count = len(results.get("related", []))

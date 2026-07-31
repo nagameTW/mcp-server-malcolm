@@ -10,10 +10,11 @@ import json
 
 import httpx
 import pytest
-from conftest import tool_text
+from conftest import raised_by, tool_text
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.server import create_server
 from mcp_server_malcolm.tools.dashboards import register_dashboard_tools
 
@@ -145,12 +146,11 @@ async def test_saved_objects_rejects_an_unknown_type():
     def handler(req):
         raise AssertionError("no request may leave for an unsupported object type")
 
-    out = tool_text(
-        await _tools(handler).call_tool("malcolm_saved_objects", {"object_type": "widget"})
-    )
+    raised = await raised_by(_tools(handler), "malcolm_saved_objects", {"object_type": "widget"})
 
-    assert "widget" in out
-    assert "dashboard" in out
+    assert isinstance(raised, ToolInputError)
+    assert "widget" in str(raised)
+    assert "dashboard" in str(raised)
 
 
 @pytest.mark.asyncio
@@ -389,13 +389,17 @@ async def test_anomaly_detectors_reports_none_configured():
     ],
 )
 async def test_every_dashboard_tool_reports_a_transport_failure(tool, args):
+    """A transport failure raises, so the caller sees isError rather than a
+    sentence it might read as an answer."""
+
     def handler(req):
         raise httpx.ConnectError("connection refused")
 
-    out = tool_text(await _tools(handler).call_tool(tool, args))
+    raised = await raised_by(_tools(handler), tool, args)
 
-    assert "failed" in out.lower()
-    assert "connection refused" in out
+    assert isinstance(raised, UpstreamError)
+    assert raised.status is None
+    assert "connection refused" in str(raised)
 
 
 # -- shape tolerance ----------------------------------------------------
@@ -482,11 +486,10 @@ async def test_saved_objects_rejects_an_empty_type():
     def handler(req):
         raise AssertionError("no request may leave without a type")
 
-    out = tool_text(
-        await _tools(handler).call_tool("malcolm_saved_objects", {"object_type": " , "})
-    )
+    raised = await raised_by(_tools(handler), "malcolm_saved_objects", {"object_type": " , "})
 
-    assert "error" in out.lower()
+    assert isinstance(raised, ToolInputError)
+    assert "(empty)" in str(raised)
 
 
 @pytest.mark.asyncio

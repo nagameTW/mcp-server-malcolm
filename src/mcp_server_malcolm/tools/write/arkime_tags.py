@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
@@ -66,13 +67,16 @@ def register_arkime_tag_tools(
         ids = session_ids.strip()
         tg = tags.strip()
         if not ids:
-            return "Error: session_ids is required."
+            raise ToolInputError(
+                "session_ids is required — the `id` of one or more arkime_sessions "
+                "rows, comma-separated."
+            )
         if not tg:
-            return "Error: tags is required."
+            raise ToolInputError("tags is required — one or more tags, comma-separated.")
 
         target = f"ids={ids}"
         params_summary = {"tags": tg}
-        result, err = await run_write(
+        result = await run_write(
             "arkime_add_tags",
             _CLASS,
             target,
@@ -80,6 +84,4 @@ def register_arkime_tag_tools(
             audit_file,
             lambda: client._write_arkime_tags(ids=ids, tags=tg),
         )
-        if err:
-            return f"Add tags failed: {err}"
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)

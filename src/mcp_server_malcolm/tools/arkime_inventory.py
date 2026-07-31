@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 from typing_extensions import TypedDict
 
+from mcp_server_malcolm.errors import ToolInputError
+
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
@@ -130,10 +132,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         this shows what the configured account can see, not everything on the
         server.
         """
-        try:
-            data = await client.arkime_views(length=min(max(1, limit), 500))
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime views lookup failed: {exc}"
+        data = await client.arkime_views(length=min(max(1, limit), 500))
 
         rows = data.get("data") or []
         if not rows:
@@ -171,10 +170,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         values it holds, and `use_in_expression` — the exact `$name` token to
         put in an arkime_sessions expression.
         """
-        try:
-            data = await client.arkime_shortcuts(length=min(max(1, limit), 500))
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime shortcuts lookup failed: {exc}"
+        data = await client.arkime_shortcuts(length=min(max(1, limit), 500))
 
         rows = data.get("data") or []
         if not rows:
@@ -223,16 +219,16 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         """
         addr = ip.strip()
         if not addr:
-            return "Error: ip is required."
+            raise ToolInputError('ip is required — one IPv4 or IPv6 address, e.g. "8.8.8.8".')
         try:
             ipaddress.ip_address(addr)
-        except ValueError:
-            return f"Error: {addr!r} is not an IP address (this tool takes one IPv4/IPv6 address)."
+        except ValueError as exc:
+            raise ToolInputError(
+                f"{addr!r} is not an IP address — this tool takes one IPv4/IPv6 "
+                f"address, not a hostname and not a CIDR range."
+            ) from exc
 
-        try:
-            text = await client.arkime_reverse_dns(addr)
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime reverse DNS failed: {exc}"
+        text = await client.arkime_reverse_dns(addr)
 
         if not text or text.lower().startswith(_NO_PTR):
             return {
@@ -260,10 +256,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         epoch MILLISECONDS — note that every Arkime *query* parameter takes
         epoch seconds instead.
         """
-        try:
-            data = await client.arkime_pcap_files(length=min(max(1, limit), 500))
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime file list failed: {exc}"
+        data = await client.arkime_pcap_files(length=min(max(1, limit), 500))
 
         rows = data.get("data") or []
         if not rows:
@@ -312,10 +305,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         saying so, because that is the finding that changes an analyst's
         conclusions rather than a number to skim past.
         """
-        try:
-            data = await client.arkime_node_stats(node_filter=node.strip())
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime node stats failed: {exc}"
+        data = await client.arkime_node_stats(node_filter=node.strip())
 
         rows = data.get("data") or []
         if not rows:

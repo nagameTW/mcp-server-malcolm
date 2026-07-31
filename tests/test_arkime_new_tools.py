@@ -5,9 +5,11 @@ import json
 
 import httpx
 import pytest
+from conftest import raised_by
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.arkime import register_arkime_tools
 from mcp_server_malcolm.tools.write.arkime_views import register_arkime_view_tools
 
@@ -46,8 +48,9 @@ async def test_multiunique_sends_exp_and_returns_text():
 async def test_multiunique_requires_fields():
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(lambda r: httpx.Response(200, text="")))
-    out = await mcp.call_tool("arkime_multiunique", {"fields": "  "})
-    assert "required" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_multiunique", {"fields": "  "})
+    assert isinstance(raised, ToolInputError)
+    assert "required" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -67,8 +70,9 @@ async def test_spigraphhierarchy_sends_exp_and_returns_json():
 async def test_file_by_hash_rejects_non_hex():
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock(lambda r: httpx.Response(200)))
-    out = await mcp.call_tool("arkime_file_by_hash", {"file_hash": "../etc/passwd"})
-    assert "invalid" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_file_by_hash", {"file_hash": "../etc/passwd"})
+    assert isinstance(raised, ToolInputError)
+    assert "invalid" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -148,10 +152,9 @@ async def test_create_view_primes_cookie_and_posts(tmp_path):
 async def test_create_view_requires_name_and_expression():
     mcp = MCPServer("t")
     register_arkime_view_tools(mcp, _mock_with_cookie({}), None)
-    assert (
-        "required"
-        in str(await mcp.call_tool("arkime_create_view", {"name": "", "expression": "x"})).lower()
-    )
+    raised = await raised_by(mcp, "arkime_create_view", {"name": "", "expression": "x"})
+    assert isinstance(raised, ToolInputError)
+    assert "required" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -173,11 +176,11 @@ async def test_create_shortcut_validates_type_and_posts():
 async def test_create_shortcut_rejects_bad_type():
     mcp = MCPServer("t")
     register_arkime_view_tools(mcp, _mock_with_cookie({}), None)
-    out = await mcp.call_tool(
-        "arkime_create_shortcut",
-        {"name": "x", "value": "y", "shortcut_type": "regex"},
+    raised = await raised_by(
+        mcp, "arkime_create_shortcut", {"name": "x", "value": "y", "shortcut_type": "regex"}
     )
-    assert "shortcut_type" in str(out) or "must be one of" in str(out)
+    assert isinstance(raised, ToolInputError)
+    assert "shortcut_type" in str(raised) and "must be one of" in str(raised)
 
 
 @pytest.mark.asyncio

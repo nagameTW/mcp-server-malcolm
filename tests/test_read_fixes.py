@@ -3,10 +3,11 @@ import json
 
 import httpx
 import pytest
-from conftest import tool_text
+from conftest import raised_by, tool_text
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.server import create_server
 
 
@@ -57,8 +58,9 @@ async def test_pcap_tool_rejects_injection_session_id():
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("arkime_session_pcap", {"session_id": "1||ip==0.0.0.0/0"})
-    assert "invalid session_id" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_session_pcap", {"session_id": "1||ip==0.0.0.0/0"})
+    assert isinstance(raised, ToolInputError)
+    assert "invalid session_id" in str(raised).lower()
 
 
 @pytest.mark.asyncio

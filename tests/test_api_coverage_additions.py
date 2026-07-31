@@ -7,9 +7,11 @@
 
 import httpx
 import pytest
+from conftest import raised_by
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.arkime import register_arkime_tools
 from mcp_server_malcolm.tools.netbox import register_netbox_tools
 from mcp_server_malcolm.tools.query import register_query_tools
@@ -151,8 +153,9 @@ async def test_pcap_rejects_injection_ids():
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("arkime_session_pcap", {"session_id": "1 || ip==0.0.0.0/0"})
-    assert "invalid session_id" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_session_pcap", {"session_id": "1 || ip==0.0.0.0/0"})
+    assert isinstance(raised, ToolInputError)
+    assert "invalid session_id" in str(raised).lower()
 
 
 # -- netbox generic passthrough --------------------------------------------
@@ -185,8 +188,9 @@ async def test_netbox_query_rejects_traversal_path():
 
     mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("malcolm_netbox_query", {"path": "../../secret"})
-    assert "invalid netbox path" in str(out).lower()
+    raised = await raised_by(mcp, "malcolm_netbox_query", {"path": "../../secret"})
+    assert isinstance(raised, ToolInputError)
+    assert "invalid netbox path" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -196,8 +200,9 @@ async def test_netbox_query_rejects_absolute_url_path():
 
     mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("malcolm_netbox_query", {"path": "http://evil.example/x"})
-    assert "invalid netbox path" in str(out).lower()
+    raised = await raised_by(mcp, "malcolm_netbox_query", {"path": "http://evil.example/x"})
+    assert isinstance(raised, ToolInputError)
+    assert "invalid netbox path" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -207,5 +212,6 @@ async def test_netbox_query_rejects_bad_params_json():
 
     mcp = MCPServer("t")
     register_netbox_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("malcolm_netbox_query", {"path": "ipam/vlans/", "params": "{bad"})
-    assert "invalid json" in str(out).lower()
+    raised = await raised_by(mcp, "malcolm_netbox_query", {"path": "ipam/vlans/", "params": "{bad"})
+    assert isinstance(raised, ToolInputError)
+    assert "not valid json" in str(raised).lower()

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
 
+from mcp_server_malcolm.tools._parse import parse_int_list, parse_json_object
+
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
@@ -212,11 +214,10 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 )
             filters["rule.name"] = matched
         if severity:
-            sevs = [int(s.strip()) for s in severity.split(",") if s.strip().isdigit()]
-            if len(sevs) == 1:
-                filters["suricata.alert.severity"] = sevs[0]
-            elif sevs:
-                filters["suricata.alert.severity"] = sevs
+            # Dropping an unparseable level used to leave the key unset, which
+            # returned EVERY severity while the caller believed it had filtered.
+            sevs = parse_int_list(severity, "severity", '"1,2" (1=high, 2=medium, 3=low)')
+            filters["suricata.alert.severity"] = sevs[0] if len(sevs) == 1 else sevs
         if source_ip:
             filters["source.ip"] = source_ip
         if dest_ip:
@@ -235,11 +236,10 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         if action:
             filters["suricata.alert.action"] = action
         if sid:
-            sids = [int(s.strip()) for s in sid.split(",") if s.strip().isdigit()]
-            if len(sids) == 1:
-                filters["rule.id"] = sids[0]
-            elif sids:
-                filters["rule.id"] = sids
+            # Same trap as severity: "ET-2019401" is the spelling of a rule
+            # NAME, not an id, and skipping it returned every signature.
+            sids = parse_int_list(sid, "sid", '"2019401,2024897"')
+            filters["rule.id"] = sids[0] if len(sids) == 1 else sids
 
         data = await client.search(
             filters=filters,
@@ -314,11 +314,5 @@ async def _with_empty_hint(
 
 
 def _parse_filters(raw: str) -> dict[str, Any] | None:
-    """Parse filter JSON string, returning None for empty."""
-    if not raw or raw.strip() in ("", "{}", "null", "none"):
-        return None
-    try:
-        parsed = json.loads(raw)
-        return parsed if isinstance(parsed, dict) and parsed else None
-    except json.JSONDecodeError:
-        return None
+    """Parse the filter JSON, None for empty; a malformed value raises."""
+    return parse_json_object(raw, "filters", '{"event.dataset":"conn"}')

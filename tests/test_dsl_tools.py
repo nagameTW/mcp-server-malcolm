@@ -1,5 +1,9 @@
 import asyncio
 
+import pytest
+from conftest import raised_by
+
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.server import create_server
 
 
@@ -14,16 +18,22 @@ def test_dsl_core_tools_registered():
         assert expected in names, f"{expected} missing; have {names}"
 
 
-def test_search_dsl_rejects_malformed_json():
-    mcp = create_server()
-    out = asyncio.run(
-        mcp.call_tool("search_dsl", {"index": "arkime_sessions3-*", "query_dsl": "{not json"})
+@pytest.mark.asyncio
+async def test_search_dsl_rejects_malformed_json():
+    """It raises, so the call comes back with isError true rather than a
+    success whose text happens to start with "Error:"."""
+    raised = await raised_by(
+        create_server(), "search_dsl", {"index": "arkime_sessions3-*", "query_dsl": "{not json"}
     )
-    assert "Error: invalid JSON" in str(out)
+    assert isinstance(raised, ToolInputError)
+    assert "invalid JSON in query_dsl" in str(raised)
 
 
-def test_search_dsl_rejects_bad_index_pattern():
+@pytest.mark.asyncio
+async def test_search_dsl_rejects_bad_index_pattern():
     """index is LLM-controlled and lands in the URL path — no path metachars."""
-    mcp = create_server()
-    out = asyncio.run(mcp.call_tool("search_dsl", {"index": "../_bulk", "query_dsl": "{}"}))
-    assert "Error: invalid index" in str(out)
+    raised = await raised_by(
+        create_server(), "search_dsl", {"index": "../_bulk", "query_dsl": "{}"}
+    )
+    assert isinstance(raised, ToolInputError)
+    assert "invalid index pattern" in str(raised)

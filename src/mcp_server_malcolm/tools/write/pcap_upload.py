@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 
 from mcp_server_malcolm import audit
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -39,27 +40,31 @@ _WRITE = {
 }
 
 
-def _resolve_in_dir(file_path: str, upload_dir: str | None) -> tuple[Path | None, str | None]:
+def _resolve_in_dir(file_path: str, upload_dir: str | None) -> Path:
     """Resolve file_path and confirm it sits inside upload_dir.
 
-    Returns (path, None) when the file is valid and contained, or
-    (None, error_message) otherwise. Symlinks are resolved before the
-    containment check so a link inside the dir can't point outside it.
+    Symlinks are resolved before the containment check so a link inside the dir
+    can't point outside it.
+
+    Raises:
+        ToolInputError: the path is missing, uncontained, or not a file. Every
+            one of these is the caller's argument being unusable, not Malcolm
+            failing, and each is fixable by passing a different path.
     """
     if not file_path:
-        return None, "Error: file_path is required."
+        raise ToolInputError("file_path is required — a path inside MALCOLM_MCP_UPLOAD_DIR.")
     if not upload_dir:
-        return None, (
-            "Error: PCAP upload is disabled — set MALCOLM_MCP_UPLOAD_DIR to a "
-            "staging directory that holds the files allowed for upload."
+        raise ToolInputError(
+            "PCAP upload is disabled — set MALCOLM_MCP_UPLOAD_DIR to a staging "
+            "directory that holds the files allowed for upload."
         )
     base = Path(upload_dir).resolve()
     resolved = Path(file_path).resolve()
     if not resolved.is_relative_to(base):
-        return None, f"Error: file_path must be inside MALCOLM_MCP_UPLOAD_DIR ({base})."
+        raise ToolInputError(f"file_path must be inside MALCOLM_MCP_UPLOAD_DIR ({base}).")
     if not resolved.is_file():
-        return None, f"Error: file not found: {resolved}"
-    return resolved, None
+        raise ToolInputError(f"file not found: {resolved}")
+    return resolved
 
 
 def register_pcap_upload_tools(
@@ -103,9 +108,7 @@ def register_pcap_upload_tools(
         registered only when the pcap-upload write class is enabled. Returns
         JSON with the uploaded flag, filename, size, and HTTP status.
         """
-        resolved, err = _resolve_in_dir(file_path.strip(), upload_dir)
-        if err:
-            return err
+        resolved = _resolve_in_dir(file_path.strip(), upload_dir)
 
         # Hard ceiling so a caller-supplied max_mb can't defeat the guard and OOM
         # (the whole file is read into memory before the multipart POST).
@@ -113,15 +116,20 @@ def register_pcap_upload_tools(
         filename = resolved.name
         target = f"file={filename}"
         params_summary: dict[str, Any] = {"tags": tags}
+        # Sized before the audited block: refusing to send is not a write
+        # attempt, so it leaves no audit row.
+        size = os.path.getsize(resolved)
+        if size > max_mb * 1024 * 1024:
+            raise ToolInputError(
+                f"file exceeds max_mb={max_mb} (size is {size / 1024 / 1024:.1f} MB)."
+            )
+        params_summary["size_bytes"] = size
+
         try:
-            size = os.path.getsize(resolved)
-            if size > max_mb * 1024 * 1024:
-                return f"Error: file exceeds max_mb={max_mb} (size is {size / 1024 / 1024:.1f} MB)."
-            params_summary["size_bytes"] = size
             with open(resolved, "rb") as fh:
                 content = fh.read()
             resp = await client._write_upload_pcap(filename, content, tags=tags)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             audit.record(
                 "malcolm_upload_pcap",
                 _CLASS,
@@ -130,12 +138,17 @@ def register_pcap_upload_tools(
                 f"error:{type(exc).__name__}",
                 audit_file,
             )
-            return f"Upload failed: {exc}"
+            raise
 
         outcome = audit.outcome_for_status(resp.status_code)
         audit.record("malcolm_upload_pcap", _CLASS, target, params_summary, outcome, audit_file)
         if outcome != "ok":
-            return f"Upload failed: HTTP {resp.status_code}"
+            # The FilePond primitive hands back the raw response rather than
+            # raising, so the status has to be judged here.
+            raise UpstreamError(
+                f"Malcolm's upload endpoint answered {resp.status_code} for {filename}.",
+                resp.status_code,
+            )
         return json.dumps(
             {"uploaded": True, "file": filename, "size_bytes": size, "status": resp.status_code},
             indent=2,

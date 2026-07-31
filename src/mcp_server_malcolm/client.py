@@ -4,28 +4,44 @@ All Malcolm API interactions go through this client.
 Usable standalone (direct import) or via the MCP server layer.
 
 Configuration via environment variables:
-    MALCOLM_URL         Base URL (default: https://localhost)
-    MALCOLM_USERNAME    Basic auth user (default: admin)
-    MALCOLM_PASSWORD    Basic auth password (default: admin)
-    MALCOLM_SSL_VERIFY  Verify TLS certs (default: true; "false" or a CA path)
-    MALCOLM_TIMEOUT     Request timeout seconds (default: 30)
+    MALCOLM_URL                      Base URL (default: https://localhost)
+    MALCOLM_USERNAME                 Basic auth user (default: admin)
+    MALCOLM_PASSWORD                 Basic auth password (default: admin)
+    MALCOLM_SSL_VERIFY               Verify TLS certs (default: true; "false" or a CA path)
+    MALCOLM_TIMEOUT                  Request timeout seconds (default: 30)
+    MALCOLM_MAX_CONCURRENCY          Simultaneous upstream requests (default: 8)
+    MALCOLM_MAX_REQUESTS_PER_MINUTE  Upstream request-rate cap (default: 600)
 """
 
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import os
-from collections.abc import Iterable
+import re
+import time
+from collections import deque
+from collections.abc import Awaitable, Callable, Iterable
 from difflib import get_close_matches
-from typing import Any
+from typing import Any, ParamSpec, TypeVar
 from urllib.parse import quote
 
 import httpx
 
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError, redact
 from mcp_server_malcolm.field_aliases import alias_for
 
 logger = logging.getLogger(__name__)
+
+# Bounds on upstream traffic. The MCP tools spec makes rate-limiting a server
+# obligation, and this client is the single point every tool's traffic crosses.
+# Both defaults are set far above an interactive session -- no tool in this
+# server fans out, so a hunt issues requests one at a time -- and exist to stop
+# a runaway loop from hammering Malcolm, not to pace a human.
+_DEFAULT_MAX_CONCURRENCY = 8
+_DEFAULT_MAX_REQUESTS_PER_MINUTE = 600
+_RATE_WINDOW_SECONDS = 60.0
 
 
 def _parse_ssl_verify(raw: str) -> bool | str:
@@ -44,6 +60,118 @@ def _parse_ssl_verify(raw: str) -> bool | str:
     return val  # treat as a CA-bundle path for httpx verify=
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    """Read a positive integer setting, falling back on anything unusable.
+
+    A bound that is absent, blank or nonsense must not be read as "no bound":
+    a typo in a deployment's env file would then silently remove the limiter.
+    """
+    raw = os.environ.get(name, "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    if raw:
+        logger.warning("[malcolm] ignoring %s=%r; using %d", name, raw, default)
+    return default
+
+
+# -- Path-splicing guards ---------------------------------------------------
+# Every value below is interpolated into an upstream URL path. httpx removes
+# dot segments before sending, so an unchecked value walks out of its endpoint:
+# aggregate(fields="../../arkime/api/hunts") posts to /arkime/api/hunts with
+# this client's Basic auth, defeating the read-only boundary and the write-class
+# gate, which both assume an unregistered endpoint is unreachable. The classes
+# are allow-lists, so "/", "?", "#", "%" and "\" can never appear. A new method
+# that splices a value into a path needs its own entry here.
+
+# Field names, taken from the live catalogue rather than guessed: all 5969
+# names /mapi/fields returns on Malcolm v26.07.1 are drawn from letters, digits
+# and "_ . - @ [ ]" -- e.g. "@timestamp", "destination.mac-cnt",
+# "suricata.smb.client_dialects[]", "http.request-content-type". One name ends
+# in a stray space ("suricata.ftp.command "); the space-free spelling is indexed
+# too, so whitespace is stripped rather than admitted.
+_FIELD_RE = re.compile(r"[A-Za-z0-9_.@\[\]-]+")
+_FIELD_SHAPE = "a Malcolm field name such as 'source.ip' (letters, digits and _ . - @ [ ])"
+
+# Index names and patterns: the 25 indices on the lab use letters, digits and
+# "_ . -"; "*" is the wildcard the query tools advertise and "," joins several.
+_INDEX_RE = re.compile(r"[A-Za-z0-9_.*,-]+")
+_INDEX_SHAPE = "an index or pattern such as 'arkime_sessions3-*'"
+
+# Saved-object ids: the 50 dashboards on the lab are UUIDs plus named ones like
+# "Metricbeat-system-overview", so letters, digits and "_ . -".
+_DASHBOARD_ID_RE = re.compile(r"[A-Za-z0-9_.-]+")
+_DASHBOARD_ID_SHAPE = "a saved-object id such as 'd2dd0180-06b1-11ec-8c6b-353266ade330'"
+
+# NetBox REST paths are app/model segments, so a slash is legitimate here and
+# the "no dot segment" check below is what keeps it from traversing.
+_NETBOX_PATH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9/_-]*")
+_NETBOX_PATH_SHAPE = "a NetBox REST path such as 'api/ipam/ip-addresses/'"
+
+# A body hash is hex: md5 (32) or sha256 (64) as Arkime stores them.
+_HASH_RE = re.compile(r"[A-Fa-f0-9]{16,128}")
+_HASH_SHAPE = "an md5 or sha256 hex digest"
+
+# A path segment that is exactly "..", which is what httpx collapses. Written
+# as a segment test rather than a substring one so a carved filename like
+# "report..pdf" -- percent-encoded into a single segment -- still goes through.
+_DOT_SEGMENT = re.compile(r"(?:^|/)\.\.(?:/|$)")
+
+
+def _checked(value: str, pattern: re.Pattern[str], what: str, shape: str) -> str:
+    """Return value unchanged if it is safe to splice into a path, else raise."""
+    if not pattern.fullmatch(value) or _DOT_SEGMENT.search(value):
+        raise ToolInputError(f"invalid {what}: {value!r} — expected {shape}")
+    return value
+
+
+def _checked_field_list(fields: str) -> str:
+    """Validate a comma-separated field list and return it whitespace-free.
+
+    /mapi/agg takes the list as one path segment, so each name is checked
+    separately and the result rejoined -- that way "source.ip, destination.ip",
+    the spelling an analyst types, is accepted instead of rejected for a space.
+    """
+    names = [_checked(n.strip(), _FIELD_RE, "field name", _FIELD_SHAPE) for n in fields.split(",")]
+    return ",".join(names)
+
+
+def _checked_path(path: str) -> str:
+    """Backstop on an assembled request path.
+
+    The per-argument guards above are the fix; this catches the next method
+    that interpolates a value into a path and forgets one, because httpx
+    collapses the dot segments before sending and the escape leaves no trace.
+    """
+    if _DOT_SEGMENT.search(path):
+        raise ToolInputError(f"refusing a request path with a '..' segment: {path!r}")
+    return path
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def _upstream(fn: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
+    """Convert any httpx failure raised inside into an UpstreamError.
+
+    httpx exception text is written for an operator: it carries the full
+    request URL, and MALCOLM_URL may embed credentials as userinfo. Converting
+    here rather than at each tool means the redaction happens once, and every
+    tool sees one exception type carrying the status it may want to branch on.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        try:
+            return await fn(*args, **kwargs)
+        except httpx.HTTPStatusError as exc:
+            raise UpstreamError(redact(str(exc)), exc.response.status_code) from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamError(redact(str(exc))) from exc
+
+    return wrapper
+
+
 class MalcolmClient:
     """Async HTTP client for the Malcolm REST API.
 
@@ -58,11 +186,17 @@ class MalcolmClient:
         password: str = "admin",
         ssl_verify: bool | str = True,
         timeout: float = 30.0,
+        max_concurrency: int = _DEFAULT_MAX_CONCURRENCY,
+        max_requests_per_minute: int = _DEFAULT_MAX_REQUESTS_PER_MINUTE,
     ) -> None:
         self._base_url = base_url.rstrip("/")
         self._auth = httpx.BasicAuth(username, password)
         self._ssl_verify = ssl_verify
         self._timeout = timeout
+        self._max_concurrency = max_concurrency
+        self._max_requests_per_minute = max_requests_per_minute
+        self._request_times: deque[float] = deque()
+        self._rate_lock = asyncio.Lock()
         self._http: httpx.AsyncClient | None = None
         self._http_lock = asyncio.Lock()
         self._field_cache: dict[str, str] | None = None
@@ -83,6 +217,9 @@ class MalcolmClient:
         disabled when an operator supplies a real bundle. Unset defaults to
         "true": the secure default never ships credentials over an unverified
         channel. For a self-signed Malcolm, set this to its CA-cert path.
+
+        MALCOLM_MAX_CONCURRENCY and MALCOLM_MAX_REQUESTS_PER_MINUTE bound the
+        upstream traffic; see the module docstring for the defaults.
         """
         return cls(
             base_url=os.environ.get("MALCOLM_URL", "https://localhost"),
@@ -90,9 +227,34 @@ class MalcolmClient:
             password=os.environ.get("MALCOLM_PASSWORD", "admin"),
             ssl_verify=_parse_ssl_verify(os.environ.get("MALCOLM_SSL_VERIFY", "true")),
             timeout=float(os.environ.get("MALCOLM_TIMEOUT", "30")),
+            max_concurrency=_positive_int_env("MALCOLM_MAX_CONCURRENCY", _DEFAULT_MAX_CONCURRENCY),
+            max_requests_per_minute=_positive_int_env(
+                "MALCOLM_MAX_REQUESTS_PER_MINUTE", _DEFAULT_MAX_REQUESTS_PER_MINUTE
+            ),
         )
 
     # -- HTTP primitives ------------------------------------------------
+
+    async def _rate_limit(self, request: httpx.Request) -> None:
+        """Hold a request back until it fits under the per-minute cap.
+
+        Registered as an httpx request event hook, so every route out -- get,
+        post, the streaming downloads, the write primitives -- crosses it
+        without each having to remember to. Sleeping while holding the lock
+        releases waiters in arrival order; at these rates fairness is worth
+        more than the throughput a shared wakeup would buy.
+        """
+        async with self._rate_lock:
+            while True:
+                now = time.monotonic()
+                while self._request_times and now - self._request_times[0] >= _RATE_WINDOW_SECONDS:
+                    self._request_times.popleft()
+                if len(self._request_times) < self._max_requests_per_minute:
+                    self._request_times.append(now)
+                    return
+                wait = _RATE_WINDOW_SECONDS - (now - self._request_times[0])
+                logger.debug("[malcolm] rate cap reached, holding %s for %.1fs", request.url, wait)
+                await asyncio.sleep(wait)
 
     async def _client(self) -> httpx.AsyncClient:
         # Lock the check-and-create so two racing coroutines can't each build a
@@ -106,28 +268,43 @@ class MalcolmClient:
                     # Short connect budget: a dead/unreachable host must fail in
                     # seconds, not hang the full read timeout on every call.
                     timeout=httpx.Timeout(self._timeout, connect=5.0),
+                    # The pool is where bounded concurrency already exists:
+                    # httpx queues anything over max_connections, so no separate
+                    # semaphore has to be threaded through every call site.
+                    limits=httpx.Limits(max_connections=self._max_concurrency),
+                    event_hooks={"request": [self._rate_limit]},
                     follow_redirects=True,
                 )
             return self._http
 
+    @_upstream
     async def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """HTTP GET, returns parsed JSON."""
         c = await self._client()
-        resp = await c.get(path, params=params)
+        resp = await c.get(_checked_path(path), params=params)
         resp.raise_for_status()
         return resp.json()
 
+    @_upstream
     async def post(self, path: str, body: dict[str, Any] | None = None) -> Any:
         """HTTP POST with JSON body, returns parsed JSON."""
         c = await self._client()
-        resp = await c.post(path, json=body or {})
+        resp = await c.post(_checked_path(path), json=body or {})
         resp.raise_for_status()
         return resp.json()
 
+    @_upstream
     async def get_raw(self, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
-        """HTTP GET returning the raw response (for binary downloads)."""
+        """HTTP GET returning the raw response (for binary downloads).
+
+        Converts a failure that produced no response -- DNS, TLS, connect,
+        timeout -- into UpstreamError, but hands back any status untouched.
+        Every caller of this method reads ``resp.status_code`` itself precisely
+        because a 400 or 404 here is an answer ("no match", "file pruned"), not
+        a fault; raising on those would take that decision away from them.
+        """
         c = await self._client()
-        return await c.get(path, params=params)
+        return await c.get(_checked_path(path), params=params)
 
     async def close(self) -> None:
         if self._http is not None and not self._http.is_closed:
@@ -175,7 +352,13 @@ class MalcolmClient:
         Args:
             fields: Comma-separated field names, e.g. "source.ip,destination.ip".
             doctype: Target index selector (see search()).
+
+        Raises:
+            ToolInputError: a name is not a Malcolm field name. The list becomes
+                a URL path segment, so an unchecked value reaches another
+                endpoint entirely.
         """
+        safe_fields = _checked_field_list(fields)
         body: dict[str, Any] = {"limit": limit}
         if filters:
             body["filter"] = filters
@@ -185,7 +368,7 @@ class MalcolmClient:
             body["to"] = time_to
         if doctype:
             body["doctype"] = doctype
-        return await self.post(f"/mapi/agg/{fields}", body)
+        return await self.post(f"/mapi/agg/{safe_fields}", body)
 
     # -- OpenSearch DSL (generic; backend-agnostic) ---------------------
     # These speak plain OpenSearch DSL against the configured endpoint via
@@ -194,22 +377,26 @@ class MalcolmClient:
 
     async def opensearch_dsl(self, index: str, body: dict[str, Any]) -> dict[str, Any]:
         """POST a raw DSL search body; returns the raw OpenSearch response."""
-        return await self.post(f"/mapi/opensearch/{index}/_search", body)
+        safe = _checked(index, _INDEX_RE, "index", _INDEX_SHAPE)
+        return await self.post(f"/mapi/opensearch/{safe}/_search", body)
 
     async def opensearch_count(self, index: str, query: dict[str, Any]) -> dict[str, Any]:
         """Count docs matching a DSL query clause."""
-        return await self.post(f"/mapi/opensearch/{index}/_count", {"query": query})
+        safe = _checked(index, _INDEX_RE, "index", _INDEX_SHAPE)
+        return await self.post(f"/mapi/opensearch/{safe}/_count", {"query": query})
 
     async def opensearch_indices(self, pattern: str = "*") -> Any:
         """List indices (name/health/status/docs.count) as JSON."""
+        safe = _checked(pattern, _INDEX_RE, "index pattern", _INDEX_SHAPE)
         return await self.get(
-            f"/mapi/opensearch/_cat/indices/{pattern}",
+            f"/mapi/opensearch/_cat/indices/{safe}",
             params={"format": "json", "h": "index,health,status,docs.count"},
         )
 
     async def opensearch_mapping(self, index: str) -> dict[str, Any]:
         """Field mapping for an index."""
-        return await self.get(f"/mapi/opensearch/{index}/_mapping")
+        safe = _checked(index, _INDEX_RE, "index", _INDEX_SHAPE)
+        return await self.get(f"/mapi/opensearch/{safe}/_mapping")
 
     async def opensearch_cluster_health(self) -> dict[str, Any]:
         """Cluster health document."""
@@ -433,7 +620,8 @@ class MalcolmClient:
     # -- Dashboard Export -----------------------------------------------
 
     async def dashboard_export(self, dashboard_id: str) -> dict[str, Any]:
-        return await self.get(f"/mapi/dashboard-export/{dashboard_id}")
+        safe = _checked(dashboard_id, _DASHBOARD_ID_RE, "dashboard id", _DASHBOARD_ID_SHAPE)
+        return await self.get(f"/mapi/dashboard-export/{safe}")
 
     # -- OpenSearch Dashboards & plugins --------------------------------
 
@@ -512,7 +700,8 @@ class MalcolmClient:
 
     async def netbox_get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """Query NetBox API via Malcolm's /mapi/netbox/ proxy."""
-        return await self.get(f"/mapi/netbox/{path.lstrip('/')}", params=params)
+        safe = _checked(path.lstrip("/"), _NETBOX_PATH_RE, "NetBox path", _NETBOX_PATH_SHAPE)
+        return await self.get(f"/mapi/netbox/{safe}", params=params)
 
     async def netbox_sites(self) -> dict[str, Any]:
         """Site directory from /mapi/netbox-sites (ids + metadata)."""
@@ -538,6 +727,7 @@ class MalcolmClient:
             params["stopTime"] = time_to
         return await self.get("/arkime/api/sessions", params=params)
 
+    @_upstream
     async def arkime_session_pcap(self, session_id: str, max_bytes: int = 0) -> bytes:
         """Download PCAP bytes for a single Arkime session.
 
@@ -561,6 +751,7 @@ class MalcolmClient:
             resp.raise_for_status()
             return await _read_capped(resp, max_bytes, "PCAP")
 
+    @_upstream
     async def extracted_file(self, name: str, max_bytes: int = 0) -> tuple[int, bytes]:
         """Download one Zeek-extracted file from Malcolm's extracted-files server.
 
@@ -568,7 +759,9 @@ class MalcolmClient:
         FILESCAN_HTTP_SERVER_ENABLE is on (the same path zeek.files.extracted_uri
         records). The name is percent-encoded here because httpx does not escape
         it: a '#' or '?' in a carved SMB filename would otherwise be parsed as a
-        fragment or query and fetch the wrong file.
+        fragment or query and fetch the wrong file. Encoding collapses the name
+        to one segment, so it cannot traverse; the path backstop then catches
+        the one name that would survive that, a bare "..".
 
         Args:
             name: Bare filename, no directory part (the directory is flat).
@@ -585,7 +778,7 @@ class MalcolmClient:
             ValueError: the response exceeds max_bytes.
         """
         c = await self._client()
-        path = f"/extracted-files/{quote(name, safe='')}"
+        path = _checked_path(f"/extracted-files/{quote(name, safe='')}")
         async with c.stream("GET", path) as resp:
             if resp.status_code >= 400:
                 return resp.status_code, b""
@@ -608,6 +801,7 @@ class MalcolmClient:
         """
         return await self.get("/arkime/api/shortcuts", params={"length": length})
 
+    @_upstream
     async def arkime_reverse_dns(self, ip: str) -> str:
         """PTR name for an address via GET /arkime/api/reversedns.
 
@@ -636,6 +830,7 @@ class MalcolmClient:
             params["filter"] = node_filter
         return await self.get("/arkime/api/stats", params=params)
 
+    @_upstream
     async def arkime_sessions_csv(
         self,
         expression: str = "",
@@ -694,6 +889,7 @@ class MalcolmClient:
         data = result.get("data") if isinstance(result, dict) else None
         return data[0] if data else {}
 
+    @_upstream
     async def arkime_unique(
         self,
         expression: str,
@@ -773,6 +969,7 @@ class MalcolmClient:
         params["dstField"] = dst_field
         return await self.get("/arkime/api/connections", params=params)
 
+    @_upstream
     async def arkime_multiunique(
         self,
         fields: str,
@@ -826,7 +1023,8 @@ class MalcolmClient:
         node name is needed. Returns the raw response so the caller can inspect
         status (400 "No Match Found" when nothing matches) and the bytes.
         """
-        return await self.get_raw(f"/arkime/api/sessions/bodyhash/{file_hash}")
+        safe = _checked(file_hash, _HASH_RE, "body hash", _HASH_SHAPE)
+        return await self.get_raw(f"/arkime/api/sessions/bodyhash/{safe}")
 
     # -- Write primitives (gated) ---------------------------------------
     # Every method here issues a mutating request. By convention they are
@@ -843,6 +1041,7 @@ class MalcolmClient:
         """
         return await self.post("/mapi/event", {"alert": alert})
 
+    @_upstream
     async def _write_arkime_tags(self, ids: str, tags: str, segments: str = "no") -> dict[str, Any]:
         """POST /arkime/api/sessions/addtags — additive tagging (Arkime v6.5.0).
 
@@ -864,6 +1063,7 @@ class MalcolmClient:
         resp.raise_for_status()
         return resp.json()
 
+    @_upstream
     async def _arkime_token_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """POST to a checkCookieToken-guarded Arkime route with the token dance.
 
@@ -903,6 +1103,7 @@ class MalcolmClient:
         """
         return await self._arkime_token_post("/arkime/api/shortcut", shortcut)
 
+    @_upstream
     async def _write_upload_pcap(
         self, filename: str, content: bytes, tags: str = ""
     ) -> httpx.Response:

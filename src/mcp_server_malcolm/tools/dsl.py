@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
+
+from mcp_server_malcolm.errors import ToolInputError
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -27,10 +29,23 @@ _INDEX_RE = re.compile(r"^[A-Za-z0-9_.*-]+$")
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
-def _index_error(index: str) -> str | None:
-    if _INDEX_RE.fullmatch(index) and ".." not in index:
-        return None
-    return f"Error: invalid index pattern: {index!r}"
+def _check_index(index: str) -> None:
+    """Reject an index/pattern that could climb out of its endpoint."""
+    if not _INDEX_RE.fullmatch(index) or ".." in index:
+        raise ToolInputError(
+            f"invalid index pattern: {index!r} — expected an index name or wildcard "
+            f'such as "arkime_sessions3-*", with no path metachars (/, ?, ..).'
+        )
+
+
+def _load_dsl(query_dsl: str, what: str) -> Any:
+    """Parse a DSL body/clause; a malformed one raises rather than running."""
+    try:
+        return json.loads(query_dsl)
+    except json.JSONDecodeError as exc:
+        raise ToolInputError(
+            f"invalid JSON in query_dsl ({exc}); received {query_dsl!r}. Expected {what}."
+        ) from exc
 
 
 def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
@@ -70,12 +85,8 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Aggregations honor the time filter inside the DSL body, so there is no hidden
         default time window. Returns the raw OpenSearch _search response.
         """
-        if err := _index_error(index):
-            return err
-        try:
-            body = json.loads(query_dsl) if isinstance(query_dsl, str) else query_dsl
-        except json.JSONDecodeError as exc:
-            return f"Error: invalid JSON in query_dsl: {exc}"
+        _check_index(index)
+        body = _load_dsl(query_dsl, 'a full DSL body such as {"query": {"match_all": {}}}')
         if "query" not in body:
             body = {"query": body}
         body["size"] = min(max(0, size), 500)
@@ -107,12 +118,14 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         here it is the inner query clause only, whereas `search_dsl` takes a full DSL
         body. Returns the raw OpenSearch _count response ({"count": N, ...}).
         """
-        if err := _index_error(index):
-            return err
-        try:
-            query = json.loads(query_dsl) if query_dsl.strip() else {"match_all": {}}
-        except json.JSONDecodeError as exc:
-            return f"Error: invalid JSON in query_dsl: {exc}"
+        _check_index(index)
+        query = (
+            _load_dsl(
+                query_dsl, 'an inner query clause such as {"term": {"event.dataset": "conn"}}'
+            )
+            if query_dsl.strip()
+            else {"match_all": {}}
+        )
         data = await client.opensearch_count(index, query)
         return json.dumps(data, ensure_ascii=False, default=str)
 
@@ -134,8 +147,7 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Returns a JSON array, one object per index, with name, health, status, and doc
         count.
         """
-        if err := _index_error(pattern):
-            return err
+        _check_index(pattern)
         data = await client.opensearch_indices(pattern)
         return json.dumps(data, ensure_ascii=False, default=str)
 
@@ -158,8 +170,7 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Returns the raw OpenSearch _mapping response; a non-existent index yields an
         OpenSearch error in the response body.
         """
-        if err := _index_error(index):
-            return err
+        _check_index(index)
         data = await client.opensearch_mapping(index)
         return json.dumps(data, ensure_ascii=False, default=str)
 

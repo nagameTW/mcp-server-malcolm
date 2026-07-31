@@ -10,10 +10,11 @@ import json
 
 import httpx
 import pytest
-from conftest import tool_text
+from conftest import raised_by, tool_text
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.server import create_server
 from mcp_server_malcolm.tools.files import register_file_tools
 
@@ -321,10 +322,10 @@ async def test_file_scans_rejects_a_malformed_filter(bad):
     def handler(req):
         raise AssertionError("must not query with an unparseable filter")
 
-    mcp = _tools(handler)
-    out = str(await mcp.call_tool("malcolm_file_scans", {"filters": bad}))
+    raised = await raised_by(_tools(handler), "malcolm_file_scans", {"filters": bad})
 
-    assert "filters" in out.lower()
+    assert isinstance(raised, ToolInputError)
+    assert "filters" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -405,10 +406,9 @@ async def test_extract_file_rejects_a_path(name):
     def handler(req):
         raise AssertionError(f"must not fetch for {name!r}")
 
-    mcp = _tools(handler)
-    out = str(await mcp.call_tool("malcolm_extract_file", {"filename": name}))
+    raised = await raised_by(_tools(handler), "malcolm_extract_file", {"filename": name})
 
-    assert "error" in out.lower()
+    assert isinstance(raised, ToolInputError)
 
 
 @pytest.mark.asyncio
@@ -449,12 +449,11 @@ async def test_extract_file_does_not_call_a_server_error_a_missing_file(status):
     def handler(req):
         return httpx.Response(status, text="nope")
 
-    mcp = _tools(handler)
-    out = str(await mcp.call_tool("malcolm_extract_file", {"filename": "a.exe"}))
+    raised = await raised_by(_tools(handler), "malcolm_extract_file", {"filename": "a.exe"})
 
-    assert str(status) in out
-    assert "prune" not in out.lower()
-    assert "failed" in out.lower()
+    assert isinstance(raised, UpstreamError)
+    assert raised.status == status
+    assert "prune" not in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -462,10 +461,10 @@ async def test_extract_file_reports_a_transport_failure():
     def handler(req):
         raise httpx.ConnectError("connection refused")
 
-    mcp = _tools(handler)
-    out = str(await mcp.call_tool("malcolm_extract_file", {"filename": "a.exe"}))
+    raised = await raised_by(_tools(handler), "malcolm_extract_file", {"filename": "a.exe"})
 
-    assert "download failed" in out.lower()
+    assert isinstance(raised, UpstreamError)
+    assert "connection refused" in str(raised)
 
 
 @pytest.mark.asyncio
@@ -477,11 +476,12 @@ async def test_extract_file_refuses_an_oversized_file(monkeypatch):
     def handler(req):
         return httpx.Response(200, content=b"0123456789")
 
-    mcp = _tools(handler)
-    out = str(await mcp.call_tool("malcolm_extract_file", {"filename": "big.bin"}))
+    raised = await raised_by(_tools(handler), "malcolm_extract_file", {"filename": "big.bin"})
 
-    assert "url_only" in out
-    assert "4" in out
+    # The cap is our refusal, not Malcolm failing, and url_only is the way past it.
+    assert isinstance(raised, ToolInputError)
+    assert "url_only" in str(raised)
+    assert "4" in str(raised)
 
 
 # -- shapes the live server actually sends -------------------------------

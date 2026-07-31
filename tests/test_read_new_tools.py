@@ -6,9 +6,11 @@ import asyncio
 
 import httpx
 import pytest
+from conftest import raised_by
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.server import create_server
 from mcp_server_malcolm.tools.arkime import register_arkime_tools
 from mcp_server_malcolm.tools.netbox import register_netbox_tools
@@ -114,8 +116,9 @@ async def test_session_detail_rejects_injection_session_id():
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("arkime_session_detail", {"session_id": "1||ip==0.0.0.0/0"})
-    assert "invalid session_id" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_session_detail", {"session_id": "1||ip==0.0.0.0/0"})
+    assert isinstance(raised, ToolInputError)
+    assert "invalid session_id" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -180,8 +183,9 @@ async def test_unique_requires_field():
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("arkime_unique", {"field": "  "})
-    assert "field is required" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_unique", {"field": "  "})
+    assert isinstance(raised, ToolInputError)
+    assert "field is required" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -222,8 +226,9 @@ async def test_spigraph_requires_field():
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("arkime_spigraph", {"field": " "})
-    assert "field is required" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_spigraph", {"field": " "})
+    assert isinstance(raised, ToolInputError)
+    assert "field is required" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -250,8 +255,9 @@ async def test_spiview_requires_spi():
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    out = await mcp.call_tool("arkime_spiview", {"spi": ""})
-    assert "required" in str(out).lower()
+    raised = await raised_by(mcp, "arkime_spiview", {"spi": ""})
+    assert isinstance(raised, ToolInputError)
+    assert "required" in str(raised).lower()
 
 
 @pytest.mark.asyncio

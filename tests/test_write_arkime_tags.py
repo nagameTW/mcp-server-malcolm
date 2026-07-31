@@ -2,9 +2,11 @@ import json
 
 import httpx
 import pytest
+from conftest import raised_by
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.tools.write.arkime_tags import register_arkime_tag_tools
 
 
@@ -46,14 +48,10 @@ async def test_add_tags_requires_both_args(tmp_path):
 
     mcp = MCPServer("t")
     register_arkime_tag_tools(mcp, _mock(handler), None)
-    assert (
-        "required"
-        in str(await mcp.call_tool("arkime_add_tags", {"session_ids": "", "tags": "x"})).lower()
-    )
-    assert (
-        "required"
-        in str(await mcp.call_tool("arkime_add_tags", {"session_ids": "id1", "tags": ""})).lower()
-    )
+    for args in ({"session_ids": "", "tags": "x"}, {"session_ids": "id1", "tags": ""}):
+        raised = await raised_by(mcp, "arkime_add_tags", args)
+        assert isinstance(raised, ToolInputError)
+        assert "required" in str(raised).lower()
 
 
 @pytest.mark.asyncio
@@ -65,6 +63,7 @@ async def test_add_tags_audits_http_error(tmp_path):
 
     mcp = MCPServer("t")
     register_arkime_tag_tools(mcp, _mock(handler), str(audit))
-    await mcp.call_tool("arkime_add_tags", {"session_ids": "id1", "tags": "x"})
+    raised = await raised_by(mcp, "arkime_add_tags", {"session_ids": "id1", "tags": "x"})
+    assert isinstance(raised, UpstreamError) and raised.status == 403
     row = json.loads(audit.read_text().splitlines()[-1])
     assert row["outcome"] == "http_4xx"
