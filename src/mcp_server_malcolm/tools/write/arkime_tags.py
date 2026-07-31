@@ -1,4 +1,4 @@
-"""Write class: arkime-tag — POST /arkime/api/sessions/addtags (Arkime v6.5.0).
+"""Write class: arkime-tag — POST /arkime/api/sessions/addtags (Arkime 6.6.0).
 
 Additive tagging only. Tag REMOVAL is a deliberate non-goal in v1 (needs the
 removeEnabled role and its own safety design). Arkime sanitizes tags to

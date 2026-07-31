@@ -199,19 +199,55 @@ Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原
 
 你不需要寫任何程式碼。MCP 客戶端（Claude Code、Claude Desktop、Cursor 等）會把這個 server 當子行程啟動，用 stdio 跟它溝通；你要做的只是告訴客戶端怎麼啟動它、以及要注入哪些憑證。
 
+這一章的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 與 macOS 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
+
 ### 1. 安裝
 
+**PyPI 上的版本比這個 repository 舊。**已發布的 `mcp-server-malcolm` 0.9.0 是從更早的 commit 切出來的；這棵樹的 `pyproject.toml` 同樣寫著 `0.9.0`，所以光看版號完全看不出兩者有差。`pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是已發布的 release，不是這份文件寫的這份程式碼。下次發版之前，要拿到這棵樹就得從原始碼裝。
+
 ```bash
-pip install mcp-server-malcolm
+pip install mcp-server-malcolm      # published release
 ```
 
-或從原始碼安裝：
+從 checkout 裝：
 
 ```bash
 git clone https://github.com/nagameTW/mcp-server-malcolm.git
 cd mcp-server-malcolm
 pip install -e .
 ```
+
+或者建一個 wheel、裝進乾淨的 virtualenv——底下所有東西都是走這條路驗證的：
+
+```bash
+$ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+
+$ python3 -m venv /tmp/mcp-malcolm-deploy/venv
+$ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+```
+
+這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel，但這兩個平台都沒有實際裝過，請當作未驗證。
+
+不想把這個 branch 永久裝到哪裡去，就把 `uvx` 或 `pipx` 指到 checkout：
+
+```bash
+uvx --from /path/to/mcp-server-malcolm mcp-server-malcolm
+pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
+```
+
+把 stdin 關掉直接啟動 server，就能確認裝好了。它會印出 write class 橫幅、讀到 EOF、以 0 結束：
+
+```bash
+$ timeout 3 mcp-server-malcolm < /dev/null
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
+$ echo $?
+0
+```
+
+行程要啟動不需要先設定任何東西。連線設定在啟動時就讀進來，但要等到有工具去呼叫 Malcolm 才會用上，所以 URL 或密碼寫錯是以工具呼叫失敗的形式浮現，不是啟動失敗。
 
 ### 2. 註冊到你的客戶端
 
@@ -226,7 +262,28 @@ claude mcp add malcolm \
   -- mcp-server-malcolm
 ```
 
-`--` 之後是啟動指令，前面每個 `-e` 是要注入的環境變數。用 `-s` 決定這筆設定存在哪：
+`--` 之後是啟動指令，前面每個 `-e` 是要注入的環境變數。`claude mcp add --help` 給出的簽名是 `claude mcp add [options] <name> <commandOrUrl> [args...]`，選項有 `-e, --env <env...>` 和 `-s, --scope <scope>`。
+
+註冊、健康檢查、移除，整套跑一遍：
+
+```bash
+$ claude mcp add malcolm-deploy-test -s local \
+    -e MALCOLM_URL=https://malcolm.example \
+    -e MALCOLM_USERNAME=analyst \
+    -e MALCOLM_PASSWORD='your-password' \
+    -e MALCOLM_SSL_VERIFY=false \
+    -- /tmp/mcp-malcolm-deploy/venv/bin/mcp-server-malcolm
+Added stdio MCP server malcolm-deploy-test with command: … to local config
+
+$ claude mcp list
+Checking MCP server health…
+malcolm-deploy-test: /tmp/mcp-malcolm-deploy/venv/bin/mcp-server-malcolm  - ✔ Connected
+
+$ claude mcp remove malcolm-deploy-test -s local
+Removed MCP server malcolm-deploy-test from local config
+```
+
+用 `-s` 決定這筆設定存在哪：
 
 | scope | 存放位置 | 適用情境 |
 | --- | --- | --- |
@@ -234,7 +291,7 @@ claude mcp add malcolm \
 | `user` | 你個人的設定，所有專案都看得到 | 到哪都會用到的 Malcolm |
 | `project` | 專案根目錄的 `.mcp.json`，**會進 git** | 團隊共用，密碼絕對不要放這裡 |
 
-用 `claude mcp list` 確認是否連上（它會對每個 server 做健康檢查），`claude mcp get malcolm` 看細節。
+`claude mcp get malcolm` 會印出註冊的指令和環境變數。要注意它是把 `MALCOLM_PASSWORD` 以明文、未遮蔽地印出來，所以終端機正在錄影或分享時不要跑它。
 
 若要用 `project` scope 給團隊共用，把密碼留在各人的 shell 裡：
 
@@ -267,20 +324,70 @@ claude mcp add malcolm \
 }
 ```
 
-Claude Desktop 讀 `claude_desktop_config.json`；其他客戶端位置不一，查各自的文件。
+上面這個區塊是把它的 `command` 和 `env` 欄位餵進 MCP Python SDK 自己的 `stdio_client` 與 `ClientSession` 驗過的，那正是一般客戶端拿到這兩個欄位之後做的事。這裡沒有啟動任何 GUI 客戶端：Claude Desktop 讀 `claude_desktop_config.json`，其他客戶端各不相同，依各自文件為準，本專案沒有獨立確認過。
 
 如果 `mcp-server-malcolm` 不在客戶端看得到的 `PATH` 上（用 virtualenv 時很常見），改填執行檔的絕對路徑：`/path/to/.venv/bin/mcp-server-malcolm`。
 
+**客戶端連上時看到什麼。**write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
+
+```
+protocol_version: 2025-11-25
+server_info:      name='mcp-server-malcolm' version='0.9.0'
+capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
+instructions:     3624 characters
+tools:            51
+prompts:          1  — hunt_workflow
+resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
+```
+
+在這套部署上，Arkime 那個 resource 送出 724,261 個字元，涵蓋 4,051 個 expression 欄位。要拿 SDK 寫腳本的人有一個地方要留意：`mcp` 2.x 用的是 snake_case 屬性（`protocol_version`、`server_info`、`is_error`），不是 wire protocol 和 1.x SDK 的 camelCase。照 `serverInfo`/`isError` 寫的腳本會拋 `AttributeError`。
+
 ### 3. 連線設定
 
-| 變數 | 說明 |
-| --- | --- |
-| `MALCOLM_URL` | Malcolm base URL，例如 `https://malcolm.example` |
-| `MALCOLM_USERNAME` / `MALCOLM_PASSWORD` | Malcolm 的 basic auth 帳密 |
-| `MALCOLM_SSL_VERIFY` | `true`（預設）、`false`、或 CA bundle 的路徑 |
-| `MALCOLM_TIMEOUT` | HTTP timeout 秒數，預設 `30` |
+底下的預設值就是 `MalcolmClient.from_env` 讀到的（`client.py:294-304`）。
+
+| 變數 | 預設值 | 說明 |
+| --- | --- | --- |
+| `MALCOLM_URL` | `https://localhost` | Malcolm base URL，例如 `https://malcolm.example` |
+| `MALCOLM_USERNAME` | `admin` | Basic auth 使用者名稱 |
+| `MALCOLM_PASSWORD` | `admin` | Basic auth 密碼 |
+| `MALCOLM_SSL_VERIFY` | `true` | `true`、`false`、或 CA bundle 的路徑（只要不是 `true`/`false`，就當成 CA 路徑交給 httpx） |
+| `MALCOLM_TIMEOUT` | `30` | HTTP timeout 秒數 |
+| `MALCOLM_MAX_CONCURRENCY` | `8` | 同時對上游發出的請求數 |
+| `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | 上游請求速率上限 |
+
+`https://localhost` 和 `true` 這兩個預設值，是把變數拿掉後看實際送出去的請求確認的。`admin`/`admin` 這組帳密預設值來自讀 `client.py:296-297`：把三個連線變數全部拿掉，對 `https://localhost` 會拿到 401，這證明了 URL 的預設值、也證明那組帳密在那個 lab 上是錯的，但不能證明它字面上就是 `admin`。30 秒的 timeout 同樣是讀原始碼得來的——試著對一個不可路由的位址計時，大約 5 秒就回來了，因為 OS 層的 connect 失敗先發生，所以 30 秒那條路從來沒有被走到。
 
 關於 TLS：驗證預設開啟，而 Malcolm 出廠是自簽憑證。把 `MALCOLM_SSL_VERIFY` 指向 Malcolm 的 CA bundle，只有在 Malcolm 的 server 憑證帶有對應你連線主機名的 `subjectAltName` 時才有用 — Malcolm 自己的 setup 產出的憑證沒有 SAN 擴充欄位，所以就算 CA 指對了驗證還是會失敗。遠端的 Malcolm 請換上 SAN 正確的憑證。`MALCOLM_SSL_VERIFY="false"` 是完全關閉驗證，只有隔離的 localhost 實驗環境能接受；走網路的話，憑證和查詢結果都會經過未經驗證的通道。
+
+#### 第一次呼叫失敗時
+
+幾乎所有第一次執行踩到的問題，都落在三種失敗上。三種都是用 `malcolm_ping` 重現的，文字照抄。
+
+**憑證是自簽的，而 `MALCOLM_SSL_VERIFY` 沒設。**這是最可能遇到的一種，因為預設就是開啟驗證，而原廠 Malcolm 的憑證過不了驗證：
+
+```
+Error executing tool malcolm_ping: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)
+```
+
+`_ssl.c` 後面的行號跟著你的直譯器走，不是這個 server 決定的：同一個錯誤在 Python 3.11 上是 `_ssl.c:1016`，而 Docker 映像和 CI 下限跑的都是 3.11。
+
+訊息裡從頭到尾沒提到 `MALCOLM_SSL_VERIFY`，所以很容易被讀成安裝壞掉了。修法是換上 SAN 正確的憑證、再把 `MALCOLM_SSL_VERIFY` 指向它的 CA bundle；或者，僅限隔離的實驗環境，設 `MALCOLM_SSL_VERIFY=false`。
+
+**密碼錯了。**清楚、而且知道下一步要做什麼——狀態碼和 URL 都在訊息裡：
+
+```
+Error executing tool malcolm_ping: Client error '401 Unauthorized' for url 'https://malcolm.example/mapi/ping'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+```
+
+**主機連不上**（`MALCOLM_URL` 打錯、連接埠被防火牆擋掉、scheme 錯了）。錯誤內容是**空的**：
+
+```
+Error executing tool malcolm_ping: 
+```
+
+冒號後面什麼都沒有。httpx 拋出的 connect 層例外在這個環境下 `str()` 是空字串，所以除了「失敗了」本身之外沒有東西可以報（`client.py:233-234`）。工具失敗而訊息一片空白時，先去檢查主機和連接埠，其他都往後放。
 
 ### 4. 開啟 write 工具（選用）
 
@@ -291,63 +398,192 @@ Claude Desktop 讀 `claude_desktop_config.json`；其他客戶端位置不一，
 -e MALCOLM_MCP_AUDIT_FILE=/var/log/malcolm-mcp-audit.jsonl
 ```
 
-完整開關列表見 [設定](#設定-1)。
+關著的 class 是沒有註冊，不是被藏起來，所以這個改動在 `tools/list` 上看得到。其他什麼都不動，數一數 MCP session 看到的工具數：
+
+```
+env unmodified                          tool count: 51
+MALCOLM_MCP_ENABLE_ARKIME_TAGS=true     tool count: 52   (new: arkime_add_tags)
+```
+
+用這個方式實際切換並計數過的只有 `arkime_tags`。另外四個 class 走的是 `tools/__init__.py::register_write_tools` 裡同一個 `if cfg.<flag>:` 閘門，所以同樣的行為由程式碼可以推得，但沒有分別量過。
+
+一個開關只有在值剛好是 `true`（不分大小寫）時才算開（`config.py:15`）；其他任何值，包括 `1` 和 `yes`，都會讓那個 class 維持關閉。啟動橫幅就是確認的地方。
+
+完整開關列表見 [設定參考](#設定參考)。
 
 ### 手動執行
 
-只在除錯時有用。stdio MCP server 沒有互動介面：從終端機啟動它會安靜地停在那裡等 stdin 上的 JSON-RPC，這就是正常運作的樣子。它啟動時會把已開啟的 write class 印到 stderr，所以這可以確認開關有生效：
+只在除錯時有用。stdio MCP server 沒有互動介面：從終端機啟動它會安靜地停在那裡等 stdin 上的 JSON-RPC，這就是正常運作的樣子。它啟動時會把已開啟的 write class 印到 stderr，所以這可以確認開關有生效。兩個進入點的行為完全一樣：
 
 ```bash
-mcp-server-malcolm          # 或：python -m mcp_server_malcolm
+$ mcp-server-malcolm
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
+
+$ python -m mcp_server_malcolm
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 ```
+
+### 在容器裡執行
+
+這個 repository 附了一份 `Dockerfile`，它從 build context 裝好套件，並以非 root 使用者執行：
+
+```bash
+$ docker build -t mcp-server-malcolm:local -f Dockerfile .
+$ docker run --rm --entrypoint id mcp-server-malcolm:local
+uid=10001(app) gid=10001(app) groups=10001(app)
+```
+
+冷建置花了 23.7 秒，在 `python:3.11-slim`（Debian 13 trixie）上產出 205MB 的 image。它是單一架構的：在這台 aarch64 主機上用普通的 `docker build` 只產出 `linux/arm64`，沒有模擬層的話在 x86_64 主機上跑不起來。多架構 image 得用 `docker buildx build --platform linux/amd64,linux/arm64`；這個沒試過，而且這份 Dockerfile 本身不會產出多架構 image。
+
+把客戶端的啟動指令指向 `docker run -i --rm …`：
+
+```bash
+docker run -i --rm --network host \
+  -e MALCOLM_URL -e MALCOLM_USERNAME -e MALCOLM_PASSWORD -e MALCOLM_SSL_VERIFY \
+  mcp-server-malcolm:local
+```
+
+`-e VAR` 後面不接 `=value`，就是從呼叫它的 shell 繼承值，所以密碼不會成為指令字串的一部分，也不會落進 `ps` 輸出或 shell history。但它事後還是能透過 `docker inspect` 讀出來，見下。
+
+容器怎麼連到 Malcolm，決定了整件事跑不跑得起來：
+
+| 怎麼連到 Malcolm | 參數 | 結果 |
+| --- | --- | --- |
+| 主機 loopback，URL 不動 | `--network host` | 可以。容器裡的 `https://localhost` 就是主機的 loopback。 |
+| bridge 網路 | 無 | 失敗：`All connection attempts failed`。`localhost` 指的是容器自己。底層的 errno 111 留在例外鏈裡，不會傳到 client。 |
+| bridge 網路 | `--add-host=host.docker.internal:host-gateway`、`MALCOLM_URL=https://host.docker.internal` | 可以。Linux 上的 `host.docker.internal` 不像 Docker Desktop 那樣會自動註冊，是那個明寫的 `--add-host` 讓它解得出來（Docker 20.10+；實測在 28.5.1）。 |
+
+兩種能通的模式都對著跑著的 Malcolm 完成了一次完整的 MCP session：`initialize`、回傳 51 個工具的 `tools/list`，以及兩次工具呼叫（`malcolm_ping` → `pong`，`count` → 202,531 筆 `conn` session）。`MALCOLM_SSL_VERIFY` 留在預設的 `true` 時，在容器裡失敗的理由跟在容器外一樣，都是自簽憑證。
+
+關於帳密：`docker inspect <container> --format '{{json .Config.Env}}'` 會把 `MALCOLM_PASSWORD` 以明文印出來，而且不管值是用 `-e VAR`、`-e VAR=value` 還是 `--env-file` 傳進去的都一樣——不管哪一種，Docker 都把解析後的環境存進容器的 metadata。只要那個容器物件還在，任何拿得到 Docker daemon 或 socket 的人就能把 Malcolm 密碼讀回去。沒有 `MALCOLM_PASSWORD_FILE` 那種讀 secrets 檔的輸入方式；`client.py:297` 只讀環境變數，別無其他。讓容器保持用完即丟（`--rm`、一個客戶端 session 一個容器，這本來就是 stdio server 隱含的模型）能縮短這個窗口，但關不掉它。
+
+`MALCOLM_MCP_ENABLE_PCAP_UPLOAD` 是唯一需要 bind mount 的功能，因為 `malcolm_upload_pcap` 要讀的檔案必須已經位於 `MALCOLM_MCP_UPLOAD_DIR` 內。掛到那裡的主機目錄，得讓容器內的 uid 10001 讀得到。這一條是從 `tools/write/pcap_upload.py` 讀出來的，沒有實測——整個測試過程 write class 都是關著的。
 
 ## 使用方式
 
 ### Python（直接 import）
 
-不經 MCP 層，直接用 `MalcolmClient`：
+`MalcolmClient` 可以單獨拿來用：不需要 MCP 客戶端、不需要 server 行程，迴圈裡也沒有 `mcp` 那一層傳輸。`mcp_server_malcolm` 的 `__all__` 是 `["MalcolmClient", "__version__"]`，而這一個 class 帶著 62 個 public method，涵蓋整個讀取面。這一節的每樣東西都是用這棵樹建出來的 wheel、對著跑著的 Malcolm v26.07.1 實際跑出來的。
+
+client 可以從環境變數建，也可以用明確的參數建：
 
 ```python
 import asyncio
 from mcp_server_malcolm import MalcolmClient
 
 async def main():
-    client = MalcolmClient(
-        base_url="https://malcolm.example",
-        username="admin",
-        password="admin",
-    )
+    client = MalcolmClient.from_env()          # 讀 MALCOLM_URL、MALCOLM_USERNAME、…
+    # 或：
+    # client = MalcolmClient(
+    #     base_url="https://malcolm.example",
+    #     username="analyst",
+    #     password="…",
+    #     ssl_verify=False,
+    # )
+    try:
+        # Malcolm 的 filter dict
+        hits = await client.search(
+            filters={"event.dataset": "conn"},
+            limit=5,
+        )
 
-    # 搜尋網路流量
-    results = await client.search(
-        filters={"event.dataset": "conn", "source.ip": "192.0.2.77"},
-        limit=10,
-    )
+        # 某欄位的 top 值，範圍是一個 24 小時的時間窗
+        agg = await client.aggregate(
+            fields="destination.port",
+            filters={"event.dataset": "conn"},
+            limit=5,
+            time_from="1714003200",
+            time_to="1714089600",
+        )
 
-    # 依協定聚合
-    agg = await client.aggregate(
-        fields="network.protocol",
-        filters={"network.direction": ["inbound", "outbound"]},
-    )
+        # 查詢回空的時候，先確認欄位名稱對不對，再決定信不信這個結果
+        ok = await client.resolve_field("http.useragent")
+        bad = await client.resolve_field("http.user_agent")
 
-    # 探索欄位名稱
-    fields = await client.search_fields(keyword="useragent")
-
-    # 列舉欄位值
-    datasets = await client.field_values(field="event.dataset")
-
-    # 查詢 NetBox 資產
-    asset = await client.netbox_get(
-        "api/ipam/ip-addresses/",
-        params={"address": "192.0.2.77"},
-    )
-
-    await client.close()
+        # Arkime expression 語法，時間窗是 epoch 秒
+        sessions = await client.arkime_sessions(
+            expression="protocols==dns",
+            limit=3,
+            time_from="1714003200",
+            time_to="1714089600",
+        )
+    finally:
+        await client.close()
 
 asyncio.run(main())
 ```
 
-write primitive 藏在 `_write_*` method 後面。只有被 gate 的 write 工具能碰到它們，直接 import 這條路碰不到。
+這些呼叫實際回來的東西：
+
+```
+search()     keys: ['filter', 'range', 'results']
+aggregate()  {'destination.port': {'buckets': [{'doc_count': 82147, 'key': 53},
+                                               {'doc_count': 31271, 'key': 80},
+                                               {'doc_count': 27911, 'key': 8080}, …]}}
+resolve_field('http.useragent')   {'exists': True,  'field': 'http.useragent', 'type': 'string'}
+resolve_field('http.user_agent')  {'exists': False, 'field': 'http.user_agent',
+                                   'suggestion': 'http.useragent', 'type': 'string'}
+arkime_sessions()  recordsTotal: 6030807  recordsFiltered: 310414
+                   first session id: 3@240425:240425-zT5pQlD2hY2Gwyzziep8Vg
+```
+
+在這個 Malcolm 版本上，`search()` 回的是 `{"filter", "range", "results"}`，命中結果放在 `results` 底下，最上層**沒有** `total` 這個 key。別去假設形狀，讀你實際拿到的 payload。
+
+**關掉 client 是呼叫端的責任。**`MalcolmClient` 有 `close()`，但沒有 `__aenter__`/`__aexit__`，所以 `async with MalcolmClient(...)` 會拋：
+
+```
+TypeError: 'mcp_server_malcolm.client.MalcolmClient' object does not support
+the asynchronous context manager protocol (missed __aexit__ method)
+```
+
+照上面那樣用 `try`/`finally`。沒關就把最後一個 reference 丟掉，會留下一條真的還開著、連到 Malcolm 的 socket，要等 garbage collector 收到它才會回收；而且在直譯器的預設設定下這個警告是靜音的，只有 `python -W always -X dev` 才看得到：
+
+```
+ResourceWarning: unclosed <socket.socket fd=6, family=2, type=1, proto=6, …>
+```
+
+**錯誤。**三個 exception，共同的 base 都是 `MalcolmToolError`：
+
+```python
+from mcp_server_malcolm.errors import MalcolmToolError, ToolInputError, UpstreamError
+```
+
+| 拋出 | 時機 | 帶著什麼 |
+| --- | --- | --- |
+| `ToolInputError` | 某個參數沒通過 client 自己的驗證，發生在任何 HTTP 請求之前 | 出問題的值，以及預期的形狀 |
+| `UpstreamError`，`.status` 有值 | Malcolm 回了一個 HTTP 錯誤 | 狀態碼，加上 URL 與狀態文字 |
+| `UpstreamError`，`.status is None` | 請求根本沒完成（DNS、TLS、connect、timeout） | 只有那個 status，其他什麼都沒有——見下 |
+
+實際觀察到的訊息：
+
+```
+ToolInputError:  invalid field name: '../../arkime/api/hunts' — expected a Malcolm
+                 field name such as 'source.ip' (letters, digits and _ . - @ [ ])
+UpstreamError:   status=404  message=Client error '404 Not Found' for url
+                 'https://malcolm.example/dashboards/api/saved_objects/search/00000000-…'
+UpstreamError:   status=None message=
+```
+
+最後那一筆，就是 [第一次呼叫失敗時](#第一次呼叫失敗時) 講的那個空錯誤訊息在函式庫這一側的樣子：`str(exc)` 是空字串。追下去發現它已經不在這個專案的程式碼裡，而是 `httpx.ConnectTimeout.__str__()`——對同一台主機，改用裸的 `httpx.AsyncClient` 呼叫也一樣是空的。要偵測主機連不上，就判斷 `exc.status is None`；訊息不會告訴你任何事。
+
+**流量上限是用等的，不是拋錯。**`MALCOLM_MAX_CONCURRENCY`（預設 8）和 `MALCOLM_MAX_REQUESTS_PER_MINUTE`（預設 600）同時也是建構子參數 `max_concurrency` 與 `max_requests_per_minute`。把 `max_requests_per_minute=2`，連續三次 `ping()` 的完成時間是：
+
+```
+request 1  t+0.0s
+request 2  t+0.0s
+request 3  t+60.1s
+```
+
+DEBUG log 上會出現 `[malcolm] rate cap reached, holding https://…/mapi/ping for 60.0s`。沒有對應的 rate-limit exception：超過上限之後，一次呼叫跟一次很慢的呼叫分不出來，所以每次呼叫的 timeout 只要設得比這個窗短，就會打在其實只是在排隊的請求上。60 秒這個窗本身是模組常數（`_RATE_WINDOW_SECONDS`），不能設定——能設定的只有窗內的請求數。建構子參數給非正數會直接被擋下來：
+
+```
+ValueError: max_concurrency must be a positive integer, got 0
+ValueError: max_requests_per_minute must be a positive integer, got 0
+```
+
+環境變數這條路刻意寬鬆一些：值不存在、空白或解析不出來，都會記一筆 log 然後換成預設值（`client.py:68-82`），所以部署環境的 env 檔打錯字不會把限流器關掉。
+
+**函式庫使用者沒有任何受支援的 write 路徑。**七個 write primitive 全部是 private——`_write_event`、`_write_arkime_tags`、`_write_arkime_view`、`_write_arkime_shortcut`、`_write_arkime_hunt`、`_write_arkime_hunt_cancel`、`_write_upload_pcap`——每一個都只從 `tools/write/` 底下的唯一一處被呼叫，並且有 seam test 盯著。沒有任何 public method 能寫入告警、幫 session 加 tag、建立或取消 hunt、存下 view 或 shortcut、上傳 PCAP。直接呼叫底線開頭的 method 確實會把那個變更做出去，但會跳過 `tools/write/_common.py::run_write` 在每一次經過 MCP 層的 write 外圈寫下的稽核記錄；所以 write 屬於 tool 這一層，直接 import 這條路是一個讀取用的 client。
 
 ## Malcolm Filter 語法
 
@@ -405,10 +641,20 @@ malcolm_field_values(field="event.dataset")
 malcolm_field_profile(field="zeek.ssl.server_name")
 
 # 要寫 Arkime expression 之前，先到 Arkime 自己的字彙裡查。
-# 回傳長這樣：「ip.src | srcIp | ip | general」——前者放進 expression，
-# 後者用在工具要求 db 欄位的地方。
+# 回來的每一行是「exp | db | type | group」，例如
+# 「ip.src | srcIp | ip | general」。
 arkime_field_search(keyword="src")
 ```
+
+哪個參數要哪一欄，是逐個參數決定的，不是逐個工具。在 Malcolm v26.07.1 上實測：
+
+- **`exp`**（`ip.src`、`port.dst`、`protocols`）——每一個 `expression` 參數，加上 `arkime_unique`、`arkime_multiunique`、`arkime_spigraphhierarchy` 的欄位清單。這三個直接拒收 db 名稱：`srcIp,dstIp` 從 multiunique 拿到的是 HTTP 200 但內容為「Unknown expression srcIp」，從 spigraphhierarchy 拿到的是 HTTP 403 配同樣的內容。
+- **`db`**（`srcIp`、`dstPort`、`node`）——`arkime_connections` 的 `src_field` 和 `dst_field`，就這樣，沒有別的地方。在那裡 `srcIp`/`dstIp` 回了一張 10 個節點的圖；`ip.src`/`dstIp` 回 HTTP 403，`srcIp`/`port.dst` 回 HTTP 500。
+- **儲存路徑**——`arkime_spigraph` 的 `field` 和 `arkime_spiview` 的 `spi` 吃的是這個。這套部署的 4,051 個欄位裡有 4,034 個，它跟 db 那一欄是同一個字串；另外十七個印出來的是 camelCase 的 db 別名、實際存放用的卻是點分名稱（`srcIp` 是 `source.ip`，`dstPort` 是 `destination.port`，`totBytes` 是 `network.bytes`），而這兩個參數要的是點分的那個。
+
+凡是吃 exp 那一欄的地方，也都接受點分的儲存路徑：`destination.port` 回的不重複行數跟 `port.dst` 一樣是 10,000 行，而 `dstPort` 一行都不回。它是唯一一個在每條路上都答得出來的寫法。
+
+上面引的那些 HTTP 回應是 Arkime 自己答的，走這些工具你不會看到：server 現在認得出 exp 參數上收到 db 名，會在請求送出前就擋下來，並在訊息裡指出對應的那一個——`'srcIp' is an Arkime db name; this parameter takes expression names … Did you mean 'ip.src'?`。之所以還引它們，是因為那正是這道防護存在的理由。
 
 ### 建立告警（alerting class 已開）
 
@@ -451,6 +697,8 @@ arkime_create_hunt(
 | `MALCOLM_PASSWORD` | `admin` | Basic auth 密碼 |
 | `MALCOLM_SSL_VERIFY` | `true` | 是否驗證 TLS 憑證。`true`/`false`，或填 CA-bundle 路徑（自簽 Malcolm 請填路徑） |
 | `MALCOLM_TIMEOUT` | `30` | HTTP 請求逾時（秒） |
+| `MALCOLM_MAX_CONCURRENCY` | `8` | 同時對上游發出的請求數 |
+| `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | 每個滾動 60 秒窗內允許的上游請求數；超過上限的請求是被壓著等，不是被拒絕 |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | 開啟 alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | 開啟 session 加 tag（只加不減） |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | 開啟 Arkime hunt 建立 + 狀態查詢 |
@@ -468,7 +716,7 @@ arkime_create_hunt(
 ```bash
 MALCOLM_URL=https://malcolm.example \
 MALCOLM_USERNAME=... MALCOLM_PASSWORD=... \
-PARITY_TIME_FROM=<epoch 秒> PARITY_TIME_TO=<epoch 秒> \
+PARITY_TIME_FROM=<epoch-seconds> PARITY_TIME_TO=<epoch-seconds> \
 uv run --with mcp python scripts/api_parity_check.py
 ```
 
@@ -526,7 +774,7 @@ uv run --with mcp python scripts/api_parity_check.py
 | `/arkime/api/view`、`/arkime/api/shortcut` | POST | `arkime_create_view`、`arkime_create_shortcut`（write） |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |
 
-這些端點路徑和 body 結構是對 Malcolm `26.06.1` 和 Arkime `v6.5.0` 核對過的。兩者版本之間都會漂移，所以若某個 write 工具回傳非預期錯誤，拿你自己的版本重新核對。
+這些端點路徑和 body 結構是對 Malcolm `26.07.1` 和 Arkime `6.6.0` 核對過的。兩者版本之間都會漂移，所以若某個 write 工具回傳非預期錯誤，拿你自己的版本重新核對。
 
 ## 不做的事
 

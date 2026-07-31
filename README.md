@@ -207,19 +207,55 @@ Every write attempt emits one line of JSON, on success and on failure:
 
 You don't write any code to use this. An MCP client (Claude Code, Claude Desktop, Cursor, …) launches the server as a subprocess and talks to it over stdio; your job is to tell the client how to launch it and which credentials to inject.
 
+Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14, Python 3.11.14 and 3.14.6) against a live Malcolm v26.07.1, and the error text is verbatim. Where something was reasoned from source rather than executed, or was left untested (x86_64 and macOS hosts, GUI MCP clients, four of the five write classes), it says so at that point.
+
 ### 1. Install
 
+**PyPI currently carries an older build than this repository.** The published `mcp-server-malcolm` 0.9.0 was cut from an earlier commit; this tree's `pyproject.toml` also says `0.9.0`, so the version number gives you no signal that the two differ. `pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the published release, not the code documented here. Until the next release, install from source to get this tree.
+
 ```bash
-pip install mcp-server-malcolm
+pip install mcp-server-malcolm      # published release
 ```
 
-Or from source:
+From a checkout:
 
 ```bash
 git clone https://github.com/nagameTW/mcp-server-malcolm.git
 cd mcp-server-malcolm
 pip install -e .
 ```
+
+Or build a wheel and install it into a clean virtualenv, which is the path everything below was verified through:
+
+```bash
+$ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+
+$ python3 -m venv /tmp/mcp-malcolm-deploy/venv
+$ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+```
+
+That pulls 32 packages, most of them from `mcp>=2,<3` (resolved to `mcp 2.0.0`). The wheel itself is `py3-none-any`, pure Python; the compiled dependencies (`cryptography`, `pydantic-core`, `rpds-py`, `cffi`) all installed from prebuilt `manylinux_*_aarch64` wheels here, nothing compiled from source. PyPI publishes the same wheels for x86_64 and macOS, but no install was run on either, so treat those as unverified.
+
+To run this branch without installing it anywhere permanent, point `uvx` or `pipx` at the checkout:
+
+```bash
+uvx --from /path/to/mcp-server-malcolm mcp-server-malcolm
+pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
+```
+
+Check the install by starting the server with stdin closed. It prints its write-class banner, reaches EOF, and exits 0:
+
+```bash
+$ timeout 3 mcp-server-malcolm < /dev/null
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
+$ echo $?
+0
+```
+
+Nothing has to be configured for the process to start. Connection settings are read at startup but not used until a tool calls Malcolm, so a wrong URL or password surfaces as a failing tool call, not a failed launch.
 
 ### 2. Register it with your client
 
@@ -234,7 +270,28 @@ claude mcp add malcolm \
   -- mcp-server-malcolm
 ```
 
-Everything after `--` is the launch command; each `-e` is an environment variable injected into it. Pick where the entry is stored with `-s`:
+Everything after `--` is the launch command; each `-e` is an environment variable injected into it. `claude mcp add --help` gives the signature as `claude mcp add [options] <name> <commandOrUrl> [args...]`, with `-e, --env <env...>` and `-s, --scope <scope>`.
+
+Registering, health-checking and removing a server, run end to end:
+
+```bash
+$ claude mcp add malcolm-deploy-test -s local \
+    -e MALCOLM_URL=https://malcolm.example \
+    -e MALCOLM_USERNAME=analyst \
+    -e MALCOLM_PASSWORD='your-password' \
+    -e MALCOLM_SSL_VERIFY=false \
+    -- /tmp/mcp-malcolm-deploy/venv/bin/mcp-server-malcolm
+Added stdio MCP server malcolm-deploy-test with command: … to local config
+
+$ claude mcp list
+Checking MCP server health…
+malcolm-deploy-test: /tmp/mcp-malcolm-deploy/venv/bin/mcp-server-malcolm  - ✔ Connected
+
+$ claude mcp remove malcolm-deploy-test -s local
+Removed MCP server malcolm-deploy-test from local config
+```
+
+Pick where the entry is stored with `-s`:
 
 | Scope | Stored in | Use for |
 | --- | --- | --- |
@@ -242,7 +299,7 @@ Everything after `--` is the launch command; each `-e` is an environment variabl
 | `user` | your own settings, every project | a Malcolm you use everywhere |
 | `project` | `.mcp.json` at the repo root, **committed to git** | sharing with a team — never put a password here |
 
-Confirm it came up with `claude mcp list`, which health-checks each server, and `claude mcp get malcolm` for the details.
+`claude mcp get malcolm` prints the registered command and environment. Note that it prints `MALCOLM_PASSWORD` in cleartext, unmasked, so don't run it where the terminal is being recorded or shared.
 
 For a `project`-scope entry, keep the secret in each person's shell rather than in the file:
 
@@ -275,20 +332,70 @@ For a `project`-scope entry, keep the secret in each person's shell rather than 
 }
 ```
 
-Claude Desktop reads `claude_desktop_config.json`; other clients vary — check their docs for the path.
+That exact block was verified by driving its `command` and `env` fields through the MCP Python SDK's own `stdio_client` and `ClientSession`, which is what a generic client does with them. No GUI client was launched here: Claude Desktop reads `claude_desktop_config.json` and other clients vary, per their own docs, which this project has not independently confirmed.
 
 If `mcp-server-malcolm` isn't on the `PATH` your client sees (common with a virtualenv), give the absolute path to the executable instead: `/path/to/.venv/bin/mcp-server-malcolm`.
 
+**What the client sees on connection.** With no write flags set, an `initialize` plus `tools/list` returns:
+
+```
+protocol_version: 2025-11-25
+server_info:      name='mcp-server-malcolm' version='0.9.0'
+capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
+instructions:     3624 characters
+tools:            51
+prompts:          1  — hunt_workflow
+resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
+```
+
+The Arkime resource served 724,261 characters covering 4,051 expression fields on this deployment. One caveat for anyone scripting against the SDK: `mcp` 2.x uses snake_case attributes (`protocol_version`, `server_info`, `is_error`), not the camelCase of the wire protocol and the 1.x SDK. A script written against `serverInfo`/`isError` raises `AttributeError`.
+
 ### 3. Connection settings
 
-| Variable | Notes |
-| --- | --- |
-| `MALCOLM_URL` | Malcolm base URL, e.g. `https://malcolm.example` |
-| `MALCOLM_USERNAME` / `MALCOLM_PASSWORD` | Malcolm basic-auth credentials |
-| `MALCOLM_SSL_VERIFY` | `true` (default), `false`, or a path to a CA bundle |
-| `MALCOLM_TIMEOUT` | HTTP timeout in seconds, default `30` |
+Defaults below are what `MalcolmClient.from_env` reads (`client.py:294-304`).
+
+| Variable | Default | Notes |
+| --- | --- | --- |
+| `MALCOLM_URL` | `https://localhost` | Malcolm base URL, e.g. `https://malcolm.example` |
+| `MALCOLM_USERNAME` | `admin` | Basic-auth user |
+| `MALCOLM_PASSWORD` | `admin` | Basic-auth password |
+| `MALCOLM_SSL_VERIFY` | `true` | `true`, `false`, or a path to a CA bundle (anything that isn't `true`/`false` is passed to httpx as a CA path) |
+| `MALCOLM_TIMEOUT` | `30` | HTTP timeout, seconds |
+| `MALCOLM_MAX_CONCURRENCY` | `8` | Simultaneous upstream requests |
+| `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | Upstream request-rate cap |
+
+The `https://localhost` and `true` defaults were confirmed by running with the variable unset and observing the request that came out. The `admin`/`admin` credential defaults come from reading `client.py:296-297`: unsetting all three connection variables produced a 401 against `https://localhost`, which proves the URL default and proves the credentials are wrong for that lab, not that they are literally `admin`. The 30-second timeout is likewise a source read — an attempt to time it against a non-routable address returned in about 5 seconds, because the OS-level connect failure fired first, so the 30-second path was never exercised.
 
 On TLS: verification is on by default, and Malcolm ships self-signed certs. Pointing `MALCOLM_SSL_VERIFY` at Malcolm's CA bundle only works if Malcolm's server certificate carries a `subjectAltName` matching the hostname you connect to — the certificate generated by Malcolm's own setup has no SAN extension, so verification fails against it even with the right CA. For a remote Malcolm, install a certificate with a correct SAN. `MALCOLM_SSL_VERIFY="false"` disables verification entirely and is only acceptable against an isolated localhost lab; over a network it would send credentials and query results down an unauthenticated channel.
+
+#### When the first call fails
+
+Three failures account for nearly every first run. All three were reproduced with `malcolm_ping`; the text is verbatim.
+
+**Self-signed certificate with `MALCOLM_SSL_VERIFY` unset.** This is the most likely one, because the default is verify-on and a stock Malcolm's certificate does not pass verification:
+
+```
+Error executing tool malcolm_ping: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1082)
+```
+
+The `_ssl.c` line number tracks your interpreter, not this server: the same failure reads `_ssl.c:1016` on Python 3.11, which is what the Docker image and the CI floor both run.
+
+The message never names `MALCOLM_SSL_VERIFY`, so it is easy to read as a broken install. Fix it by installing a certificate with a correct SAN and pointing `MALCOLM_SSL_VERIFY` at its CA bundle, or, on an isolated lab only, by setting `MALCOLM_SSL_VERIFY=false`.
+
+**Wrong password.** Clear and actionable — the status and the URL are both in the message:
+
+```
+Error executing tool malcolm_ping: Client error '401 Unauthorized' for url 'https://malcolm.example/mapi/ping'
+For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
+```
+
+**Unreachable host** (typo'd `MALCOLM_URL`, firewalled port, wrong scheme). The error body is **empty**:
+
+```
+Error executing tool malcolm_ping: 
+```
+
+There is nothing after the colon. The connect-level exception raised by httpx has an empty `str()` in this environment, so there is nothing for the error to report beyond the failure itself (`client.py:233-234`). If a tool fails with a blank message, check the host and port before anything else.
 
 ### 4. Enabling write tools (optional)
 
@@ -299,63 +406,192 @@ All five write classes are off unless you set their flag, so the default install
 -e MALCOLM_MCP_AUDIT_FILE=/var/log/malcolm-mcp-audit.jsonl
 ```
 
-The full flag list is in [Configuration](#configuration).
+A disabled class is not registered rather than hidden, so the change shows up in `tools/list`. Counting the tools an MCP session sees, with nothing else changed:
+
+```
+env unmodified                          tool count: 51
+MALCOLM_MCP_ENABLE_ARKIME_TAGS=true     tool count: 52   (new: arkime_add_tags)
+```
+
+Only `arkime_tags` was toggled and counted this way. The other four classes route through the identical `if cfg.<flag>:` gate in `tools/__init__.py::register_write_tools`, so the same behaviour follows from the code, but it was not separately measured.
+
+A flag counts as on only for the exact string `true`, case-insensitive (`config.py:15`); anything else, including `1` and `yes`, leaves the class off. The startup banner is the check.
+
+The full flag list is in [Configuration reference](#configuration-reference).
 
 ### Running it by hand
 
-Only useful for troubleshooting. A stdio MCP server has no interactive interface: started from a terminal it sits silently waiting for JSON-RPC on stdin, which is what a working server looks like. It does print the enabled write classes to stderr on startup, so this confirms the flags took effect:
+Only useful for troubleshooting. A stdio MCP server has no interactive interface: started from a terminal it sits silently waiting for JSON-RPC on stdin, which is what a working server looks like. It does print the enabled write classes to stderr on startup, so this confirms the flags took effect. Both entry points behave identically:
 
 ```bash
-mcp-server-malcolm          # or: python -m mcp_server_malcolm
+$ mcp-server-malcolm
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
+
+$ python -m mcp_server_malcolm
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 ```
+
+### Running it in a container
+
+The repository ships a `Dockerfile` that installs the package from the build context and runs it as a non-root user:
+
+```bash
+$ docker build -t mcp-server-malcolm:local -f Dockerfile .
+$ docker run --rm --entrypoint id mcp-server-malcolm:local
+uid=10001(app) gid=10001(app) groups=10001(app)
+```
+
+The build took 23.7s cold and produced a 205MB image on `python:3.11-slim` (Debian 13 trixie). It is single-architecture: a plain `docker build` on this aarch64 host produced `linux/arm64` only, which will not run on an x86_64 host without emulation. A multi-architecture image would need `docker buildx build --platform linux/amd64,linux/arm64`; that was not attempted, and this Dockerfile does not produce one.
+
+Point the client at `docker run -i --rm …` as the launch command:
+
+```bash
+docker run -i --rm --network host \
+  -e MALCOLM_URL -e MALCOLM_USERNAME -e MALCOLM_PASSWORD -e MALCOLM_SSL_VERIFY \
+  mcp-server-malcolm:local
+```
+
+`-e VAR` with no `=value` inherits the value from the invoking shell, so the password is never part of the command string and never lands in `ps` output or shell history. It is still readable afterwards through `docker inspect`, as below.
+
+How the container reaches Malcolm decides whether anything works at all:
+
+| Reaching Malcolm | Flags | Result |
+| --- | --- | --- |
+| Host loopback, URL unchanged | `--network host` | Works. `https://localhost` inside the container is the host's loopback. |
+| Bridge network | none | Fails: `All connection attempts failed`. `localhost` is the container itself. The underlying errno 111 stays inside the exception chain and never reaches the client. |
+| Bridge network | `--add-host=host.docker.internal:host-gateway`, `MALCOLM_URL=https://host.docker.internal` | Works. `host.docker.internal` is not auto-registered on Linux the way it is on Docker Desktop; the explicit `--add-host` is what makes it resolve (Docker 20.10+; tested on 28.5.1). |
+
+Both working modes completed a full MCP session against the live Malcolm: `initialize`, `tools/list` returning 51 tools, and two tool calls (`malcolm_ping` → `pong`, `count` → 202,531 `conn` sessions). `MALCOLM_SSL_VERIFY` at its `true` default failed inside the container for the same self-signed-certificate reason it fails outside one.
+
+On credentials: `docker inspect <container> --format '{{json .Config.Env}}'` prints `MALCOLM_PASSWORD` in cleartext, and does so regardless of whether the value was passed as `-e VAR`, `-e VAR=value`, or `--env-file` — Docker stores the resolved environment in the container's metadata either way. Anyone with Docker daemon or socket access can read the Malcolm password back out for as long as the container object exists. There is no `MALCOLM_PASSWORD_FILE`-style secrets-file input; `client.py:297` reads the environment variable and nothing else. Keeping containers ephemeral (`--rm`, one per client session, which is the model a stdio server already implies) shortens the window without closing it.
+
+`MALCOLM_MCP_ENABLE_PCAP_UPLOAD` is the one feature that needs a bind mount, since `malcolm_upload_pcap` reads a file that must already sit inside `MALCOLM_MCP_UPLOAD_DIR`. The host directory mounted there has to be readable by uid 10001 inside the container. That requirement is read from `tools/write/pcap_upload.py`, not exercised — the write classes stayed off throughout this testing.
 
 ## Usage
 
 ### Python (direct import)
 
-Use `MalcolmClient` without the MCP layer:
+`MalcolmClient` is usable on its own, with no MCP client, no server process and no `mcp` transport in the loop. `mcp_server_malcolm`'s `__all__` is `["MalcolmClient", "__version__"]`, and that one class carries 62 public methods covering the entire read surface. Everything in this section was run against a live Malcolm v26.07.1 from a wheel built from this tree.
+
+Build a client either from the environment or from explicit arguments:
 
 ```python
 import asyncio
 from mcp_server_malcolm import MalcolmClient
 
 async def main():
-    client = MalcolmClient(
-        base_url="https://malcolm.example",
-        username="admin",
-        password="admin",
-    )
+    client = MalcolmClient.from_env()          # reads MALCOLM_URL, MALCOLM_USERNAME, …
+    # or:
+    # client = MalcolmClient(
+    #     base_url="https://malcolm.example",
+    #     username="analyst",
+    #     password="…",
+    #     ssl_verify=False,
+    # )
+    try:
+        # Malcolm filter dict
+        hits = await client.search(
+            filters={"event.dataset": "conn"},
+            limit=5,
+        )
 
-    # Search network traffic
-    results = await client.search(
-        filters={"event.dataset": "conn", "source.ip": "192.0.2.77"},
-        limit=10,
-    )
+        # Top values of a field, over one 24-hour window
+        agg = await client.aggregate(
+            fields="destination.port",
+            filters={"event.dataset": "conn"},
+            limit=5,
+            time_from="1714003200",
+            time_to="1714089600",
+        )
 
-    # Aggregate by protocol
-    agg = await client.aggregate(
-        fields="network.protocol",
-        filters={"network.direction": ["inbound", "outbound"]},
-    )
+        # Check a field name before trusting a query that returned nothing
+        ok = await client.resolve_field("http.useragent")
+        bad = await client.resolve_field("http.user_agent")
 
-    # Discover field names
-    fields = await client.search_fields(keyword="useragent")
-
-    # Get distinct values
-    datasets = await client.field_values(field="event.dataset")
-
-    # Look up a NetBox asset
-    asset = await client.netbox_get(
-        "api/ipam/ip-addresses/",
-        params={"address": "192.0.2.77"},
-    )
-
-    await client.close()
+        # Arkime expression syntax, epoch-second window
+        sessions = await client.arkime_sessions(
+            expression="protocols==dns",
+            limit=3,
+            time_from="1714003200",
+            time_to="1714089600",
+        )
+    finally:
+        await client.close()
 
 asyncio.run(main())
 ```
 
-Write primitives live behind the `_write_*` methods. Only the gated write tools reach them, not the direct-import path.
+What those calls actually returned:
+
+```
+search()     keys: ['filter', 'range', 'results']
+aggregate()  {'destination.port': {'buckets': [{'doc_count': 82147, 'key': 53},
+                                               {'doc_count': 31271, 'key': 80},
+                                               {'doc_count': 27911, 'key': 8080}, …]}}
+resolve_field('http.useragent')   {'exists': True,  'field': 'http.useragent', 'type': 'string'}
+resolve_field('http.user_agent')  {'exists': False, 'field': 'http.user_agent',
+                                   'suggestion': 'http.useragent', 'type': 'string'}
+arkime_sessions()  recordsTotal: 6030807  recordsFiltered: 310414
+                   first session id: 3@240425:240425-zT5pQlD2hY2Gwyzziep8Vg
+```
+
+`search()` returns `{"filter", "range", "results"}` on this Malcolm version, with the hits under `results` and **no** top-level `total` key. Read the payload you actually get rather than assuming a shape.
+
+**Closing the client is the caller's job.** `MalcolmClient` has `close()` but no `__aenter__`/`__aexit__`, so `async with MalcolmClient(...)` raises:
+
+```
+TypeError: 'mcp_server_malcolm.client.MalcolmClient' object does not support
+the asynchronous context manager protocol (missed __aexit__ method)
+```
+
+Use `try`/`finally` as above. Dropping the last reference without closing leaves a real open socket to Malcolm, reclaimed only when the garbage collector gets to it, and the warning is silent under normal interpreter settings — it appears only under `python -W always -X dev`:
+
+```
+ResourceWarning: unclosed <socket.socket fd=6, family=2, type=1, proto=6, …>
+```
+
+**Errors.** Three exceptions, all with `MalcolmToolError` as their base:
+
+```python
+from mcp_server_malcolm.errors import MalcolmToolError, ToolInputError, UpstreamError
+```
+
+| Raised | When | What it carries |
+| --- | --- | --- |
+| `ToolInputError` | An argument fails the client's own validation, before any HTTP request | The offending value and the expected shape |
+| `UpstreamError` with `.status` set | Malcolm answered with an HTTP error | Status code, plus the URL and status text |
+| `UpstreamError` with `.status is None` | The request never completed (DNS, TLS, connect, timeout) | The status, and nothing else — see below |
+
+Observed messages:
+
+```
+ToolInputError:  invalid field name: '../../arkime/api/hunts' — expected a Malcolm
+                 field name such as 'source.ip' (letters, digits and _ . - @ [ ])
+UpstreamError:   status=404  message=Client error '404 Not Found' for url
+                 'https://malcolm.example/dashboards/api/saved_objects/search/00000000-…'
+UpstreamError:   status=None message=
+```
+
+That last one is the library-side view of the empty error message described under [When the first call fails](#when-the-first-call-fails): `str(exc)` is the empty string. It was traced past this project's code to `httpx.ConnectTimeout.__str__()`, which is empty for the same host when called through a bare `httpx.AsyncClient`. Branch on `exc.status is None` to detect an unreachable host; the message will not tell you anything.
+
+**Rate limiting holds, it does not raise.** `MALCOLM_MAX_CONCURRENCY` (default 8) and `MALCOLM_MAX_REQUESTS_PER_MINUTE` (default 600) also exist as the constructor arguments `max_concurrency` and `max_requests_per_minute`. With `max_requests_per_minute=2`, three sequential `ping()` calls completed at:
+
+```
+request 1  t+0.0s
+request 2  t+0.0s
+request 3  t+60.1s
+```
+
+with `[malcolm] rate cap reached, holding https://…/mapi/ping for 60.0s` on the DEBUG log. There is no rate-limit exception: past the cap, a call is indistinguishable from a slow one, so a per-call timeout tighter than the window will fire on what is really a queued request. The 60-second window itself is a module constant (`_RATE_WINDOW_SECONDS`), not configurable — only the request count inside it is. A non-positive constructor argument is rejected outright:
+
+```
+ValueError: max_concurrency must be a positive integer, got 0
+ValueError: max_requests_per_minute must be a positive integer, got 0
+```
+
+The environment path is deliberately more forgiving: an absent, blank or unparseable value is logged and replaced with the default (`client.py:68-82`), so a typo in a deployment's env file cannot switch the limiter off.
+
+**There is no supported write path for a library user.** All seven write primitives are private — `_write_event`, `_write_arkime_tags`, `_write_arkime_view`, `_write_arkime_shortcut`, `_write_arkime_hunt`, `_write_arkime_hunt_cancel`, `_write_upload_pcap` — and each is called from exactly one place under `tools/write/`, which a seam test enforces. No public method indexes an alert, tags a session, creates or cancels a hunt, saves a view or shortcut, or uploads a PCAP. Calling an underscore method directly performs the mutation while skipping the audit record that `tools/write/_common.py::run_write` writes around every write reached through the MCP layer, so writes belong to the tool layer, and the direct-import path is a read client.
 
 ## Malcolm filter syntax
 
@@ -416,10 +652,20 @@ malcolm_field_values(field="event.dataset")
 malcolm_field_profile(field="zeek.ssl.server_name")
 
 # Before writing an Arkime expression, look the name up in Arkime's own
-# vocabulary. This returns "ip.src | srcIp | ip | general": the first name
-# goes in an expression, the second wherever a tool asks for a db field.
+# vocabulary. Lines come back as "exp | db | type | group", e.g.
+# "ip.src | srcIp | ip | general".
 arkime_field_search(keyword="src")
 ```
+
+Which of those columns a parameter wants is decided per parameter, not per tool. Measured on Malcolm v26.07.1:
+
+- **`exp`** (`ip.src`, `port.dst`, `protocols`) — every `expression` argument, plus the field lists of `arkime_unique`, `arkime_multiunique` and `arkime_spigraphhierarchy`. Those three reject a db name outright: `srcIp,dstIp` returned the body "Unknown expression srcIp" under HTTP 200 from multiunique and HTTP 403 from spigraphhierarchy.
+- **`db`** (`srcIp`, `dstPort`, `node`) — `arkime_connections`' `src_field` and `dst_field`, and nothing else. `srcIp`/`dstIp` returned a 10-node graph there; `ip.src`/`dstIp` returned HTTP 403 and `srcIp`/`port.dst` HTTP 500.
+- **The storage path** — what `arkime_spigraph`'s `field` and `arkime_spiview`'s `spi` take. It is the same string as the db column for 4,034 of this deployment's 4,051 fields; the other seventeen print a camelCase db alias and store under a dotted name (`srcIp` is `source.ip`, `dstPort` is `destination.port`, `totBytes` is `network.bytes`), and those two parameters want the dotted one.
+
+A dotted storage path is also accepted wherever the exp column is: `destination.port` returned the same 10,000 unique lines as `port.dst`, while `dstPort` returned none. It is the one spelling that answers on every route.
+
+The HTTP responses quoted above are what Arkime itself answers. You will not see them through these tools: the server now recognises a db name on an exp parameter and refuses it before the request leaves, with a message naming the counterpart — `'srcIp' is an Arkime db name; this parameter takes expression names … Did you mean 'ip.src'?`. They are quoted because they are why the guard exists.
 
 ### Create an alert (alerting class enabled)
 
@@ -462,6 +708,8 @@ arkime_create_hunt(
 | `MALCOLM_PASSWORD` | `admin` | Basic auth password |
 | `MALCOLM_SSL_VERIFY` | `true` | Verify TLS certs. `true`/`false`, or a CA-bundle path (use the path for self-signed Malcolm) |
 | `MALCOLM_TIMEOUT` | `30` | HTTP request timeout (seconds) |
+| `MALCOLM_MAX_CONCURRENCY` | `8` | Simultaneous upstream requests |
+| `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | Upstream requests allowed per rolling 60s window; past the cap a request is held, not rejected |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | Enable the alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | Enable additive session tagging |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | Enable Arkime hunt create + status |
@@ -540,7 +788,7 @@ so adding a tool without a parity check fails the run.
 | `/extracted-files/<name>` | GET | `malcolm_extract_file` |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap` (write) |
 
-These endpoint paths and body shapes match Malcolm `26.06.1` and Arkime `v6.5.0`. Both drift between releases, so re-check against your own version if a write tool returns an unexpected error.
+These endpoint paths and body shapes match Malcolm `26.07.1` and Arkime `6.6.0`. Both drift between releases, so re-check against your own version if a write tool returns an unexpected error.
 
 ## Non-goals
 
