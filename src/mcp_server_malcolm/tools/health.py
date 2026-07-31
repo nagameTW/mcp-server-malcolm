@@ -66,12 +66,17 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             total = len(ready_data)
             result["summary"] = f"{ready_count}/{total} services ready"
 
-        if not result:
+        if len(errors) == 2:
             # Both probes failed, so there is no status to report -- returning
             # only an "errors" list would reach the caller as a successful call.
+            # Keyed off the failures, not off empty data: a probe that answers
+            # {} succeeded, and calling that a failure would invert the rule
+            # this module follows everywhere else.
             raise UpstreamError("; ".join(errors))
         if errors:
             result["errors"] = errors
+        if not result:
+            return "Malcolm answered both probes but reported no version or service data."
 
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 

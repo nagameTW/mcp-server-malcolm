@@ -45,6 +45,12 @@ def test_upstream_error_status_is_none_when_no_response_arrived() -> None:
         ("POST /auth?password=hunter2&doctype=conn", "hunter2", "doctype=conn"),
         ("/x?api_key=abc123&q=1", "abc123", "q=1"),
         ("/x?TOKEN=abc123", "abc123", "/x?"),
+        # The secret word behind an underscore: "\b" does not fire between "_"
+        # and "t", so these leaked until the key run was made part of the match.
+        ("/cb?access_token=SECRET123&next=/", "SECRET123", "next=/"),
+        ("/cb?refresh_token=SECRET123", "SECRET123", "refresh_token"),
+        ("/cb?id_token=SECRET123&state=x", "SECRET123", "state=x"),
+        ("/x?X-Api-Key=SECRET123", "SECRET123", "/x?"),
     ],
 )
 def test_redact_removes_the_secret_and_keeps_the_diagnostics(

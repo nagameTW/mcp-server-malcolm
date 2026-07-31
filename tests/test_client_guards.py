@@ -8,6 +8,7 @@ caller as an UpstreamError with its text redacted.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -397,6 +398,39 @@ async def test_rate_limiter_blocks_the_request_past_the_cap(monkeypatch: pytest.
     assert len(slept) == 1
 
 
+async def test_rate_limiter_serializes_concurrent_callers_without_deadlocking(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The two tests above only ever drive _rate_limit one call at a time
+    under a faked clock, so nothing has exercised the lock under real
+    contention: _rate_limit sleeps *while holding* self._rate_lock (by
+    design -- see its docstring), and nothing proves that holding a lock
+    across an `await asyncio.sleep(...)` doesn't wedge every other waiter
+    forever, or that the cap survives several coroutines racing the
+    check-then-append.
+
+    Real asyncio.gather, a real lock, real asyncio.sleep -- only
+    _RATE_WINDOW_SECONDS is shrunk (60s -> 0.2s) so the test finishes in well
+    under a second; that constant has nothing to do with the locking logic
+    under test, only with how long a real window takes to roll over.
+    """
+    monkeypatch.setattr(client_mod, "_RATE_WINDOW_SECONDS", 0.2)
+    c = MalcolmClient(base_url="https://malcolm.example", max_requests_per_minute=2)
+    request = httpx.Request("GET", "https://malcolm.example/mapi/ping")
+
+    start = client_mod.time.monotonic()
+    # 6 callers against a cap of 2 per window: at least two callers must wait
+    # out a full window, so this cannot finish instantly. wait_for is the
+    # deadlock backstop -- a wedged lock hangs forever without it.
+    results = await asyncio.wait_for(
+        asyncio.gather(*(c._rate_limit(request) for _ in range(6))), timeout=5.0
+    )
+    elapsed = client_mod.time.monotonic() - start
+
+    assert len(results) == 6, "every caller must complete -- none silently dropped"
+    assert elapsed >= 0.15, f"6 callers over a cap of 2 finished in {elapsed}s -- not serialized"
+
+
 async def test_rate_limit_hook_is_registered_on_the_shared_client():
     c = MalcolmClient(base_url="https://malcolm.example")
     http = await c._client()
@@ -442,6 +476,23 @@ def test_a_bound_that_would_disable_the_limiter_falls_back_and_says_so(
         assert all(repr(raw) in message for message in warned), warned
     else:
         assert warned == []
+
+
+def test_a_non_ascii_digit_env_value_falls_back_instead_of_crashing_from_env(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """ "①".isdigit() is True but int("①") raises -- and this path (unlike
+    parse_int_list's) has no try/except around the conversion, so that
+    ValueError used to escape straight out of from_env() at startup, exactly
+    what its docstring says must never happen. A typo landing in a
+    deployment's env file must degrade to the default bound, not crash."""
+    monkeypatch.setenv("MALCOLM_MAX_CONCURRENCY", "①")
+    with caplog.at_level(logging.WARNING, logger=client_mod.logger.name):
+        c = MalcolmClient.from_env()  # must not raise
+
+    assert c._max_concurrency == client_mod._DEFAULT_MAX_CONCURRENCY
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("①" in message for message in warned), warned
 
 
 @pytest.mark.parametrize(

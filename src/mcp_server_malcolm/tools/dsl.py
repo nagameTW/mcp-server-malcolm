@@ -22,8 +22,11 @@ if TYPE_CHECKING:
 
     from mcp_server_malcolm.client import MalcolmClient
 
-# index/pattern lands in the URL path — no path metachars (/, ?, ..).
-_INDEX_RE = re.compile(r"^[A-Za-z0-9_.*-]+$")
+# index/pattern lands in the URL path — no path metachars (/, ?, ..). The comma
+# is admitted because OpenSearch's multi-index form ("idx1,idx2") is ordinary
+# here, and MalcolmClient's own guard accepts it: a narrower rule at this layer
+# would make that form unreachable through these four tools alone.
+_INDEX_RE = re.compile(r"^[A-Za-z0-9_.*,-]+$")
 
 # Shared: every DSL tool here reads from the OpenSearch backend, never mutates.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}

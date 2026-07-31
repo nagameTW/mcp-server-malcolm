@@ -8,9 +8,15 @@ question instead. One parser means one decision about what is acceptable.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from mcp_server_malcolm.errors import ToolInputError
+
+# ASCII digits only. str.isdigit() is True for characters int() then refuses --
+# "①".isdigit() is True, int("①") raises -- which would turn a caller's typo
+# into a raw ValueError instead of the message below.
+_DIGITS = re.compile(r"[0-9]+")
 
 
 def parse_json_object(raw: str, arg: str, example: str) -> dict[str, Any] | None:
@@ -69,7 +75,7 @@ def parse_int_list(raw: str, arg: str, example: str) -> list[int]:
     for token in (t.strip() for t in raw.split(",")):
         if not token:
             continue
-        if not token.isdigit():
+        if not _DIGITS.fullmatch(token):
             raise ToolInputError(
                 f"{arg} takes comma-separated whole numbers, e.g. {example}; "
                 f"received {raw!r}, in which {token!r} is not a number."

@@ -60,6 +60,9 @@ def _parse_ssl_verify(raw: str) -> bool | str:
     return val  # treat as a CA-bundle path for httpx verify=
 
 
+_DIGITS = re.compile(r"[0-9]+")
+
+
 def _positive_int_env(name: str, default: int) -> int:
     """Read a positive integer setting, falling back on anything unusable.
 
@@ -67,7 +70,10 @@ def _positive_int_env(name: str, default: int) -> int:
     a typo in a deployment's env file would then silently remove the limiter.
     """
     raw = os.environ.get(name, "").strip()
-    if raw.isdigit() and int(raw) > 0:
+    # _DIGITS, not str.isdigit(): the latter is True for characters int() then
+    # refuses ("①"), which would crash from_env() on a typo in a deployment's
+    # env file -- the exact failure this fallback exists to prevent.
+    if _DIGITS.fullmatch(raw) and int(raw) > 0:
         return int(raw)
     if raw:
         logger.warning("[malcolm] ignoring %s=%r; using %d", name, raw, default)
@@ -125,7 +131,9 @@ _DASHBOARD_ID_SHAPE = "a saved-object id such as 'd2dd0180-06b1-11ec-8c6b-353266
 _NETBOX_PATH_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9/_-]*")
 _NETBOX_PATH_SHAPE = "a NetBox REST path such as 'api/ipam/ip-addresses/'"
 
-# A body hash is hex: md5 (32) or sha256 (64) as Arkime stores them.
+# A body hash is hex. The window spans the digests Arkime stores (md5 32,
+# sha1 40, sha256 64) with room either side rather than pinning those three
+# exactly, so a deployment hashing with something else still resolves.
 _HASH_RE = re.compile(r"[A-Fa-f0-9]{16,128}")
 _HASH_SHAPE = "an md5 or sha256 hex digest"
 

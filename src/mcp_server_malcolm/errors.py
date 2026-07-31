@@ -67,8 +67,14 @@ class UpstreamError(MalcolmToolError):
 # request URL, and MALCOLM_URL is allowed to embed "user:pass@". Query strings:
 # a secret can land there via a caller-supplied path or an upstream redirect.
 _URL_USERINFO = re.compile(r"(?<=://)[^/\s@]+@")
+# The secret word may sit anywhere inside the key, so the surrounding [\w.-]*
+# runs are part of the match. An earlier \b in front of the word silently
+# exempted every underscore-prefixed name -- \b needs a non-word character, and
+# "_" is one of the word characters -- so access_token=, refresh_token= and
+# id_token= all passed through unredacted. Over-matching a harmless key like
+# "authority" is the safe direction to err in.
 _SECRET_PARAM = re.compile(
-    r"\b(password|passwd|pwd|token|api_?key|secret|auth)=[^&\s\"']+",
+    r"([\w.-]*(?:password|passwd|pwd|token|api[_-]?key|secret|auth)[\w.-]*)=[^&\s\"']+",
     re.IGNORECASE,
 )
 
