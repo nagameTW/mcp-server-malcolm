@@ -525,3 +525,47 @@ def test_from_env_defaults_are_generous(monkeypatch: pytest.MonkeyPatch):
     c = MalcolmClient.from_env()
     assert c._max_concurrency >= 8
     assert c._max_requests_per_minute >= 600
+
+
+# -- An upstream failure that carries no text of its own ----------------------
+
+
+async def test_a_connect_timeout_still_says_what_failed_and_where():
+    """httpx raises ConnectTimeout with an EMPTY message.
+
+    The underlying anyio timeout carries no text, so passing str(exc) straight
+    through hands the caller "Error executing tool malcolm_ping: " with nothing
+    after the colon -- the least useful message possible, on the failure a
+    first run hits most often after a certificate problem. Connection *refused*
+    is fine ("All connection attempts failed"); only the timeout is blank.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("", request=request)
+
+    c = MalcolmClient(base_url=_BASE)
+    c._http = httpx.AsyncClient(base_url=_BASE, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(UpstreamError) as err:
+        await c.ping()
+
+    msg = str(err.value)
+    assert msg, "an empty message is the defect this test exists for"
+    assert "ConnectTimeout" in msg
+    assert "malcolm.example" in msg, "the host is what makes it actionable"
+    assert "hunter2" not in msg, "userinfo must not survive into the message"
+    assert err.value.status is None
+
+
+async def test_an_upstream_failure_that_has_text_keeps_its_own():
+    """The fallback must not overwrite a message httpx did provide."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("All connection attempts failed", request=request)
+
+    c = MalcolmClient(base_url=_BASE)
+    c._http = httpx.AsyncClient(base_url=_BASE, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(UpstreamError) as err:
+        await c.ping()
+    assert str(err.value) == "All connection attempts failed"

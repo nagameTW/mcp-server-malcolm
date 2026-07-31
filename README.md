@@ -389,13 +389,13 @@ Error executing tool malcolm_ping: Client error '401 Unauthorized' for url 'http
 For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
 ```
 
-**Unreachable host** (typo'd `MALCOLM_URL`, firewalled port, wrong scheme). The error body is **empty**:
+**Unreachable host** (typo'd `MALCOLM_URL`, firewalled port, wrong scheme):
 
 ```
-Error executing tool malcolm_ping: 
+Error executing tool malcolm_ping: ConnectTimeout for https://192.0.2.99:9999/mapi/ping
 ```
 
-There is nothing after the colon. The connect-level exception raised by httpx has an empty `str()` in this environment, so there is nothing for the error to report beyond the failure itself (`client.py:233-234`). If a tool fails with a blank message, check the host and port before anything else.
+The two unreachable cases read differently. A port that actively refuses the connection answers `All connection attempts failed`; a host that simply never replies raises `ConnectTimeout`, whose `str()` httpx leaves empty — up to 1.0.1 that reached the caller as a bare `Error executing tool malcolm_ping: ` with nothing after the colon. The exception name and target are filled in now. Credentials embedded in `MALCOLM_URL` are stripped from that URL before it is shown.
 
 ### 4. Enabling write tools (optional)
 
