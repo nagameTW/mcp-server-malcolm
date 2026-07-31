@@ -6,6 +6,20 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.2] - 2026-07-31
+
+### Fixed
+
+- **An unreachable host produced an error with no message at all.** httpx
+  raises `ConnectTimeout` with an empty `str()` — the anyio timeout it wraps
+  carries no text — so the caller received `Error executing tool <name>: ` with
+  nothing after the colon, on one of the two failures a first run hits most
+  often. Connection *refused* was never affected; it carries
+  `All connection attempts failed`. The message now names the exception and the
+  target (`ConnectTimeout for https://host:port/path`), with credentials
+  stripped from that URL as everywhere else. Both READMEs documented the blank
+  message as observed behaviour and are updated.
+
 ## [1.0.1] - 2026-07-31
 
 ### Fixed
@@ -677,7 +691,8 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.8.0...v0.9.0

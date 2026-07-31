@@ -381,13 +381,13 @@ Error executing tool malcolm_ping: Client error '401 Unauthorized' for url 'http
 For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
 ```
 
-**主機連不上**（`MALCOLM_URL` 打錯、連接埠被防火牆擋掉、scheme 錯了）。錯誤內容是**空的**：
+**主機連不上**（`MALCOLM_URL` 打錯、連接埠被防火牆擋掉、scheme 錯了）：
 
 ```
-Error executing tool malcolm_ping: 
+Error executing tool malcolm_ping: ConnectTimeout for https://192.0.2.99:9999/mapi/ping
 ```
 
-冒號後面什麼都沒有。httpx 拋出的 connect 層例外在這個環境下 `str()` 是空字串，所以除了「失敗了」本身之外沒有東西可以報（`client.py:233-234`）。工具失敗而訊息一片空白時，先去檢查主機和連接埠，其他都往後放。
+連不上有兩種，訊息不一樣。連接埠明確拒絕連線時是 `All connection attempts failed`；主機根本不回應時拋的是 `ConnectTimeout`，而 httpx 讓它的 `str()` 是空字串——1.0.1 以前這會變成一句光禿禿的 `Error executing tool malcolm_ping: `，冒號後面什麼都沒有。現在會補上例外名稱和目標。`MALCOLM_URL` 裡若嵌了憑證，顯示前會先被剝掉。
 
 ### 4. 開啟 write 工具（選用）
 

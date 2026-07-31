@@ -229,11 +229,33 @@ def _upstream(fn: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
         try:
             return await fn(*args, **kwargs)
         except httpx.HTTPStatusError as exc:
-            raise UpstreamError(redact(str(exc)), exc.response.status_code) from exc
+            raise UpstreamError(_upstream_text(exc), exc.response.status_code) from exc
         except httpx.HTTPError as exc:
-            raise UpstreamError(redact(str(exc))) from exc
+            raise UpstreamError(_upstream_text(exc)) from exc
 
     return wrapper
+
+
+def _upstream_text(exc: httpx.HTTPError) -> str:
+    """Redacted text for an httpx failure, never empty.
+
+    httpx raises ConnectTimeout with no message at all -- the anyio timeout it
+    wraps carries no text -- so passing str(exc) straight through reaches the
+    caller as "Error executing tool <name>: " with nothing after the colon.
+    That is the least useful thing this server can say, on the failure a first
+    run hits most often after a certificate problem. Connection *refused* does
+    carry text ("All connection attempts failed"); only the timeout is blank.
+
+    The fallback names the exception and the target, because the host is what
+    makes the error actionable -- the same reason redact() strips credentials
+    from the URL rather than dropping the URL.
+    """
+    text = redact(str(exc))
+    if text:
+        return text
+    request = getattr(exc, "request", None)
+    where = f" for {redact(str(request.url))}" if request is not None else ""
+    return f"{type(exc).__name__}{where}"
 
 
 class MalcolmClient:
