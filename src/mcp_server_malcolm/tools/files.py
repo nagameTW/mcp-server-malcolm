@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import string
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
 
 from pydantic import Field
 from typing_extensions import TypedDict
+
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
+from mcp_server_malcolm.tools._parse import parse_json_object
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -195,10 +197,7 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         omitted. No match returns a sentence saying so, naming the field if a
         filter used one Malcolm does not index, rather than an empty list.
         """
-        try:
-            extra = _parse_filters(filters)
-        except ValueError as exc:
-            return f"Error: {exc}"
+        extra = parse_json_object(filters, "filters", '{"source.ip":"192.0.2.7"}') or {}
 
         query: dict[str, Any] = {"event.dataset": "files"}
         if executables_only:
@@ -273,11 +272,13 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         if name.startswith(f"{_EXTRACTED_PREFIX}/"):
             name = name[len(_EXTRACTED_PREFIX) + 1 :]
         if not name:
-            return "Error: filename is required (the `extracted` value from malcolm_file_scans)."
+            raise ToolInputError(
+                "filename is required (the `extracted` value from a malcolm_file_scans row)."
+            )
         if any(sep in name for sep in _PATH_CHARS) or ".." in name:
-            return (
-                "Error: invalid filename — Malcolm's extracted-files directory is "
-                "flat, so a path separator is never part of a name."
+            raise ToolInputError(
+                f"invalid filename {filename!r} — Malcolm's extracted-files directory "
+                f"is flat, so a path separator is never part of a name."
             )
 
         url = f"{client.base_url}/{_EXTRACTED_PREFIX}/{quote(name, safe='')}"
@@ -291,9 +292,10 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         try:
             status, content = await client.extracted_file(name, max_bytes=_MAX_BYTES)
         except ValueError as exc:
-            return f"Error: {exc}; use url_only=true to fetch it outside the agent."
-        except Exception as exc:  # noqa: BLE001
-            return f"Extracted-file download failed: {exc}"
+            # The size cap, not a server problem: the caller has a way through.
+            raise ToolInputError(
+                f"{exc}; use url_only=true to fetch it outside the agent."
+            ) from exc
 
         if status == 404:
             return {
@@ -309,11 +311,11 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             # reporting it as "pruned" would end the hunt on a fixable problem:
             # Malcolm gates /extracted-files behind basic auth and, with
             # role-based access on, ROLE_EXTRACTED_FILES.
-            return (
-                f"Extracted-file download failed: the extracted-files server answered "
-                f"{status}, so whether {name} is on disk is unknown. Check that "
-                f"FILESCAN_HTTP_SERVER_ENABLE is on, its container is up, and this "
-                f"account may read extracted files."
+            raise UpstreamError(
+                f"the extracted-files server answered {status}, so whether {name} is "
+                f"on disk is unknown. Check that FILESCAN_HTTP_SERVER_ENABLE is on, "
+                f"its container is up, and this account may read extracted files.",
+                status,
             )
 
         return {
@@ -324,28 +326,6 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             "magic": content[:4].hex(),
             "download_url": url,
         }
-
-
-def _parse_filters(raw: str) -> dict[str, Any]:
-    """Parse the extra-filters JSON, empty for "no extra filters".
-
-    Unlike malcolm_search, a malformed filter is reported rather than dropped:
-    silently ignoring it would answer a narrower question than the one asked
-    and read as "no such files".
-
-    Raises:
-        ValueError: the string is neither empty nor a JSON object.
-    """
-    text = raw.strip()
-    if not text or text.lower() in ("{}", "null", "none"):
-        return {}
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"filters is not valid JSON: {exc}") from exc
-    if not isinstance(parsed, dict):
-        raise ValueError('filters must be a JSON object, e.g. {"source.ip":"192.0.2.7"}')
-    return parsed
 
 
 def _normalize_hash(value: str) -> str | list[str]:

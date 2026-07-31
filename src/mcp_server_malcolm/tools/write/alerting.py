@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
@@ -69,9 +70,11 @@ def register_alerting_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         Returns JSON with the created flag and the raw server result.
         """
         if not title.strip():
-            return "Error: title is required."
+            raise ToolInputError('title is required — a short alert name, e.g. "C2 beacon".')
         if severity not in (1, 2, 3, 4):
-            return "Error: severity must be 1, 2, 3, or 4."
+            raise ToolInputError(
+                f"severity must be 1 (highest), 2, 3 or 4 (lowest); received {severity!r}."
+            )
 
         body: dict[str, Any] = {"event": {"kind": "alert"}}
         if description:
@@ -92,7 +95,7 @@ def register_alerting_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         target = f"title={title.strip()}"
         params_summary = {"severity": severity, "source_ip": source_ip, "dest_ip": dest_ip}
 
-        result, err = await run_write(
+        result = await run_write(
             "malcolm_create_alert",
             _CLASS,
             target,
@@ -100,8 +103,6 @@ def register_alerting_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
             audit_file,
             lambda: client._write_event(alert),
         )
-        if err:
-            return f"Alert creation failed: {err}"
         return json.dumps(
             {"created": True, "result": result}, indent=2, ensure_ascii=False, default=str
         )

@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
+
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
@@ -28,7 +30,9 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         green/yellow/red detail alone use `cluster_health`; for data freshness and
         per-dataset counts use `malcolm_data_coverage`. Returns a JSON summary with
         malcolm_version, mode, opensearch_health, a per-service readiness map, and an
-        "N/total services ready" line.
+        "N/total services ready" line. One probe failing adds an `errors` entry and
+        keeps the rest; both failing is reported as an error, since there is then no
+        status at all to report.
         """
         errors: list[str] = []
         ready_data: dict = {}
@@ -62,8 +66,17 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             total = len(ready_data)
             result["summary"] = f"{ready_count}/{total} services ready"
 
+        if len(errors) == 2:
+            # Both probes failed, so there is no status to report -- returning
+            # only an "errors" list would reach the caller as a successful call.
+            # Keyed off the failures, not off empty data: a probe that answers
+            # {} succeeded, and calling that a failure would invert the rule
+            # this module follows everywhere else.
+            raise UpstreamError("; ".join(errors))
         if errors:
             result["errors"] = errors
+        if not result:
+            return "Malcolm answered both probes but reported no version or service data."
 
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
@@ -91,9 +104,10 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         volume, use `malcolm_service_status`. For distinct values of one arbitrary field
         rather than the dataset breakdown, use `malcolm_field_values`. Returns a JSON
         summary; each sub-section reports its own error key on failure instead of
-        aborting.
+        aborting, unless every one of them fails, which raises.
         """
         result: dict = {}
+        errors: list[str] = []
 
         try:
             stats = await client.ingest_stats()
@@ -101,6 +115,7 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             result["latest_age_seconds"] = stats.get("latest_ingest_age_seconds")
         except Exception as exc:  # noqa: BLE001
             result["ingest_error"] = str(exc)
+            errors.append(f"ingest stats: {exc}")
 
         try:
             buckets = await client.field_values(
@@ -113,6 +128,7 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             result["total_documents"] = sum(b.get("doc_count", 0) for b in buckets)
         except Exception as exc:  # noqa: BLE001
             result["dataset_error"] = str(exc)
+            errors.append(f"dataset counts: {exc}")
 
         try:
             idx_data = await client.indices()
@@ -122,7 +138,12 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 result["index_pattern"] = idx_data.get("malcolm_network_index_pattern", "unknown")
         except Exception as exc:  # noqa: BLE001
             result["index_error"] = str(exc)
+            errors.append(f"index list: {exc}")
 
+        if len(errors) == 3:
+            # Nothing came back at all; an all-errors document would still read
+            # as a successful call to a client.
+            raise UpstreamError("; ".join(errors))
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
     @mcp.tool(title="Ping Malcolm API", annotations=_READ)
@@ -131,13 +152,10 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this as the cheapest reachability probe. For readiness of the individual
         services behind the API use `malcolm_service_status`; for the OpenSearch cluster
-        status specifically use `cluster_health`. Returns the raw /mapi/ping response,
-        or a "ping failed" message if the API is unreachable.
+        status specifically use `cluster_health`. Returns the raw /mapi/ping response;
+        an unreachable API is reported as an error, not as an answer.
         """
-        try:
-            data = await client.ping()
-        except Exception as exc:  # noqa: BLE001
-            return f"ping failed: {exc}"
+        data = await client.ping()
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
     @mcp.tool(title="Export OpenSearch dashboard", annotations=_READ)
@@ -154,14 +172,14 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this to retrieve a dashboard's full saved-object definition by id. This is
         unrelated to the querying tools — for index data use `search_dsl` or
-        `malcolm_search`. Returns the raw dashboard export JSON, or an error message if
-        the id is empty or the export fails.
+        `malcolm_search`. Returns the raw dashboard export JSON; an empty id or a
+        failed export is reported as an error rather than as an answer.
         """
         did = dashboard_id.strip()
         if not did:
-            return "Error: dashboard_id is required."
-        try:
-            data = await client.dashboard_export(did)
-        except Exception as exc:  # noqa: BLE001
-            return f"dashboard export failed: {exc}"
+            raise ToolInputError(
+                "dashboard_id is required — take one from a malcolm_saved_objects row "
+                'of type "dashboard".'
+            )
+        data = await client.dashboard_export(did)
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)

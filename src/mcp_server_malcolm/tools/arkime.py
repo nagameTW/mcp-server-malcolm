@@ -9,6 +9,8 @@ from typing import TYPE_CHECKING, Annotated
 import httpx
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
+
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
@@ -72,10 +74,7 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         argument, and "db" where a tool asks for an Arkime db field (arkime_connections,
         arkime_multiunique). Returns "exp | db | type | group" lines with the help text.
         """
-        try:
-            results = await client.search_arkime_fields(keyword=keyword, group=group)
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime field lookup failed: {exc}"
+        results = await client.search_arkime_fields(keyword=keyword, group=group)
 
         if not results:
             return "No Arkime fields matched. Try a shorter keyword, or drop the group filter."
@@ -134,17 +133,17 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         session rows. Each row's `id` is what the drill-down tools take.
         """
         if not expression.strip():
-            return "Error: expression is required."
-
-        try:
-            data = await client.arkime_sessions(
-                expression=expression.strip(),
-                limit=min(max(1, limit), 100),
-                time_from=time_from,
-                time_to=time_to,
+            raise ToolInputError(
+                'expression is required — Arkime expression syntax, e.g. "ip==192.0.2.77" '
+                'or "protocols==dns". Look field names up with arkime_field_search.'
             )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime search failed: {exc}"
+
+        data = await client.arkime_sessions(
+            expression=expression.strip(),
+            limit=min(max(1, limit), 100),
+            time_from=time_from,
+            time_to=time_to,
+        )
 
         sessions = data.get("data", [])
         # recordsFiltered is how many sessions the expression matched;
@@ -190,9 +189,15 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         """
         sid = session_id.strip()
         if not sid:
-            return "Error: session_id is required."
+            raise ToolInputError(
+                "session_id is required — the `id` of an arkime_sessions row, "
+                "or several comma-separated."
+            )
         if not _SESSION_IDS_RE.fullmatch(sid) or ".." in sid:
-            return "Error: invalid session_id (expected Arkime session id(s))."
+            raise ToolInputError(
+                f"invalid session_id: {session_id!r} — expected Arkime session id(s) "
+                f'such as "3@240425-x.123", comma-separated for several.'
+            )
 
         url = f"{client.base_url}/arkime/api/sessions.pcap?ids={sid}"
         if url_only:
@@ -207,8 +212,11 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         try:
             content = await client.arkime_session_pcap(sid, max_bytes=_PCAP_MAX_MB * 1024 * 1024)
-        except Exception as exc:  # noqa: BLE001
-            return f"PCAP download failed: {exc}"
+        except ValueError as exc:
+            # The size cap, not a server problem: url_only is the way through.
+            raise ToolInputError(
+                f"{exc}; use url_only=true to fetch it outside the agent."
+            ) from exc
 
         magic = content[:4]
         pcap_magics = {
@@ -252,14 +260,14 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         """
         sid = session_id.strip()
         if not sid:
-            return "Error: session_id is required."
+            raise ToolInputError("session_id is required — the `id` of an arkime_sessions row.")
         if not _SESSION_ID_RE.fullmatch(sid) or ".." in sid:
-            return "Error: invalid session_id (expected an Arkime session id)."
+            raise ToolInputError(
+                f"invalid session_id: {session_id!r} — expected one Arkime session id "
+                f'such as "3@240425-x.123".'
+            )
 
-        try:
-            data = await client.arkime_session_detail(sid)
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime session detail failed: {exc}"
+        data = await client.arkime_session_detail(sid)
 
         if not data:
             return f"No Arkime session found with id {sid}."
@@ -311,18 +319,18 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         older than Arkime's default window rather than absent: pass time_from.
         """
         if not field.strip():
-            return "Error: field is required."
-
-        try:
-            text = await client.arkime_unique(
-                expression=expression.strip(),
-                field=field.strip(),
-                counts=counts,
-                time_from=time_from.strip(),
-                time_to=time_to.strip(),
+            raise ToolInputError(
+                'field is required — one Arkime field expression, e.g. "ip.dst" or '
+                '"protocols". Look it up with arkime_field_search.'
             )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime unique failed: {exc}"
+
+        text = await client.arkime_unique(
+            expression=expression.strip(),
+            field=field.strip(),
+            counts=counts,
+            time_from=time_from.strip(),
+            time_to=time_to.strip(),
+        )
 
         return text or "(no values)"
 
@@ -363,18 +371,18 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         spigraph response (top values with time-bucketed counts).
         """
         if not field.strip():
-            return "Error: field is required."
-
-        try:
-            data = await client.arkime_spigraph(
-                field=field.strip(),
-                expression=expression.strip(),
-                size=min(max(1, size), 100),
-                time_from=time_from,
-                time_to=time_to,
+            raise ToolInputError(
+                'field is required — one Arkime field expression, e.g. "ip.dst" or '
+                '"http.host". Look it up with arkime_field_search.'
             )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime spigraph failed: {exc}"
+
+        data = await client.arkime_spigraph(
+            field=field.strip(),
+            expression=expression.strip(),
+            size=min(max(1, size), 100),
+            time_from=time_from,
+            time_to=time_to,
+        )
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -417,17 +425,17 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         (per-field top values with counts).
         """
         if not spi.strip():
-            return "Error: spi (field list) is required."
-
-        try:
-            data = await client.arkime_spiview(
-                spi=spi.strip(),
-                expression=expression.strip(),
-                time_from=time_from,
-                time_to=time_to,
+            raise ToolInputError(
+                "spi is required — comma-separated Arkime fields, each optionally "
+                'suffixed ":<count>", e.g. "protocols:10,ip.dst:20".'
             )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime spiview failed: {exc}"
+
+        data = await client.arkime_spiview(
+            spi=spi.strip(),
+            expression=expression.strip(),
+            time_from=time_from,
+            time_to=time_to,
+        )
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -477,16 +485,13 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         arkime_spigraphhierarchy. Returns the raw Arkime connections response
         (nodes and links).
         """
-        try:
-            data = await client.arkime_connections(
-                src_field=src_field.strip() or "srcIp",
-                dst_field=dst_field.strip() or "dstIp",
-                expression=expression.strip(),
-                time_from=time_from,
-                time_to=time_to,
-            )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime connections failed: {exc}"
+        data = await client.arkime_connections(
+            src_field=src_field.strip() or "srcIp",
+            dst_field=dst_field.strip() or "dstIp",
+            expression=expression.strip(),
+            time_from=time_from,
+            time_to=time_to,
+        )
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -532,18 +537,18 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         (one combination per line, not JSON).
         """
         if not fields.strip():
-            return "Error: fields is required."
-
-        try:
-            text = await client.arkime_multiunique(
-                fields=fields.strip(),
-                expression=expression.strip(),
-                counts=counts,
-                time_from=time_from,
-                time_to=time_to,
+            raise ToolInputError(
+                "fields is required — comma-separated Arkime field names forming the "
+                'tuple, e.g. "source.ip,destination.port".'
             )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime multiunique failed: {exc}"
+
+        text = await client.arkime_multiunique(
+            fields=fields.strip(),
+            expression=expression.strip(),
+            counts=counts,
+            time_from=time_from,
+            time_to=time_to,
+        )
 
         return text or "(no values)"
 
@@ -586,17 +591,17 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Returns the raw Arkime spigraph-hierarchy response (nested value tree).
         """
         if not fields.strip():
-            return "Error: fields is required."
-
-        try:
-            data = await client.arkime_spigraphhierarchy(
-                fields=fields.strip(),
-                expression=expression.strip(),
-                time_from=time_from,
-                time_to=time_to,
+            raise ToolInputError(
+                "fields is required — comma-separated Arkime fields naming the "
+                'hierarchy levels in order, e.g. "source.ip,destination.ip".'
             )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime spigraphhierarchy failed: {exc}"
+
+        data = await client.arkime_spigraphhierarchy(
+            fields=fields.strip(),
+            expression=expression.strip(),
+            time_from=time_from,
+            time_to=time_to,
+        )
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
@@ -628,9 +633,15 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         """
         h = file_hash.strip()
         if not h:
-            return "Error: file_hash is required."
+            raise ToolInputError(
+                "file_hash is required — an md5 (32 hex chars) or sha256 (64) digest, "
+                "from a session's http.md5 / http.sha256 field."
+            )
         if not _HASH_RE.fullmatch(h):
-            return "Error: invalid file_hash (expected md5/sha256 hex)."
+            raise ToolInputError(
+                f"invalid file_hash: {file_hash!r} — expected an md5 (32 hex chars) or "
+                f"sha256 (64 hex chars) digest."
+            )
 
         url = f"{client.base_url}/arkime/api/sessions/bodyhash/{h}"
         if url_only:
@@ -643,23 +654,22 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 indent=2,
             )
 
-        try:
-            resp = await client.arkime_file_by_hash(h)
-        except Exception as exc:  # noqa: BLE001
-            return f"File extraction failed: {exc}"
+        resp = await client.arkime_file_by_hash(h)
 
+        # 400 is Arkime's "No Match Found" -- an answer about the capture, not a
+        # fault, so it stays a result. Every other error status is a fault.
         if resp.status_code == 400:
             return json.dumps({"file_hash": h, "found": False, "note": "No match found."}, indent=2)
-        try:
-            resp.raise_for_status()
-        except Exception as exc:  # noqa: BLE001
-            return f"File extraction failed: {exc}"
+        if resp.status_code >= 400:
+            raise UpstreamError(
+                f"Arkime answered {resp.status_code} for body hash {h}.", resp.status_code
+            )
 
         content = resp.content
         if len(content) > _FILE_MAX_MB * 1024 * 1024:
-            return (
-                f"Error: extracted file exceeds {_FILE_MAX_MB} MB "
-                f"({len(content) / 1024 / 1024:.1f} MB); use url_only to fetch it directly."
+            raise ToolInputError(
+                f"extracted file exceeds {_FILE_MAX_MB} MB "
+                f"({len(content) / 1024 / 1024:.1f} MB); use url_only=true to fetch it directly."
             )
         return json.dumps(
             {
@@ -731,15 +741,20 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 time_from=time_from.strip(),
                 time_to=time_to.strip(),
             )
-        except httpx.TimeoutException:
-            return (
+        except UpstreamError as exc:
+            # The client converts every httpx failure to UpstreamError, so the
+            # original type survives only as __cause__ -- and a timeout is the
+            # one failure here that names its own likely cause. status is None
+            # for a connect error too, so it cannot stand in for this test.
+            if not isinstance(exc.__cause__, httpx.TimeoutException):
+                raise
+            raise UpstreamError(
                 "Arkime CSV export timed out. When `fields` is set this almost "
                 "always means a column name Arkime does not accept: it takes ECS "
                 "dotted names such as source.ip and destination.port, and never "
                 "answers for a db name (srcIp) or an expression name (ip.src). "
-                "Retry with no fields to get the default columns."
-            )
-        except Exception as exc:  # noqa: BLE001
-            return f"Arkime CSV export failed: {exc}"
+                "Retry with no fields to get the default columns.",
+                exc.status,
+            ) from exc
 
         return text or "(no rows)"

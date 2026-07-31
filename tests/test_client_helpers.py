@@ -5,6 +5,7 @@ import httpx
 import pytest
 
 from mcp_server_malcolm.client import MalcolmClient, _arkime_query_params, _extract_buckets
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.query import _parse_filters
 
 # -- _extract_buckets: all fallback strategies -------------------------------
@@ -76,13 +77,19 @@ def test_parse_filters_valid_dict():
     assert _parse_filters('{"event.dataset": "conn"}') == {"event.dataset": "conn"}
 
 
-def test_parse_filters_malformed_json_is_none():
-    assert _parse_filters("{not json") is None
+def test_parse_filters_malformed_json_raises():
+    """It used to return None, which malcolm_search read as "no filter" and
+    answered with the whole index — presented as the answer to a filtered
+    question. The single-quoted Python dict is the spelling that hit it."""
+    for raw in ("{not json", "{'event.dataset': 'conn'}"):
+        with pytest.raises(ToolInputError):
+            _parse_filters(raw)
 
 
-def test_parse_filters_non_dict_is_none():
-    assert _parse_filters("[1, 2, 3]") is None
-    assert _parse_filters('"a string"') is None
+def test_parse_filters_non_dict_raises():
+    for raw in ("[1, 2, 3]", '"a string"'):
+        with pytest.raises(ToolInputError):
+            _parse_filters(raw)
 
 
 # -- resolve_field: exact / normalized / fuzzy suggestion strategies ---------

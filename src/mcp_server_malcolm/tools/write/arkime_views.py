@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.write._common import run_write
 
 if TYPE_CHECKING:
@@ -62,14 +63,17 @@ def register_arkime_view_tools(
         write class is enabled. Returns the raw Arkime response.
         """
         if not name.strip():
-            return "Error: name is required."
+            raise ToolInputError('name is required — the view name, e.g. "dns-to-c2".')
         if not expression.strip():
-            return "Error: expression is required."
+            raise ToolInputError(
+                "expression is required — the Arkime expression to save, "
+                'e.g. "ip==192.0.2.77 && protocols==dns".'
+            )
 
         view = {"name": name.strip(), "expression": expression.strip()}
         target = f"name={name.strip()}"
         params_summary = {"expression": expression.strip()}
-        result, err = await run_write(
+        result = await run_write(
             "arkime_create_view",
             _CLASS,
             target,
@@ -77,8 +81,6 @@ def register_arkime_view_tools(
             audit_file,
             lambda: client._write_arkime_view(view),
         )
-        if err:
-            return f"View creation failed: {err}"
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
     @mcp.tool(title="Create Arkime shortcut", annotations=_WRITE)
@@ -112,18 +114,23 @@ def register_arkime_view_tools(
         class is enabled. Returns the raw Arkime response.
         """
         if not name.strip():
-            return "Error: name is required."
+            raise ToolInputError('name is required — the shortcut name, e.g. "c2_ips".')
         if not value.strip():
-            return "Error: value is required."
+            raise ToolInputError(
+                "value is required — the values making up the list, comma- or newline-separated."
+            )
         if shortcut_type not in _SHORTCUT_TYPES:
-            return f"Error: shortcut_type must be one of {', '.join(_SHORTCUT_TYPES)}."
+            raise ToolInputError(
+                f"shortcut_type must be one of {', '.join(_SHORTCUT_TYPES)}; "
+                f"received {shortcut_type!r}."
+            )
 
         shortcut = {"name": name.strip(), "type": shortcut_type, "value": value.strip()}
         if description.strip():
             shortcut["description"] = description.strip()
         target = f"name={name.strip()}"
         params_summary = {"type": shortcut_type}
-        result, err = await run_write(
+        result = await run_write(
             "arkime_create_shortcut",
             _CLASS,
             target,
@@ -131,6 +138,4 @@ def register_arkime_view_tools(
             audit_file,
             lambda: client._write_arkime_shortcut(shortcut),
         )
-        if err:
-            return f"Shortcut creation failed: {err}"
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)

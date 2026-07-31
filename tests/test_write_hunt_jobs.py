@@ -2,9 +2,11 @@ import json
 
 import httpx
 import pytest
+from conftest import raised_by
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError
 from mcp_server_malcolm.tools.write.hunt_jobs import register_hunt_job_tools
 
 
@@ -65,7 +67,8 @@ async def test_create_hunt_rejects_bad_search_type(tmp_path):
 
     mcp = MCPServer("t")
     register_hunt_job_tools(mcp, _mock(handler), None)
-    out = await mcp.call_tool(
+    raised = await raised_by(
+        mcp,
         "arkime_create_hunt",
         {
             "name": "x",
@@ -77,7 +80,8 @@ async def test_create_hunt_rejects_bad_search_type(tmp_path):
             "expression": "ip==192.0.2.1",
         },
     )
-    assert "search_type" in str(out).lower()
+    assert isinstance(raised, ToolInputError)
+    assert "search_type" in str(raised).lower()
 
 
 @pytest.mark.asyncio

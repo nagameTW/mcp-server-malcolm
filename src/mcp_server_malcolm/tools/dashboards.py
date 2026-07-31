@@ -7,6 +7,8 @@ from typing import TYPE_CHECKING, Annotated, Any
 from pydantic import Field
 from typing_extensions import TypedDict
 
+from mcp_server_malcolm.errors import ToolInputError
+
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
@@ -135,17 +137,14 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         wanted = [t.strip().lower() for t in object_type.split(",") if t.strip()]
         unknown = [t for t in wanted if t not in _OBJECT_TYPES]
         if unknown or not wanted:
-            return (
-                f"Error: unsupported object_type {', '.join(unknown) or '(empty)'}. "
-                f"Supported: {', '.join(_OBJECT_TYPES)}."
+            raise ToolInputError(
+                f"unsupported object_type {', '.join(unknown) or '(empty)'} — expected "
+                f"one or more of {', '.join(_OBJECT_TYPES)}, comma-separated."
             )
 
-        try:
-            data = await client.dashboards_find(
-                types=wanted, search=search.strip(), limit=min(max(1, limit), 200)
-            )
-        except Exception as exc:  # noqa: BLE001
-            return f"Saved-object search failed: {exc}"
+        data = await client.dashboards_find(
+            types=wanted, search=search.strip(), limit=min(max(1, limit), 200)
+        )
 
         rows = data.get("saved_objects") or []
         if not rows:
@@ -196,10 +195,7 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         response says so, and says whether it is speaking for all of them or
         only the page returned.
         """
-        try:
-            data = await client.alerting_monitors(limit=min(max(1, limit), 200))
-        except Exception as exc:  # noqa: BLE001
-            return f"Alerting monitor lookup failed: {exc}"
+        data = await client.alerting_monitors(limit=min(max(1, limit), 200))
 
         hits = ((data.get("hits") or {}).get("hits")) or []
         if not hits:
@@ -275,10 +271,7 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         was anomalous. Zero with detectors configured still needs care: a
         detector that was never started produces the same zero.
         """
-        try:
-            data = await client.anomaly_detectors(limit=min(max(1, limit), 200))
-        except Exception as exc:  # noqa: BLE001
-            return f"Anomaly detector lookup failed: {exc}"
+        data = await client.anomaly_detectors(limit=min(max(1, limit), 200))
 
         hits = ((data.get("hits") or {}).get("hits")) or []
         if not hits:

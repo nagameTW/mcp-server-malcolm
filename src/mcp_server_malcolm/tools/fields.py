@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
+
+from mcp_server_malcolm.tools._parse import parse_json_object
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -112,17 +113,12 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         documents where the field is absent, not a value you can filter on.
         Returns a text list of "value (N docs)" lines.
         """
-        parsed_filters = None
-        if filters and filters.strip() not in ("", "{}", "null"):
-            try:
-                parsed_filters = json.loads(filters)
-            except json.JSONDecodeError:
-                pass
+        parsed_filters = parse_json_object(filters, "filters", '{"event.dataset":"alert"}')
 
         buckets = await client.field_values(
             field=field,
             limit=min(max(1, limit), 500),
-            filters=parsed_filters if isinstance(parsed_filters, dict) else None,
+            filters=parsed_filters,
             time_from=time_from,
             time_to=time_to,
         )

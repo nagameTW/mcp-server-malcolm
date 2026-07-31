@@ -8,6 +8,9 @@ from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
 
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
+from mcp_server_malcolm.tools._parse import parse_json_object
+
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
 
@@ -22,12 +25,15 @@ _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 _NETBOX_PATH_RE = re.compile(r"[a-z0-9][a-z0-9/_-]*/?")
 
 
-def _netbox_path_error(path: str) -> str | None:
+def _check_netbox_path(path: str) -> None:
+    """Reject a path that could traverse out of Malcolm's NetBox proxy."""
     if not path:
-        return "Error: path is required (e.g. 'ipam/services/')."
+        raise ToolInputError("path is required, in app/model form, e.g. 'ipam/services/'.")
     if not _NETBOX_PATH_RE.fullmatch(path) or ".." in path:
-        return f"Error: invalid NetBox path: {path!r} (expected e.g. 'ipam/services/')."
-    return None
+        raise ToolInputError(
+            f"invalid NetBox path: {path!r} — expected lowercase app/model segments "
+            f"such as 'ipam/services/', with no scheme, host or '..'."
+        )
 
 
 def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
@@ -63,10 +69,15 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         sits — the fast path for the three common NetBox lookups. For any other NetBox
         endpoint (services, VLANs, interfaces, VMs, contacts) use `malcolm_netbox_query`;
         to list sites use `malcolm_netbox_sites`. Pass at least one of ip/device/prefix.
-        Returns a JSON object with a summarized section per lookup you supplied.
+        Returns a JSON object with a summarized section per lookup you supplied; a
+        lookup that fails carries its own error key while the others still answer,
+        and every one failing is reported as an error rather than as a result.
         """
         if not any([ip, device, prefix]):
-            return "Error: provide at least one of: ip, device, prefix."
+            raise ToolInputError(
+                'provide at least one of: ip (e.g. "192.0.2.77"), device '
+                '(e.g. "switch-01"), prefix (e.g. "192.0.2.0/24").'
+            )
 
         results: dict = {}
 
@@ -103,6 +114,11 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             except Exception as exc:  # noqa: BLE001
                 results["prefix_error"] = f"NetBox prefix lookup failed: {exc}"
 
+        errors = [v for k, v in results.items() if k.endswith("_error")]
+        if errors and len(errors) == len(results):
+            # No lookup answered, so an all-errors document would reach the
+            # caller as a successful call with nothing in it.
+            raise UpstreamError("; ".join(errors))
         return json.dumps(results, indent=2, ensure_ascii=False, default=str)
 
     @mcp.tool(title="List NetBox sites", annotations=_READ)
@@ -114,11 +130,7 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         `malcolm_netbox_lookup`; for any other NetBox endpoint use `malcolm_netbox_query`.
         Returns the raw NetBox sites response (each site's id, name, and metadata).
         """
-        try:
-            data = await client.netbox_sites()
-        except Exception as exc:  # noqa: BLE001
-            return f"NetBox sites lookup failed: {exc}"
-
+        data = await client.netbox_sites()
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
     @mcp.tool(title="Query NetBox endpoint", annotations=_READ)
@@ -149,24 +161,10 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         proxying. Returns the raw NetBox JSON response for the endpoint.
         """
         path = path.strip().lstrip("/")
-        if err := _netbox_path_error(path):
-            return err
+        _check_netbox_path(path)
+        parsed = parse_json_object(params, "params", '{"port": "443"}')
 
-        parsed: dict | None = None
-        if params and params.strip() not in ("", "{}", "null"):
-            try:
-                loaded = json.loads(params)
-            except json.JSONDecodeError as exc:
-                return f"Error: invalid JSON in params: {exc}"
-            if not isinstance(loaded, dict):
-                return "Error: params must be a JSON object."
-            parsed = loaded
-
-        try:
-            data = await client.netbox_get(path, params=parsed)
-        except Exception as exc:  # noqa: BLE001
-            return f"NetBox query failed: {exc}"
-
+        data = await client.netbox_get(path, params=parsed)
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
 

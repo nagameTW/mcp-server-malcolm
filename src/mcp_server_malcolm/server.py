@@ -5,15 +5,50 @@ from __future__ import annotations
 import logging
 import sys
 
+from mcp.server.caching import CacheableMethod, CacheHint
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm import __version__
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.config import WriteConfig
 from mcp_server_malcolm.prompts import register_prompts
+from mcp_server_malcolm.resources import register_resources
 from mcp_server_malcolm.tools import register_all_tools, register_write_tools
 
 logger = logging.getLogger(__name__)
+
+# One hour, everywhere below. The three list methods are frozen the moment
+# create_server() returns and this server never sends a listChanged
+# notification, so their results cannot change while a connection lives -- an
+# hour outlasts a typical session while still bounding how long a cache that
+# outlives the connection may advertise a tool set an operator has since
+# restarted the server without.
+_FROZEN_AT_STARTUP_MS = 3_600_000
+
+# scope="public" for the three list methods: they are derived from this
+# server's own startup config -- registered tools, prompts, resource metadata.
+# Nothing in them varies by caller (there is no per-request authorization
+# here), so one cached copy is correct for every authorization context.
+#
+# scope="private" for resources/read: same TTL reasoning -- both catalogues are
+# served from MalcolmClient's process-lifetime field caches, so a re-read
+# returns byte-identical content until the server restarts -- but the body is
+# this deployment's network schema rather than server config. If an operator
+# ever puts per-user auth in front of this server, "public" would be the wrong
+# default to have shipped, and the only cost of "private" is cross-context
+# reuse of a body nobody else was going to ask for.
+#
+# Deliberately absent: server/discover, whose result is derived per connection
+# from the negotiated protocol version, so a single method-keyed hint would
+# invite serving a modern-era result to a legacy peer; and
+# resources/templates/list, which is permanently empty because this server
+# registers no resource templates -- add a hint with the first template.
+_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
+    "tools/list": CacheHint(ttl_ms=_FROZEN_AT_STARTUP_MS, scope="public"),
+    "prompts/list": CacheHint(ttl_ms=_FROZEN_AT_STARTUP_MS, scope="public"),
+    "resources/list": CacheHint(ttl_ms=_FROZEN_AT_STARTUP_MS, scope="public"),
+    "resources/read": CacheHint(ttl_ms=_FROZEN_AT_STARTUP_MS, scope="private"),
+}
 
 _INSTRUCTIONS = """\
 Malcolm network traffic analysis server (Zeek + Suricata + Arkime + OpenSearch, \
@@ -63,16 +98,25 @@ def create_server() -> MCPServer:
     Read tools are always registered. Write tools are registered only for the
     classes enabled via MALCOLM_MCP_ENABLE_* — a disabled class's tools are not
     registered at all (an unregistered tool cannot be called).
+
+    Everything registered here is registered exactly once, at startup, which is
+    what makes the cache hints above honest.
     """
     # version is passed explicitly: SDK 2.0 defaults it to "" and never
     # substitutes one, where 1.x filled in the SDK's own version. Unset, the
     # initialize response advertises an empty server version.
-    mcp = MCPServer("mcp-server-malcolm", version=__version__, instructions=_INSTRUCTIONS)
+    mcp = MCPServer(
+        "mcp-server-malcolm",
+        version=__version__,
+        instructions=_INSTRUCTIONS,
+        cache_hints=_CACHE_HINTS,
+    )
     client = MalcolmClient.from_env()
     cfg = WriteConfig.from_env()
 
     register_all_tools(mcp, client)
     register_write_tools(mcp, client, cfg)
+    register_resources(mcp, client)
     register_prompts(mcp)
 
     # Operators must be able to see the write posture instantly.

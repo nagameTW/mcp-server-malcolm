@@ -2,10 +2,11 @@ import json
 
 import httpx
 import pytest
-from conftest import tool_text
+from conftest import raised_by
 from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
+from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.tools.write.alerting import register_alerting_tools
 
 
@@ -53,11 +54,11 @@ async def test_create_alert_audits_http_error(tmp_path):
 
     mcp = MCPServer("t")
     register_alerting_tools(mcp, _mock(handler), str(audit))
-    out = await mcp.call_tool("malcolm_create_alert", {"title": "x", "severity": 3})
-    # Unwrap first: SDK 2.0's repr carries `is_error=False`, which satisfied
-    # the "error" branch for free and let a 500 be reported as success.
-    message = tool_text(out).lower()
-    assert "failed" in message or "error" in message
+    # It RAISES: a returned sentence would have reached the client as
+    # isError false, i.e. as a successfully created alert.
+    raised = await raised_by(mcp, "malcolm_create_alert", {"title": "x", "severity": 3})
+    assert isinstance(raised, UpstreamError)
+    assert raised.status == 500
     row = json.loads(audit.read_text().splitlines()[-1])
     assert row["outcome"] == "http_5xx"
 
@@ -69,5 +70,6 @@ async def test_create_alert_rejects_bad_severity(tmp_path):
 
     mcp = MCPServer("t")
     register_alerting_tools(mcp, _mock(handler), None)
-    out = await mcp.call_tool("malcolm_create_alert", {"title": "x", "severity": 9})
-    assert "severity" in str(out).lower()
+    raised = await raised_by(mcp, "malcolm_create_alert", {"title": "x", "severity": 9})
+    assert isinstance(raised, ToolInputError)
+    assert "severity" in str(raised).lower()
