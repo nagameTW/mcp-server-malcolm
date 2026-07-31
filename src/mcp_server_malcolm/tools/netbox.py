@@ -67,11 +67,16 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this to tell whether observed traffic involves a known asset and where it
         sits — the fast path for the three common NetBox lookups. For any other NetBox
-        endpoint (services, VLANs, interfaces, VMs, contacts) use `malcolm_netbox_query`;
-        to list sites use `malcolm_netbox_sites`. Pass at least one of ip/device/prefix.
+        endpoint (services, VLANs, interfaces, VMs, contacts) use malcolm_netbox_query;
+        to list sites use malcolm_netbox_sites. Pass at least one of ip/device/prefix.
         Returns a JSON object with a summarized section per lookup you supplied; a
         lookup that fails carries its own error key while the others still answer,
         and every one failing is reported as an error rather than as a result.
+
+        NetBox is an optional Malcolm subsystem, so found=false is ambiguous on
+        its own: malcolm_service_status carries a netbox readiness key, and that
+        key is what separates "this asset is not in the inventory" from "this
+        deployment has no inventory".
         """
         if not any([ip, device, prefix]):
             raise ToolInputError(
@@ -123,12 +128,19 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
     @mcp.tool(title="List NetBox sites", annotations=_READ)
     async def malcolm_netbox_sites() -> str:
-        """List every NetBox site in the site directory via Malcolm.
+        """List the NetBox site directory: the physical or logical locations assets sit in.
 
-        Use this to map the physical/logical locations NetBox knows about before
-        drilling into a specific asset. To then resolve a device, IP, or prefix use
-        `malcolm_netbox_lookup`; for any other NetBox endpoint use `malcolm_netbox_query`.
-        Returns the raw NetBox sites response (each site's id, name, and metadata).
+        Use this to learn which sites exist before drilling into a specific asset.
+        To then resolve a device, IP, or prefix use malcolm_netbox_lookup; for any
+        other NetBox endpoint use malcolm_netbox_query.
+
+        Returns Malcolm's own condensed view, not NetBox's: an object keyed by
+        site id, each value carrying display, name and slug only. Everything else
+        a site record holds — status, tenant, device and VM counts — needs
+        malcolm_netbox_query with path "dcim/sites/", which returns the full
+        records plus NetBox's count/next paging keys. NetBox is an optional
+        Malcolm subsystem; malcolm_service_status carries a netbox readiness key
+        that separates an empty directory from an absent one.
         """
         data = await client.netbox_sites()
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
@@ -156,9 +168,17 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this as the general escape hatch for NetBox endpoints the shortcuts don't
         cover (services, VLANs, interfaces, VMs, contacts, ...). For the common
-        ip/device/prefix lookups prefer `malcolm_netbox_lookup`; to list sites use
-        `malcolm_netbox_sites`. The path is validated to a NetBox app/model shape before
-        proxying. Returns the raw NetBox JSON response for the endpoint.
+        ip/device/prefix lookups prefer malcolm_netbox_lookup; to list sites use
+        malcolm_netbox_sites — though this tool with path "dcim/sites/" is what
+        returns a site's full record. The path is validated to a NetBox app/model
+        shape before proxying, so a bad path fails here rather than upstream.
+        Returns the raw NetBox JSON response for the endpoint, which for a list
+        endpoint is paginated: count, next, previous and results, with limit and
+        offset accepted in params.
+
+        NetBox is an optional Malcolm subsystem; malcolm_service_status carries a
+        netbox readiness key, and it is what tells an empty answer here from an
+        inventory that was never deployed.
         """
         path = path.strip().lstrip("/")
         _check_netbox_path(path)

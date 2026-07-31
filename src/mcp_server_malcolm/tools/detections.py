@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from mcp_server_malcolm.client import MalcolmClient
 
 # The alerting plugin's alert lifecycle. Checked here rather than upstream:
-# measured on v26.07.1, alertState=BOGUS answers 200 with an empty list instead
+# measured on Malcolm v26.07.1, alertState=BOGUS answers 200 with an empty list instead
 # of a 400, so a typo would read to an agent as "nothing ever fired".
 _ALERT_STATES = ("ALL", "ACTIVE", "ACKNOWLEDGED", "COMPLETED", "ERROR", "DELETED")
 _SEVERITY_LEVELS = ("1", "2", "3", "4", "5")
@@ -147,19 +147,19 @@ def register_detection_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this to find the standing detections someone already configured, and
         to check they are actually running — a disabled monitor is silent in
-        exactly the way a healthy one is. These are OpenSearch alerting rules,
-        which are a different thing from Suricata's IDS alerts: for those use
+        exactly the way a healthy one is. It stops at what each monitor is and
+        whether it is enabled: the query and trigger condition behind one need
+        malcolm_alerting_monitor_detail, and what has actually fired needs
+        malcolm_alerting_alerts. These are OpenSearch alerting rules, which are
+        a different thing from Suricata's IDS alerts: for those use
         malcolm_alerts. To record a new finding rather than read a rule, use
         malcolm_create_alert (needs the alerting write class).
 
-        Returns JSON {"total", "showing", "active_alerts", "monitors"}: per monitor the
-        name, id, type, whether it is enabled, its schedule in words, the
-        indices it searches and its trigger names. `active_alerts` counts only
+        Returns JSON {"total", "showing", "active_alerts", "monitors"};
+        per-monitor fields are in the output schema. `active_alerts` counts only
         alerts in the ACTIVE state, not the COMPLETED history the API returns by
-        default; it is replaced by an error key if that second lookup fails,
-        since it only enriches the list. When every monitor is disabled the
-        response says so, and says whether it is speaking for all of them or
-        only the page returned.
+        default. When every monitor is disabled the response says so, and
+        whether that covers all of them or only the page returned.
         """
         data = await client.alerting_monitors(limit=min(max(1, limit), 200))
 
@@ -264,17 +264,15 @@ def register_detection_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         monitor id to malcolm_alerting_monitor_detail.
 
         alert_state and severity are validated here rather than passed through:
-        measured on this Malcolm, an unknown alertState or severityLevel answers
+        measured on Malcolm v26.07.1, an unknown alertState or severityLevel answers
         200 with an empty list rather than 400, so a typo would look exactly like
         a quiet night.
 
         Returns JSON {"total", "showing", "alerts"} with each alert as the
         plugin sends it — monitor id and name, trigger name, state, severity and
-        the start/end/acknowledged timestamps. The rows are passed through
-        unrenamed: their keys differ by monitor type and by state, and trimming
-        to a fixed set risks dropping the one field that explains a firing. An
-        empty list is a successful answer and a common one, since no alert can
-        exist while every monitor is disabled.
+        the start/end/acknowledged timestamps. An empty list is a successful
+        answer and a common one, since no alert can exist while every monitor is
+        disabled.
         """
         state = alert_state.strip().upper()
         if state not in _ALERT_STATES:
@@ -341,20 +339,18 @@ def register_detection_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         malcolm_alerting_monitors says a monitor exists and whether it is
         enabled, but cannot show the query or the trigger condition, so it
         cannot separate a monitor that watches the right traffic from one whose
-        condition no traffic can satisfy — measured on this Malcolm, the shipped
+        condition no traffic can satisfy — measured on Malcolm v26.07.1, the shipped
         loopback monitor fires on `ctx.results[0].hits.total.value > 999999999`.
         Take the id from malcolm_alerting_monitors; for the alerts a monitor has
         raised use malcolm_alerting_alerts with monitor_id.
 
-        Returns JSON: name, id, monitor_type, enabled, the schedule in words,
-        one `inputs` entry per search input with its indices and its whole
-        OpenSearch query (mustache placeholders such as {{period_end}} left as
-        the monitor stores them), and one `triggers` entry per trigger with
-        name, severity, firing condition and action names. `note` is present
-        only when the monitor cannot raise an alert at all — disabled, or
-        carrying no triggers — because from outside that is indistinguishable
-        from a healthy monitor with nothing to report. Raises if no monitor has
-        that id.
+        Field names are in the output schema; what it cannot show is what sits
+        inside `inputs` and `triggers` — each search input's whole OpenSearch
+        query as the monitor stores it, mustache placeholders such as
+        {{period_end}} left intact, and each trigger's severity, firing
+        condition and action names. Watch for the `note` key: it marks a monitor
+        that cannot fire at all, disabled or trigger-less. Raises if no monitor
+        has that id.
         """
         data = await client.alerting_monitor(monitor_id.strip())
         src = data.get("monitor") or {}
@@ -393,19 +389,19 @@ def register_detection_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         """List OpenSearch anomaly detectors, what each models, and whether any anomalies exist.
 
         Use this to see what machine-learning baselines Malcolm is maintaining
-        over the traffic and whether they have produced anything. This reads the
-        detector configuration, not the traffic: for the underlying documents
-        use malcolm_search, and for Suricata's signature-based alerts use
-        malcolm_alerts, which is a different detection method entirely.
+        over the traffic and whether they have produced anything. It counts
+        anomalies across every detector at once; for which entities one named
+        detector scored, and when, take its `id` to malcolm_anomaly_results.
+        This reads the detector configuration, not the traffic: for the
+        underlying documents use malcolm_search, and for Suricata's
+        signature-based alerts use malcolm_alerts, which is a different
+        detection method entirely.
 
-        Returns JSON {"total", "showing", "recorded_anomalies", "detectors"}: per detector
-        the name, id, description, indices modelled, detector type, category
-        fields, run interval in words and the feature names it tracks. The
-        aggregation definitions behind those features are configuration detail
-        and are left out. `recorded_anomalies` counts results whose
-        anomaly_grade is above zero across all detectors — NOT detector runs,
-        of which there is one per interval per entity whether or not anything
-        was anomalous. Zero with detectors configured still needs care: a
+        Returns JSON {"total", "showing", "recorded_anomalies", "detectors"};
+        per-detector fields are in the output schema, minus the aggregation
+        definitions behind each feature, which are configuration detail.
+        `recorded_anomalies` counts anomalous results across all detectors, NOT
+        detector runs. Zero with detectors configured still needs care: a
         detector that was never started produces the same zero.
         """
         data = await client.anomaly_detectors(limit=min(max(1, limit), 200))
@@ -513,20 +509,18 @@ def register_detection_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         (Suricata) or malcolm_alerting_alerts (standing OpenSearch rules); this
         is the machine-learning baseline instead.
 
-        TIME HERE IS EPOCH MILLISECONDS, unlike every arkime_* tool in this
-        server, which takes seconds. A seconds-shaped value is rejected rather
-        than forwarded: upstream it is a window in 1970 and answers empty, which
-        is indistinguishable from clean traffic. The window that was actually
-        queried is echoed back as UTC so the caller can check it.
+        TIME HERE IS EPOCH MILLISECONDS, unlike every arkime_* tool, which takes
+        seconds. A seconds-shaped value is rejected rather than forwarded:
+        upstream it is a window in 1970 that answers empty, indistinguishable
+        from clean traffic.
 
         Returns JSON {"detector_id", "detector_state", "window", "showing",
-        "anomalies"}. Each entry is one entity bucket exactly as the plugin
-        sends it — the category-field values identifying the entity, how many
-        anomalous results it had and its worst grade — passed through unrenamed
-        because the keys follow the detector's own category fields. No anomalies
-        comes back as a sentence that says what the detector's state implies
-        about that emptiness. Real-time detector results only: this Malcolm has
-        no historical analysis tasks, and asking for them is a 500.
+        "anomalies"}; the shape is in the output schema. Entity buckets are
+        passed through unrenamed because their keys follow the detector's own
+        category fields, so they differ per detector. No anomalies comes back as
+        a sentence that says what the detector's state implies about that
+        emptiness. Real-time detector results only: this Malcolm has no
+        historical analysis tasks, and asking for them is a 500.
         """
         rank = order.strip().lower()
         if rank not in _ANOMALY_ORDERS:
@@ -667,7 +661,7 @@ def _trigger_details(triggers: Any) -> list[dict[str, Any]]:
     """Each trigger's name, severity, firing condition and action names.
 
     The condition is what the monitor list cannot show and the reason the detail
-    tool exists: measured on this Malcolm the shipped monitor fires on
+    tool exists: measured on Malcolm v26.07.1 the shipped monitor fires on
     `ctx.results[0].hits.total.value > 999999999`, so it is configured never to.
     As in _trigger_names the body sits one level down under a key naming the
     trigger type. A bucket-level trigger's condition is not a painless script,

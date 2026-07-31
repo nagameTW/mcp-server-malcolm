@@ -153,12 +153,14 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         keeping. Take a view's `expression` and pass it to arkime_sessions to
         run it. For named value lists (IOC sets) rather than saved queries, use
         arkime_shortcuts; to discover field names for a new expression, use
-        arkime_field_search.
+        arkime_field_search; to add one of your own use arkime_create_view
+        (needs the arkime-view write class), and it lands in this same list.
 
-        Returns JSON {"count", "views"}: per view the name, expression, owner
-        and the roles it is shared with. Views are per-user and per-role, so
-        this shows what the configured account can see, not everything on the
-        server.
+        Views are per-user and per-role, so this shows what the configured
+        account can see, not everything on the server: measured on Malcolm
+        v26.07.1, every view returned carries an `owner` and a `roles` list, and
+        all of them named the one account this server authenticates as. Field
+        meanings are in the output schema.
         """
         data = await client.arkime_views(length=min(max(1, limit), 500))
 
@@ -191,12 +193,20 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         A shortcut is a named list of IPs, strings or numbers that an expression
         can reference as `$name` instead of spelling every value out. Use this
         before writing an expression so you reference a list that exists and
-        know what is in it. For saved queries rather than value lists, use
-        arkime_views.
+        know what is in it. For saved queries rather than value lists use
+        arkime_views, for scheduled queries that stamp their own tags use
+        arkime_crons, and to add a list of your own use arkime_create_shortcut
+        (needs the arkime-view write class).
 
-        Returns JSON {"count", "shortcuts"}: per shortcut the name, type, the
-        values it holds, and `use_in_expression` — the exact `$name` token to
-        put in an arkime_sessions expression.
+        Arkime scopes shortcuts by owner and role the same way it scopes views:
+        its API filters the list by the requesting user and that user's roles,
+        so this shows what the configured account can see, not everything on the
+        server, and a name an expression then rejects as unknown may simply
+        belong to someone else. That is Arkime's documented API behaviour rather
+        than something measured here: Malcolm v26.07.1 ships no shortcut, so an
+        empty list is the expected answer on a fresh deployment.
+        Field meanings are in the output schema; use_in_expression is the token
+        to paste, already spelled correctly.
         """
         data = await client.arkime_shortcuts(length=min(max(1, limit), 500))
 
@@ -236,13 +246,11 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         sets) use arkime_shortcuts, and to see the tags actually present in the
         data use malcolm_field_values on the `tags` field.
 
-        Returns JSON {"count", "crons"}: per query the name, the expression,
-        the tags it applies, whether it is `enabled`, its `action` (what it does
-        with a match), owner, and `last_run` as epoch seconds. Disabled queries
-        are listed too — a query switched off last week still explains tags
-        already sitting in the data. A deployment with none configured gets a
-        plain sentence instead of an empty list; that is an answer, not a fault
-        (measured: this lab has zero).
+        Disabled queries are listed too — one switched off last week still
+        explains tags already sitting in the data. A deployment with none
+        configured gets a plain sentence instead of an empty list; that is an
+        answer, not a fault (measured: the reference lab has none). Per-query
+        fields are in the output schema.
         """
         data = await client.arkime_crons()
 
@@ -292,15 +300,18 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         """Resolve one IP address to its PTR hostname, using Arkime's resolver.
 
         Use this to put a name on an external address a session talked to —
-        `idf-rtr.example.com` says more than `198.51.100.1`. This asks the DNS
-        resolver live, so it reflects DNS now, not what the capture saw: for the
-        names actually observed on the wire, search event.dataset=dns with
-        malcolm_search instead. For internal assets, malcolm_netbox_lookup gives
-        a far richer answer than a PTR record.
+        `idf-rtr.example.com` says more than `198.51.100.1`. For internal
+        assets, malcolm_netbox_lookup gives a far richer answer than a PTR
+        record.
 
-        Returns JSON: `resolved`, and `hostname` when there is one. A private or
-        unregistered address normally has no PTR and comes back resolved:false —
-        that is a missing DNS record, not an error.
+        This is a live outbound PTR query leaving the Malcolm deployment now,
+        not a read of the capture: measured on Malcolm v26.07.1 it answered
+        `dns.google` for 8.8.8.8, a name appearing nowhere in the 58,144
+        sessions this capture holds for that address. So it reports DNS today
+        rather than the traffic, and resolving an address an adversary controls
+        can signal your interest to them. For the names the capture itself
+        observed, search event.dataset=dns with malcolm_search instead. Return
+        fields, and what resolved:false means, are in the output schema.
         """
         addr = ip.strip()
         if not addr:
@@ -336,10 +347,12 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         malcolm_data_coverage, and to search the sessions themselves use
         arkime_sessions.
 
-        Returns JSON {"total", "showing", "files"}: per file the path, node,
-        size, packet and session counts, and its first/last packet times as
-        epoch MILLISECONDS — note that every Arkime *query* parameter takes
-        epoch seconds instead.
+        On one node, an interval between a file's last packet and the next
+        file's first is an interval with no captured packets, and no search can
+        tell you whether the link was quiet or the capture was down — this list
+        is the only place that distinction shows up. Files from different nodes
+        overlap in time, so compare within a node. Per-file fields and their
+        units are in the output schema.
         """
         data = await client.arkime_pcap_files(length=min(max(1, limit), 500))
 
@@ -384,11 +397,10 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
         services are up at all use malcolm_service_status, and for OpenSearch
         cluster state use cluster_health — this one is about the capture side.
 
-        Returns JSON {"count", "nodes"}: per node the Arkime version, free disk,
-        memory and CPU, session and packet totals, dropped-packet counters and
-        queue depths. A node currently losing packets also carries a `warning`
-        saying so, because that is the finding that changes an analyst's
-        conclusions rather than a number to skim past.
+        `packets_dropped` is a running total, not a rate, so a non-zero one is
+        history rather than a live fault; `dropped_per_sec` is the rate over
+        Arkime's last stats interval, and the `warning` key marks a node losing
+        packets right now. Per-node fields are in the output schema.
         """
         data = await client.arkime_node_stats(node_filter=node.strip())
 
@@ -442,9 +454,18 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
                 "(history) jobs."
             ),
         ] = True,
-        limit: Annotated[int, Field(description="Max hunts to return.", ge=1)] = 50,
+        limit: Annotated[
+            int,
+            Field(
+                description="Max hunts to return. Arkime honours whatever it is "
+                "given here and this tool sets no ceiling of its own, unlike the "
+                "500-row cap on the other list tools — pair a large value with "
+                "active_only=false only when you really want the whole history.",
+                ge=1,
+            ),
+        ] = 50,
     ) -> str:
-        """List Arkime hunt jobs and their progress/status (read-only).
+        """List Arkime hunt jobs with their progress, match counts and status.
 
         Use this to see what packet-payload searches this Arkime is running or
         has run — the ones a human queued in the Arkime UI as much as the ones

@@ -47,7 +47,7 @@ _FILE_MAX_MB = 100
 # The renderings Arkime's packets route accepts. An unknown value is NOT an
 # error upstream -- it silently falls back to ASCII -- so the check is here.
 _PAYLOAD_BASES = ("ascii", "hex", "utf8")
-# Ceiling on the decoded payload text, in characters. Measured on 26.07.1
+# Ceiling on the decoded payload text, in characters. Measured on Malcolm v26.07.1
 # against this lab's largest session (11.7 MB of data): packets=10 renders
 # 52,100 characters at base=hex and 14,662 at base=ascii, packets=100 renders
 # 520,193 at hex. The default therefore always fits and a runaway render is
@@ -76,7 +76,7 @@ async def _capture_node(client: MalcolmClient, session_id: str) -> str:
     """The capture node that recorded a session, from the session document.
 
     Both per-session payload routes carry the node in the URL path, and a node
-    the deployment does not have is not an error: measured on 26.07.1, an
+    the deployment does not have is not an error: measured on Malcolm v26.07.1, an
     unknown name answers HTTP 200 with "Can't find view url for '<name>'",
     which reads like a short payload. Resolving it from the session itself is
     what lets those tools take the id alone -- the id being the only handle
@@ -106,8 +106,9 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
             Field(
                 description="One Arkime session id, or several comma-separated, "
                 "each taken from arkime_sessions results (arkime_sessions is the "
-                "only source of these ids). Multiple ids are merged into a single "
-                "combined PCAP."
+                "only source of these ids). Several ids are merged into one "
+                "combined PCAP, and the size ceiling applies to that merged "
+                "total rather than to each session."
             ),
         ],
         url_only: Annotated[
@@ -122,12 +123,17 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
 
         Downloads the raw PCAP bytes, checks the file-magic (pcap/pcapng), and
         returns metadata (magic, format, size) only — never the raw bytes, and
-        nothing is persisted to disk. Enforces a size cap and refuses oversized
-        downloads before reading. Set url_only=True to get just the download URL
-        with no download. Needs a session id, which only arkime_sessions
-        produces. For a session's parsed fields (not its packets) use
-        arkime_session_detail; to extract a specific transferred file by its
-        content hash use arkime_file_by_hash.
+        nothing is persisted to disk. A download over 500 MB is refused before
+        a byte is read; url_only=True is the way through, and the way to hand
+        the URL to something outside this agent. Needs a session id, which only
+        arkime_sessions produces.
+
+        For a session's parsed fields rather than its packets use
+        arkime_session_detail; for the bytes that crossed the wire rather than
+        the capture container that holds them use arkime_session_payload; and
+        for a file this specific session carried use
+        arkime_session_file_by_hash, which is more reliable than
+        arkime_file_by_hash whenever you already hold a session id.
         """
         sid = session_id.strip()
         if not sid:
@@ -182,7 +188,7 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
             indent=2,
         )
 
-    @mcp.tool(title="Get full session detail", annotations=_READ)
+    @mcp.tool(title="Look up one session by id", annotations=_READ)
     async def arkime_session_detail(
         session_id: Annotated[
             str,
@@ -192,15 +198,26 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
             ),
         ],
     ) -> str:
-        """Fetch every field (the full SPI document) for one Arkime session by id.
+        """Fetch the session Arkime holds under one id — a point lookup, not a search.
 
-        arkime_sessions returns only a trimmed row per session; this returns the
-        complete parsed field set for a single id. Use arkime_sessions to search
-        and obtain the id first. For the session's raw packets use
-        arkime_session_pcap; for distinct values across many sessions use
-        arkime_unique / arkime_spiview. For what the two sides actually sent —
-        the payload bytes, not the parsed fields — use arkime_session_payload.
-        Returns the raw Arkime session document.
+        What comes back is Arkime's own session row, which is narrower than the
+        document behind it: measured on Malcolm v26.07.1 across 17 sessions,
+        11-14 top-level keys of the 21-30 the stored document held, 400-560
+        characters against 1-3 KB. `tags`, the `event` block and the Zeek /
+        Suricata detail were absent every time, and http.md5 was too even where
+        an http block came back. When the field you need is not in the answer,
+        read the document itself with malcolm_search, or with search_dsl over
+        arkime_sessions3-* on a {"term": {"_id": ...}} query taking the part of
+        the id after the last ":". For the session's raw packets use
+        arkime_session_pcap; for what the two sides actually sent, the payload
+        bytes rather than parsed fields, use arkime_session_payload; for
+        distinct values across many sessions use arkime_unique /
+        arkime_spiview.
+
+        An id this deployment does not hold is answered with a sentence rather
+        than an error, so a bare "no session found" means the id aged out of
+        retention or came from somewhere other than arkime_sessions — ids are
+        not stable across re-indexing.
         """
         sid = _checked_session_id(session_id)
 
@@ -238,7 +255,8 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
                 description='How to render the bytes: "hex" for an offset + hex + '
                 "ASCII gutter (what makes a binary protocol such as Modbus legible), "
                 '"ascii" or "utf8" for text protocols such as HTTP. Anything else is '
-                "rejected here — Arkime would silently fall back to ASCII."
+                "rejected here — Arkime would silently fall back to ASCII.",
+                json_schema_extra={"enum": list(_PAYLOAD_BASES)},
             ),
         ] = "hex",
         packets: Annotated[
@@ -249,8 +267,10 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
                 "into one block and a packet with no payload renders nothing, so a "
                 "TCP session opening with a handshake can spend the first few on "
                 "column headers alone. Raise it to read further into the "
-                "conversation; each step costs roughly 5,000 characters at "
-                "base=hex.",
+                "conversation, a few at a time: what each packet costs scales "
+                "with the bytes it carried, so the same value can render a few "
+                "hundred characters on one session and tens of thousands on "
+                "another. The 200,000-character cap is the backstop.",
                 ge=1,
                 le=100,
             ),
@@ -273,8 +293,9 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
         each packet's direction. Two answers are empty rather than failed and
         come back as a sentence — a session whose packets were not stored (most
         of this index is built from Zeek logs, which carry no capture file) and
-        an id no session has. Output is capped; an oversized render is refused
-        with the way through, so start small and raise `packets`.
+        an id no session has. Output is capped at 200,000 characters; an
+        oversized render is refused with the way through, so start small and
+        raise `packets`.
         """
         sid = _checked_session_id(session_id)
         if base not in _PAYLOAD_BASES:
@@ -337,9 +358,11 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
             str,
             Field(
                 description="Content hash of the carried body: md5 (32 hex chars) or "
-                "sha256 (64). Read it off this session's own http.md5 / http.sha256 "
-                "in arkime_session_detail — a hash from a different session is "
-                'answered "no match" even though the file exists elsewhere.'
+                "sha256 (64). It lives in this session's own http.md5 / http.sha256, "
+                "which malcolm_search returns and arkime_session_detail does not "
+                "(measured on Malcolm v26.07.1: that row carries http.uri but no hash). A "
+                'hash from a different session is answered "no match" even though '
+                "the file exists elsewhere."
             ),
         ],
         node: Annotated[
@@ -358,12 +381,12 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
         """Fetch the file one NAMED session carried, by content hash; returns METADATA ONLY.
 
         Session-scoped, which is the whole difference from arkime_file_by_hash:
-        that one searches every session and serves the most recent body with the
-        hash, so when a file moved several times it answers about the wrong
-        transfer. Use this to pin the answer to the session in hand, and its
-        sibling to find where a known-bad hash appeared at all — and prefer this
-        one when a session is available: measured on v26.07.1, the sibling
-        answered "No match" for an md5 that this tool served 1,991 bytes for. Use
+        that one serves the most recent body carrying the hash across all
+        sessions, so once a file has moved twice it answers about the wrong
+        transfer. Prefer this whenever you hold a session id — measured on
+        Malcolm v26.07.1, for the window's most-carried md5 this route served
+        the body from each of the three sessions that carried it while the
+        sibling answered found:false, "No match found." for the same hash. Use
         malcolm_extract_file instead when Zeek carved the file to disk — that
         needs no session, but only works where file extraction is enabled.
 
@@ -372,8 +395,8 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
         computed over the bytes Arkime actually served, so comparing them with
         the hash you asked for shows whether the reconstructed body is complete.
         A hash this session did not carry is a successful answer with
-        found:false, not an error — Arkime's own 400 "No match" — while an
-        oversized body is refused, url_only being the way through.
+        found:false, not an error — Arkime's own 400 "No match" — while a body
+        over 100 MB is refused, url_only being the way through.
         """
         sid = _checked_session_id(session_id)
         h = file_hash.strip()
@@ -458,7 +481,8 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
             Field(
                 description="The transferred file's content hash: md5 (32 hex "
                 "chars) or sha256 (64 hex chars). Taken from a session's "
-                "http.md5 / http.sha256 field (see arkime_session_detail)."
+                "http.md5 / http.sha256 field, which malcolm_search returns and "
+                "arkime_session_detail does not (measured on Malcolm v26.07.1)."
             ),
         ],
         url_only: Annotated[
@@ -472,18 +496,17 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
         recent session carrying a body with this hash, resolves the capture node,
         and fetches the file. That "most recent" is the catch — when the same
         file moved several times, this answers about the last transfer, which is
-        usually not the one under investigation. Use
-        arkime_session_file_by_hash to pin the answer to a session you already
-        hold, and this one to find out whether a known-bad hash appeared at all.
-        A "no match" here is also not proof the file is absent: measured on
-        v26.07.1, this route reported no match for an md5 the session-scoped
-        tool then served, so retry there with a session id before concluding.
-        Checks the file-magic and returns metadata (magic, size) only — the raw
-        bytes are never put in the MCP response — and enforces a size cap,
-        refusing oversized files (use url_only then). Get the hash from
-        arkime_session_detail (http.md5 / http.sha256). For the whole session's
-        packets rather than one carried file use arkime_session_pcap. Returns
-        whether a match was found plus its metadata.
+        usually not the one under investigation. Use this to find out whether a
+        known-bad hash appeared at all, and arkime_session_file_by_hash to pin
+        the answer to a session you already hold — a "no match" here is not
+        proof the file is absent, since measured on Malcolm v26.07.1 that route served
+        a body this one declined. Checks the file-magic and returns metadata
+        (magic, size) only — the raw bytes are never put in the MCP response —
+        and refuses a file over 100 MB before reading it (use url_only then).
+        The hash comes from a session's http.md5 / http.sha256, which
+        malcolm_search returns. For the whole session's packets rather than one
+        carried file use arkime_session_pcap. Returns whether a match was found
+        plus its metadata.
         """
         h = file_hash.strip()
         if not h:

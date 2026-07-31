@@ -139,7 +139,7 @@ _NETBOX_PATH_SHAPE = "a NetBox REST path such as 'api/ipam/ip-addresses/'"
 _HASH_RE = re.compile(r"[A-Fa-f0-9]{16,128}")
 _HASH_SHAPE = "an md5 or sha256 hex digest"
 
-# Arkime capture-node names, measured on this lab: "arkime" and
+# Arkime capture-node names, measured on Malcolm v26.07.1: "arkime" and
 # "capture-4f2a-node". Arkime derives the name from the capture host unless an
 # operator overrides it in config.ini, so the class is the host-name characters
 # plus "_", which that override allows.
@@ -496,17 +496,27 @@ class MalcolmClient:
     async def arkime_fields(self) -> list[dict[str, str]]:
         """Return Arkime's field table (cached), expression name paired with db name.
 
-        Arkime's expression parser accepts only Arkime's own names — `ip.src`,
+        Arkime's expression parser wants Arkime's own names — `ip.src`,
         `port.dst`, `protocols` — and /mapi/fields does not list them: Malcolm
         merges Arkime's field table keyed by `dbField2` and drops the `exp`
         alias, so that list holds `srcIp` and `source.ip` but never `ip.src`.
         This endpoint is the only place an agent can discover a name that will
-        work inside an `expression` argument.
+        work inside an `expression` argument. Getting it wrong is quiet, not
+        loud: measured on Malcolm v26.07.1, `srcIp==<addr>` matched 0 sessions with no
+        error while `ip.src==<addr>` matched 2,055,400.
 
         Returns:
-            One dict per field with "exp" (use in expressions), "db" (use where
-            a tool asks for an Arkime db field, e.g. arkime_connections), plus
-            "type", "group" and "help". Sorted by expression name.
+            One dict per field with "exp" (use in expressions and in the field
+            lists of unique / multiunique / spigraphhierarchy), "db" — Arkime's
+            `dbField2`, for arkime_connections' srcField/dstField — plus
+            "type", "group" and "help". Sorted by expression name. Passing one
+            column's name where the other belongs raises ToolInputError for the
+            sixteen fields whose two spellings differ.
+
+            Neither column is the whole story for spigraph/spiview, which want
+            `dbField`: identical to "db" for 4,034 of 26.07.1's 4,051 rows, but
+            for the seventeen that fork it is the dotted path (source.ip for
+            srcIp) and this list does not carry it.
         """
         if self._arkime_field_cache is not None:
             return self._arkime_field_cache
@@ -701,7 +711,7 @@ class MalcolmClient:
         """Saved objects via GET /dashboards/api/saved_objects/_find.
 
         `fields` is set to title/description so the server trims the payload
-        before sending it: measured on v26.07.1, five dashboards are 19.7 KB in
+        before sending it: measured on Malcolm v26.07.1, five dashboards are 19.7 KB in
         full and 6.0 KB trimmed, because a dashboard is mostly its panelsJSON
         layout blob.
 
@@ -815,7 +825,7 @@ class MalcolmClient:
 
         The one call that separates "this detector has never run" from "it ran
         and found nothing", which the detector list and a zero result count
-        cannot tell apart. Measured on all five detectors here:
+        cannot tell apart. Measured on Malcolm v26.07.1, all five detectors here answer:
         {"state": "DISABLED"} -- so the zero anomalies this lab reports mean
         the detectors were never started, not that the traffic is clean.
 
@@ -887,7 +897,7 @@ class MalcolmClient:
         )
         # Not self.post(): raise_for_status() there keeps httpx's message, which
         # is the internal URL and the status and nothing else. This route's 4xx
-        # bodies name what is actually wrong -- measured on 26.07.1, a detector
+        # bodies name what is actually wrong -- measured on Malcolm v26.07.1, a detector
         # with no category field answers 400 {"error":{"reason":"No category
         # fields found for detector ID ..."}} -- and that reason is the only
         # part a caller can act on. Same shape as _write_arkime_hunt_cancel.
@@ -1048,7 +1058,7 @@ class MalcolmClient:
         """PTR name for an address via GET /arkime/api/reversedns.
 
         Returns a bare hostname as plain text. Arkime answers 200 with the body
-        "reverse error" when there is no PTR record (verified on 6.6.0 for a
+        "reverse error" when there is no PTR record (verified on Arkime 6.6.0 for a
         private address), so the status code cannot be used to tell the two
         apart — the caller has to read the body.
         """
@@ -1064,7 +1074,7 @@ class MalcolmClient:
         """Capture-node statistics via GET /arkime/api/stats.
 
         Narrowing is done with `filter`, a substring match on the node name.
-        Verified on 6.6.0: `nodeName` is accepted and silently ignored, which
+        Verified on Arkime 6.6.0: `nodeName` is accepted and silently ignored, which
         returns every node and reads as though the filter matched everything.
         """
         params: dict[str, Any] = {}
@@ -1091,7 +1101,7 @@ class MalcolmClient:
         Args:
             fields: Comma-separated ECS dotted names (source.ip, destination.port).
                 Arkime NEVER ANSWERS for a db name (srcIp) or an expression name
-                (ip.src) here: measured on 6.6.0, both hang until the client
+                (ip.src) here: measured on Arkime 6.6.0, both hang until the client
                 times out rather than returning an error.
 
         Returns the CSV text, header row included. `length` bounds the rows
@@ -1115,7 +1125,7 @@ class MalcolmClient:
 
         The id is reduced to its bare form first. arkime_sessions hands out the
         node-prefixed id ("3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw") but Arkime's
-        `id ==` matches only the part after the last ':' — measured on 26.07.1,
+        `id ==` matches only the part after the last ':' — measured on Malcolm v26.07.1,
         the prefixed form returns 0 rows and the bare one returns the session.
         Feeding this tool the id its sibling produced therefore always missed.
         Only this expression needs the bare form: sessions.pcap takes the
@@ -1142,15 +1152,23 @@ class MalcolmClient:
     ) -> str:
         """Distinct values of one field via GET /arkime/api/unique.
 
+        `field` is an Arkime EXPRESSION name (ip.src, port.dst). A db name
+        fails silently here rather than loudly, which is why the same guard
+        multiunique uses rejects it before the request: measured on Malcolm v26.07.1,
+        exp=srcIp and exp=dstPort each returned HTTP 200 with a zero-byte body
+        — indistinguishable from a field that genuinely holds no values —
+        while ip.src returned 112 lines and port.dst 10000.
+
         Omitting the range uses Arkime's default (recent) window, which returns
         nothing on a historical capture — pass epoch-seconds strings to reach it.
-        Verified on 26.07.1: with no window this endpoint returned an empty body
+        Verified on Malcolm v26.07.1: with no window this endpoint returned an empty body
         over a 6M-session index whose data is a year old, and the same call with
         startTime/stopTime returned the value list.
 
         Returns text (one value per line), not JSON — this Arkime endpoint
         streams a plain-text body, optionally suffixed with counts.
         """
+        _require_arkime_exp_names(field)
         params: dict[str, Any] = _arkime_query_params(expression, time_from, time_to)
         params["exp"] = field
         params["counts"] = 1 if counts else 0
@@ -1166,7 +1184,32 @@ class MalcolmClient:
         time_from: str = "",
         time_to: str = "",
     ) -> dict[str, Any]:
-        """Top values of one field with a time graph via GET /api/spigraph."""
+        """Top values of one field with a time graph via GET /api/spigraph.
+
+        Args:
+            field: The storage path, i.e. Arkime's `dbField`. For 4,034 of the
+                4,051 fields in 26.07.1's catalogue that is what
+                arkime_field_search prints in its db column (protocol for
+                protocols); the other seventeen fork dbField from dbField2 and
+                the db column shows dbField2, which does not work here.
+                Measured on Malcolm v26.07.1 over 1714003200-1714089600,
+                field=destination.ip, field=protocol and field=http.host each
+                returned 10 items, while ip.dst, protocols, dstIp, port.dst and
+                dstPort each returned 0, all HTTP 200.
+
+                Left unguarded on purpose. A wrong value is not statically
+                separable at the scale that matters: 534 of the 4,051 rows
+                spell exp differently from dbField, and the sixteen-pair table
+                behind the expression guard covers 32 of the ~551 names that
+                fail here — missing `protocols`, the one an agent reaches for
+                first. A guard that catches 6% while reading as a check on the
+                rest is worse than none. The response separates the two causes
+                anyway: an empty items list with recordsFiltered > 0 is a field
+                name that did not resolve, recordsFiltered == 0 is an empty
+                window (measured: field=ip.dst over the window above returned 0
+                items and recordsFiltered 6,016,935; field=destination.ip with
+                no window returned 0 items and recordsFiltered 0).
+        """
         params = _arkime_query_params(expression, time_from, time_to)
         params["field"] = field
         params["size"] = size
@@ -1182,8 +1225,21 @@ class MalcolmClient:
         """Field-value profile across fields via GET /api/spiview.
 
         Args:
-            spi: Comma-separated db fields, each optionally ":<count>", e.g.
-                "protocols:10,ip.dst:20".
+            spi: Comma-separated storage paths, each optionally ":<count>",
+                e.g. "protocol:10,destination.ip:20" — the same spelling
+                arkime_spigraph takes, not the expression names the field
+                lists of unique/multiunique take. Measured on Malcolm v26.07.1 over
+                1714003200-1714089600: spi=protocol:10 returned 10 buckets,
+                spi=destination.ip:20 returned 20 and spi=http.host:5 returned
+                5, while protocols, ip.dst, dstIp and communityId each returned
+                an empty bucket list under their own key, HTTP 200.
+
+                Unguarded for the same reason as arkime_spigraph's field, and
+                readable the same way: recordsFiltered > 0 under empty buckets
+                means the name did not resolve (spi=protocols:10 over that
+                window returned 0 buckets and recordsFiltered 6,016,935), while
+                recordsFiltered == 0 means the window matched nothing
+                (spi=protocol:10 with no window: 0 buckets, recordsFiltered 0).
         """
         params = _arkime_query_params(expression, time_from, time_to)
         params["spi"] = spi
@@ -1200,12 +1256,24 @@ class MalcolmClient:
         """Source/destination connection graph via GET /api/connections.
 
         srcField/dstField take Arkime *db* field names (srcIp, dstIp, dstPort,
-        node), NOT the dotted ECS names the search tools use — Arkime's viewer
-        resolves them itself and errors (a 500 TypeError inside Arkime) on an
-        unknown db field like "ip.src". Verified live against Malcolm 25.12.1.
+        node) or the dotted storage paths behind them; this route resolves the
+        field itself instead of parsing it as an expression, so both spellings
+        of one field land on the same graph and only the expression spelling
+        fails. Measured on Malcolm v26.07.1 over 1714003200-1714089600, srcIp/dstIp and
+        source.ip/destination.ip both returned 10 nodes and 8 links,
+        srcIp/dstPort and source.ip/destination.port both 15 and 11, and the
+        pairs (network.bytes, totBytes), (client.bytes, srcDataBytes),
+        (destination.geo.country_iso_code, dstGEO) and (network.community_id,
+        communityId) each agreed node-for-node; ip.src/dstIp and port.src/dstIp
+        returned HTTP 403 "ResponseError: x_content_parse_exception" and
+        srcIp/port.dst a 500 "TypeError: Cannot read properties of undefined
+        (reading 'match')". Expression names are rejected before the request by
+        _require_arkime_db_names.
 
         Returns {"nodes": [...], "links": [...]} for tracing who talked to whom.
         """
+        _require_arkime_db_names(src_field, "srcField")
+        _require_arkime_db_names(dst_field, "dstField")
         params = _arkime_query_params(expression, time_from, time_to)
         params["srcField"] = src_field
         params["dstField"] = dst_field
@@ -1223,12 +1291,16 @@ class MalcolmClient:
         """Unique value combinations across several fields via GET /api/multiunique.
 
         Args:
-            fields: Comma-separated Arkime expression field names, e.g.
-                "source.ip,destination.port".
+            fields: Comma-separated Arkime EXPRESSION field names, e.g.
+                "ip.src,port.dst". A db name is not an error Arkime signals in
+                the status line: measured on Malcolm v26.07.1, exp=srcIp,dstIp returned
+                HTTP 200 whose whole body was "Unknown expression srcIp", so
+                db names are rejected here first.
 
         Returns plain text (one combined row per unique tuple), not JSON — this
         Arkime endpoint streams a text body.
         """
+        _require_arkime_exp_names(fields)
         params = _arkime_query_params(expression, time_from, time_to)
         params["exp"] = fields
         params["counts"] = 1 if counts else 0
@@ -1246,11 +1318,16 @@ class MalcolmClient:
         """Hierarchical top-N treemap across fields via GET /api/spigraphhierarchy.
 
         Args:
-            fields: Comma-separated db fields defining the hierarchy levels,
-                e.g. "source.ip,destination.ip".
+            fields: Comma-separated Arkime EXPRESSION field names defining the
+                hierarchy levels, e.g. "ip.src,ip.dst". Same vocabulary as
+                multiunique, louder failure: measured on Malcolm v26.07.1,
+                exp=srcIp,dstIp returned HTTP 403 {"success": false, "text":
+                "Unknown expression srcIp"}, while exp=ip.src,ip.dst returned
+                140 table rows. Db names are rejected before the request.
 
         Returns {"hierarchicalResults": {...}, "tableResults": [...]}.
         """
+        _require_arkime_exp_names(fields)
         params = _arkime_query_params(expression, time_from, time_to)
         params["exp"] = fields
         return await self.get("/arkime/api/spigraphhierarchy", params=params)
@@ -1286,7 +1363,7 @@ class MalcolmClient:
         tags naively merges the two halves of the conversation without noticing.
 
         Args:
-            node: Capture node from the session document. Measured on 26.07.1:
+            node: Capture node from the session document. Measured on Malcolm v26.07.1:
                 Arkime resolves the capture file itself and returns the same
                 6,008 bytes for a node that did not record the session, so this
                 is positional bookkeeping rather than a filter.
@@ -1376,7 +1453,7 @@ class MalcolmClient:
         POST, not GET, and the difference is a wrong answer rather than an
         error. The parameters only travel in a JSON body -- the same values as
         query parameters are a 400 -- and a GET carrying that body drops the
-        window on the floor: measured side by side on 26.07.1, GET answered
+        window on the floor: measured side by side on Malcolm v26.07.1, GET answered
         sessions=0 over graph.xmin=1785468240000 (Arkime's default recent
         window) where POST answered sessions=4,377,209 over the
         graph.xmin=1714003200000 that was asked for.
@@ -1582,7 +1659,7 @@ class MalcolmClient:
 
         CSRF-guarded exactly like the POST writes, and through the same
         _arkime_cookie_headers dance rather than a second mechanism: measured
-        on 26.07.1, the bare PUT answers 500 {"success":false,"text":"Missing
+        on Malcolm v26.07.1, the bare PUT answers 500 {"success":false,"text":"Missing
         token"}, and the same PUT with the primed cookie replayed as
         x-arkime-cookie gets past the guard and fails on the id instead
         (500 {"success":false,"text":"Error canceling hunt"} for one that does
@@ -1799,3 +1876,81 @@ def _arkime_query_params(expression: str, time_from: str, time_to: str) -> dict[
     if time_to:
         params["stopTime"] = time_to
     return params
+
+
+# The sixteen fields Arkime spells twice: an expression name (ip.src) for the
+# routes that parse a field list as an expression, a db name (srcIp) for
+# /api/connections. Taken from the /arkime/api/fields rows whose dbField2
+# differs from dbField -- 17 of 4051 on Malcolm 26.07.1, minus communityId
+# whose exp name and db name are the same string. Every other field spells exp
+# and db alike, so only these sixteen can be sent to the wrong route by
+# mistake.
+#
+# ponytail: a static table, not the cached catalogue, because the catalogue
+# cannot answer this question. Its db column is dbField2, and the *other*
+# column (dbField, e.g. source.mac for mac.src) is accepted by the expression
+# routes -- measured on /arkime/api/multiunique: exp=source.mac returned 105
+# rows while exp=srcOui, exp=protocol and exp=totBytes all returned "Unknown
+# expression". The routes disagree, which is the point: on /arkime/api/unique
+# those same three answer with data (srcOui 18 rows, protocol 52) or with an
+# empty 200 (totBytes), so a name this table would reject is a working call
+# somewhere. Rejecting every db-column name would break them. Consulting
+# it would also mean an extra /arkime/api/fields fetch inside every guarded
+# call, which fails closed when Arkime is unreachable. These sixteen are
+# Arkime's built-in session fields, stable across viewer versions.
+_ARKIME_DB_FOR_EXP = {
+    "asn.dst": "dstASN",
+    "asn.src": "srcASN",
+    "bytes": "totBytes",
+    "bytes.dst": "dstBytes",
+    "bytes.src": "srcBytes",
+    "country.dst": "dstGEO",
+    "country.src": "srcGEO",
+    "databytes.dst": "dstDataBytes",
+    "databytes.src": "srcDataBytes",
+    "ip.dst": "dstIp",
+    "ip.src": "srcIp",
+    "packets": "totPackets",
+    "packets.dst": "dstPackets",
+    "packets.src": "srcPackets",
+    "port.dst": "dstPort",
+    "port.src": "srcPort",
+}
+_ARKIME_EXP_FOR_DB = {db: exp for exp, db in _ARKIME_DB_FOR_EXP.items()}
+
+
+def _require_arkime_exp_names(fields: str) -> None:
+    """Reject Arkime db names on a parameter Arkime parses as an expression.
+
+    Only a name in the sixteen-pair table raises; anything else is passed
+    through to Arkime, because a name this table does not know may still be
+    valid -- Malcolm's own dotted paths (source.ip, source.mac) resolve on
+    these routes even though they are in neither Arkime vocabulary.
+
+    Raises:
+        ToolInputError: the field list names a db-only spelling.
+    """
+    for name in (part.strip() for part in fields.split(",")):
+        if exp := _ARKIME_EXP_FOR_DB.get(name):
+            raise ToolInputError(
+                f"'{name}' is an Arkime db name; this parameter takes expression names. "
+                f"arkime_field_search reports both -- use the exp column. "
+                f"Did you mean '{exp}'?"
+            )
+
+
+def _require_arkime_db_names(name: str, param: str) -> None:
+    """Reject Arkime expression names on /api/connections' field parameters.
+
+    Mirror of :func:`_require_arkime_exp_names`, and equally narrow: an
+    unrecognised name goes through to Arkime untouched.
+
+    Raises:
+        ToolInputError: the name is an expression-only spelling.
+    """
+    if db := _ARKIME_DB_FOR_EXP.get(name.strip()):
+        raise ToolInputError(
+            f"'{name}' is an Arkime expression name; {param} takes db names. "
+            f"arkime_field_search reports both -- use the db column. "
+            f"Did you mean '{db}'?"
+        )

@@ -52,21 +52,26 @@ _CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
 
 _INSTRUCTIONS = """\
 Malcolm network traffic analysis server (Zeek + Suricata + Arkime + OpenSearch, \
-optional NetBox). Tools for search, aggregation, field discovery, Suricata \
-alerts, Arkime sessions, PCAP/payload/file extraction, the standing detections \
-(OpenSearch alerting monitors, anomaly detectors, saved dashboards), NetBox \
-asset lookup, and health.
+optional NetBox): search, aggregation, field discovery, Suricata alerts, the \
+standing detections (OpenSearch alerting monitors, anomaly detectors, saved \
+dashboards), Arkime sessions, PCAP/payload/file extraction, NetBox asset \
+lookup, and health.
 
 DATA MODEL
 - All network data lives in one unified index, arkime_sessions3-* .
-- event.dataset distinguishes record types: conn, dns, ssl, http, tls, files, \
-alert, etc. Filter on it to narrow to a log type.
+- event.dataset distinguishes record types: conn, dns, http, ssl, files, alert, \
+plus whatever else this deployment parses (an OT capture adds modbus, dnp3 and \
+more). Filter on it to narrow to a log type; malcolm_field_values lists the ones \
+present.
 - Field names are NON-STANDARD (e.g. http.useragent, not http.user_agent). \
-NEVER guess a field name — look it up first. This is the anti-hallucination \
-layer; use it before every unfamiliar filter. TWO vocabularies, one per \
-dialect: malcolm_field_search / malcolm_field_values for malcolm_* and DSL \
-tools, arkime_field_search for anything you put in an arkime_* `expression`. \
-They are not interchangeable.
+NEVER guess a field name — look it up before every unfamiliar filter. TWO \
+vocabularies, one per dialect: malcolm_field_search / malcolm_field_values for \
+malcolm_* and DSL tools, arkime_field_search for anything you put in an \
+arkime_* `expression`. They are not interchangeable.
+- Every tool authenticates as the one account this server was configured with, \
+so a list shows what that account can see: an Arkime view carries its owner and \
+the roles it is shared with, and an empty arkime_views / arkime_shortcuts / \
+arkime_crons list is not proof there are none.
 
 THREE QUERY DIALECTS — pick deliberately:
 1. malcolm_search / malcolm_aggregate / malcolm_alerts — Malcolm's simple filter \
@@ -81,9 +86,14 @@ arkime_session_payload, arkime_session_file_by_hash, arkime_add_tags.
 dialect 2 cannot say what you mean (wildcard, fuzzy, script): arkime_build_query \
 compiles an expression into the DSL it becomes, so you edit that rather than \
 write one from nothing.
+Names carry the subsystem: malcolm_* go through Malcolm's own API, arkime_* \
+through Arkime's, and the five unprefixed tools (search_dsl, count, \
+list_indices, index_mapping, cluster_health) are raw OpenSearch through \
+Malcolm's proxy.
 
-TIME FORMATS DIFFER BY DIALECT: Malcolm/DSL tools take dateparser strings; every \
-arkime_* tool takes epoch seconds. Mixing them silently returns wrong/empty data.
+TIME FORMATS DIFFER BY DIALECT: Malcolm/DSL tools take dateparser strings, every \
+arkime_* tool takes epoch SECONDS, and malcolm_anomaly_results alone takes epoch \
+MILLISECONDS. Mixing them silently returns wrong/empty data.
 
 TYPICAL HUNT FLOW
 malcolm_field_search -> malcolm_field_values (learn the schema) -> malcolm_search \
@@ -91,12 +101,16 @@ or arkime_sessions (find sessions; arkime_sessions_summary sizes a match in \
 sessions/bytes/packets first, in one call) -> arkime_session_detail / \
 arkime_session_pcap / arkime_session_payload / arkime_session_file_by_hash \
 (drill into one) -> malcolm_create_alert / arkime_add_tags (record the finding, \
-if those write classes are on). See the "hunt_workflow" prompt for a worked \
-example.
+if those write classes are on). When metadata cannot answer it, search the \
+payloads: arkime_sessions_summary (size it first) -> arkime_create_hunt -> \
+arkime_hunt_status (present even with every write class off) -> \
+arkime_cancel_hunt. See the "hunt_workflow" prompt for a worked example.
 
-WRITES are opt-in per class (alerting, arkime-tag, hunt-job, pcap-upload), off by \
-default; a disabled class's tools are absent entirely. Destructive actions \
-(delete, tag removal, NetBox writes) are deliberately NOT exposed."""
+WRITES are opt-in per class (alerting, arkime-tag, hunt-job, pcap-upload, \
+arkime-view), off by default; a disabled class's tools are absent entirely. \
+Every write is additive except arkime_cancel_hunt, which ends a scan already \
+running and alone declares destructiveHint. Deletion, tag removal and NetBox \
+writes are not exposed at all."""
 
 
 def create_server() -> MCPServer:

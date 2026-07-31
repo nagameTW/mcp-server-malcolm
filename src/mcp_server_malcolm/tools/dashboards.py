@@ -105,7 +105,9 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             Field(
                 description="Which saved-object types to search, comma-separated: "
                 'dashboard, visualization, search, index-pattern. E.g. "dashboard"; '
-                '"dashboard,search".'
+                '"dashboard,search". Values are trimmed and matched '
+                'case-insensitively, so "Dashboard, Search" works; anything outside '
+                "the four is refused with the list of what is allowed."
             ),
         ] = "dashboard",
         search: Annotated[
@@ -121,18 +123,18 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this to discover what pre-built analysis already exists before
         building a query by hand — Malcolm ships over a hundred dashboards, and
-        one of them usually already covers the protocol you are looking at. Take
-        a DASHBOARD's `id` to malcolm_dashboard_export to read how it is built —
-        that endpoint resolves ids as dashboards only, and answers 200 with an
+        one of them usually already covers the protocol you are looking at. This
+        is catalogue metadata only: for the query behind a saved search or
+        visualization take its `id` to malcolm_saved_object_detail, and for how
+        a DASHBOARD is built take its `id` to malcolm_dashboard_export — that
+        endpoint resolves ids as dashboards only, and answers 200 with an
         embedded 404 for a visualization or saved-search id.
         This searches the Dashboards catalogue, NOT network traffic: for traffic
         use malcolm_search, and for the field names behind a visualization use
         malcolm_field_search.
 
-        Returns JSON {"total", "showing", "objects"}: per object the type, id,
-        title, description and last-updated time. The panel layout is
-        deliberately not included — it is several KB of positioning JSON per
-        dashboard and says nothing about what the dashboard shows.
+        Returns JSON {"total", "showing", "objects"}; field names are in the
+        output schema, which also records why the panel layout is absent.
         """
         wanted = [t.strip().lower() for t in object_type.split(",") if t.strip()]
         unknown = [t for t in wanted if t not in _OBJECT_TYPES]
@@ -198,7 +200,7 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Use this on a saved SEARCH to recover the query a human curated —
         Malcolm ships 141 of them, and the Arkime-side equivalent is
         arkime_views — and on a visualization to find the search it is built
-        from. malcolm_saved_objects lists titles and ids and stops there;
+        from. malcolm_saved_objects lists the catalogue and stops there;
         malcolm_dashboard_export resolves DASHBOARD ids only and answers 200
         with an embedded 404 for a visualization or saved-search id, so for
         those two this is the only route. For the traffic a query matches, take
@@ -212,17 +214,15 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         searches used the pre-7.x {"query_string": {"query": "..."}} object
         rather than a plain string. `query` is always the string.
 
-        Returns JSON: type, id, title, description, updated_at, then query and
-        `language` — "lucene" or "kuery", and they are not interchangeable, so
-        check it before reusing the string — plus filters, index_pattern, and
-        for a saved search the columns and sort order the analyst chose. On this
-        Malcolm the index-pattern reference id is the pattern itself
-        ("arkime_sessions3-*"); elsewhere it can be a UUID, which this tool
-        resolves with object_type="index-pattern". A visualization has no query
-        of its own: `based_on_search` is the id of the saved search it inherits
-        one from. Aggregation (visState) and panel-layout (panelsJSON) blobs are
-        left out; malcolm_dashboard_export returns them for everything on a
-        dashboard. Raises if nothing has that type and id.
+        Field names, and which of them appear for which object type, are in the
+        output schema. Read `language` before reusing `query`: "lucene" and
+        "kuery" are not interchangeable. On this Malcolm the index-pattern
+        reference id is the pattern itself ("arkime_sessions3-*"); elsewhere it
+        can be a UUID, which this tool resolves with object_type="index-pattern".
+        A visualization has no query of its own — `based_on_search` names the
+        saved search it inherits one from — and the aggregation and panel-layout
+        blobs behind a dashboard come from malcolm_dashboard_export. Raises if
+        nothing has that type and id.
         """
         wanted = object_type.strip().lower()
         if wanted not in _OBJECT_TYPES:

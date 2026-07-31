@@ -1,9 +1,11 @@
-"""Write class: pcap-upload — POST /upload (Malcolm 26.06.1).
+"""Write class: pcap-upload — POST /server/php/submit.php (Malcolm 26.06.1).
 
-FilePond multipart upload of a capture file for ingestion. The upload endpoint
-is one of two routes Malcolm's own read-only mode removes entirely, so this is
-a genuine write. Server-side: extension denylist + a downstream libmagic check
-route accepted types; everything else is deleted.
+FilePond multipart upload of a capture file for ingestion. The bare /upload
+path is a rewrite target that 405s on a direct POST, so the request goes to the
+FilePond processor itself (see MalcolmClient._write_upload_pcap). The upload
+endpoint is one of two routes Malcolm's own read-only mode removes entirely, so
+this is a genuine write. Server-side: extension denylist + a downstream libmagic
+check route accepted types; everything else is deleted.
 
 file_path is confined to MALCOLM_MCP_UPLOAD_DIR: the tool reads a local file and
 ships its bytes off-host, so without a staging boundary a prompt-injected caller
@@ -96,17 +98,22 @@ def register_pcap_upload_tools(
             ),
         ] = 500,
     ) -> str:
-        """Upload a local capture file to Malcolm for ingestion (POST /upload).
+        """Upload a local capture file to Malcolm for ingestion (POST /server/php/submit.php).
 
         Use this to feed a PCAP into Malcolm so Zeek/Suricata parse it and it
         becomes searchable via malcolm_search / arkime_sessions. The file must
         already sit inside the server's staging directory (MALCOLM_MCP_UPLOAD_DIR);
         files outside it, and all uploads when that variable is unset, are
         refused — this boundary stops a prompt-injected caller from shipping
-        arbitrary host files off-box. Additive — ingests new data and changes
-        nothing already indexed. The action is audited, and the tool is
-        registered only when the pcap-upload write class is enabled. Returns
-        JSON with the uploaded flag, filename, size, and HTTP status.
+        arbitrary host files off-box, and there is no second tool that uploads
+        without it, so a refusal means staging the file server-side first.
+        Additive — ingests new data and changes nothing already indexed. The
+        action is audited, and the tool is registered only when the pcap-upload
+        write class is enabled. Ingestion is asynchronous: the reply says
+        Malcolm took the file, while a separate service parses it afterwards, so
+        a search run straight after the upload still finds nothing — watch
+        latest_age_seconds from malcolm_data_coverage instead of re-uploading.
+        Returns JSON with the uploaded flag, filename, size, and HTTP status.
         """
         resolved = _resolve_in_dir(file_path.strip(), upload_dir)
 

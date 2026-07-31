@@ -22,8 +22,11 @@ if TYPE_CHECKING:
 
 _CLASS = "arkime-tag"
 
-# Shared: additive write to the external Arkime server, never idempotent
-# (tagging the same session twice appends the tag again / re-issues the write).
+# Shared: additive write to the external Arkime server, never idempotent. The
+# update script skips a tag the session already carries (db.js addTagsToSession
+# only appends when indexOf == -1), so a repeat adds no duplicates -- but it
+# re-issues the write against every id, and a batch that landed on some ids and
+# not others is indistinguishable from a repeat, so idempotentHint stays false.
 _WRITE = {
     "readOnlyHint": False,
     "destructiveHint": False,
@@ -57,12 +60,21 @@ def register_arkime_tag_tools(
         """Add label tag(s) to existing Arkime session(s) (POST /arkime/api/sessions/addtags).
 
         Use this to mark sessions you have already found — first run
-        arkime_sessions to get the session ids, then pass them here. Additive
-        only: it appends tags and changes nothing else about the sessions.
-        Removing tags is a deliberate non-goal of this tool (it needs a separate
-        role and safety design), so this never deletes or clears existing tags.
-        The action is audited, and the tool is registered only when the
-        arkime-tag write class is enabled. Returns the raw Arkime response.
+        arkime_sessions to get the session ids, then pass them here. To label a
+        standing pattern instead of one set of ids, Arkime's cron queries do it
+        on a schedule; arkime_crons shows the ones this deployment runs.
+        Additive only: it appends tags and changes nothing else. Arkime skips a
+        tag a session already carries, so a repeat adds no duplicates, but it is
+        not a safe retry — it re-runs the update on every id, and a batch that
+        reached some ids and not others reads exactly like a repeat. Removing
+        tags is a deliberate non-goal of this tool (it needs a separate role and
+        safety design). The action is audited, and the tool is registered only
+        when the arkime-tag write class is enabled. A success reply means Arkime
+        accepted the batch, not that every id matched: unresolvable ids are
+        skipped without a count, and only when none resolve does the answer
+        change — still HTTP 200, but carrying success:false with Arkime's own
+        explanation in `text`. Read the flag, never the status code. Returns the
+        raw Arkime response.
         """
         ids = session_ids.strip()
         tg = tags.strip()
