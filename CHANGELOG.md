@@ -6,6 +6,19 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-07-31
+
+### Fixed
+
+- **1.0.0 told every client it was 0.9.0.** `pyproject.toml` was bumped and the
+  wheel metadata was correct, but `__init__.py` restated the number as a
+  literal and that literal is what `server.py` hands to the MCP handshake as
+  `serverInfo.version`. `__version__` now reads the installed distribution's
+  metadata, so there is one source of truth; a test asserts it matches both the
+  installed version and `pyproject.toml`, and a third refuses any module that
+  restates the version as a literal again. PyPI cannot be re-uploaded, so 1.0.0
+  keeps the wrong handshake — use 1.0.1.
+
 ## [1.0.0] - 2026-07-31
 
 An audit against MCP revision 2026-07-28, a coverage audit against Malcolm's
@@ -664,7 +677,8 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.9.0...v1.0.0
 [0.9.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.7.0...v0.8.0

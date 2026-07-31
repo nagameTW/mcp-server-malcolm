@@ -11,9 +11,20 @@ Provides tool access to Malcolm's unified API, including:
 Works with any MCP-compatible agent.
 """
 
-__version__ = "0.9.0"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _installed_version
 
-from mcp_server_malcolm.client import MalcolmClient
+# Read from the installed distribution rather than restating pyproject's number.
+# server.py hands this to the MCP handshake as serverInfo.version, so a stale
+# literal here tells every connected client the wrong version -- which is what
+# 1.0.0 shipped with, its serverInfo still reading 0.9.0. There is one source of
+# truth now and it is the package metadata.
+try:
+    __version__ = _installed_version("mcp-server-malcolm")
+except PackageNotFoundError:  # running from a source tree with nothing installed
+    __version__ = "0.0.0+unknown"
+
+from mcp_server_malcolm.client import MalcolmClient  # noqa: E402
 
 __all__ = ["MalcolmClient", "__version__"]
 
