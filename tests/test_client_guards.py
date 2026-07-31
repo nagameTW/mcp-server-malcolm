@@ -8,6 +8,7 @@ caller as an UpstreamError with its text redacted.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import httpx
@@ -53,6 +54,36 @@ async def test_aggregate_rejects_a_bare_dot_dot_segment():
     c, seen = _recording_client()
     with pytest.raises(ToolInputError):
         await c.aggregate(fields="..")
+    assert seen == []
+
+
+async def test_field_names_off_the_allow_list_are_rejected_with_no_dot_segment_to_lean_on():
+    """The character class itself has to be what stops these.
+
+    The two traversal tests above both feed a value containing a ".." segment,
+    so _DOT_SEGMENT answers first and _FIELD_RE could be widened to ".+" with
+    the suite still green. Every value here is asserted free of a ".." segment
+    before it is tried, which leaves the character class as the only thing that
+    can reject it. Each is also a working attack once the class stops matching:
+    "/mapi/agg/<fields>" is built by f-string, so a separator adds a segment of
+    someone else's endpoint, "?" starts a query, "#" truncates what httpx
+    sends, and "%2f" is a separator a server may decode after routing.
+    """
+    c, seen = _recording_client()
+    for bad in (
+        "x?a=b",
+        "a/b",
+        "..%2f..%2farkime%2fapi%2fhunts",
+        "x#frag",
+        "x\\y",
+    ):
+        assert not client_mod._DOT_SEGMENT.search(bad), f"{bad!r} is caught by the wrong guard"
+        with pytest.raises(ToolInputError) as err:
+            await c.aggregate(fields=bad)
+        # repr, because that is how the message quotes the offending value.
+        assert repr(bad) in str(err.value)
+        with pytest.raises(ToolInputError):
+            await c.field_values(field=bad)
     assert seen == []
 
 
@@ -106,6 +137,61 @@ async def test_opensearch_index_and_pattern_are_guarded():
     assert seen == []
 
 
+async def test_index_names_off_the_allow_list_are_rejected_with_no_dot_segment_to_lean_on():
+    """_INDEX_RE has to be what stops these, exactly as _FIELD_RE does above.
+
+    Every value in the sibling test carries a ".." segment, so _DOT_SEGMENT
+    answers first and _INDEX_RE could be widened without the suite noticing.
+    "%" is the realistic widening: it is what "support percent-encoded index
+    names" would add, and httpx forwards "%2f" verbatim, so the escape survives
+    this process and is decoded by whatever routes the request.
+    """
+    c, seen = _recording_client()
+    for bad in ("..%2f..%2farkime%2fapi%2fhunts", "idx#frag", "a/b"):
+        assert not client_mod._DOT_SEGMENT.search(bad), f"{bad!r} is caught by the wrong guard"
+        for call in (
+            lambda: c.opensearch_dsl(bad, {}),
+            lambda: c.opensearch_count(bad, {}),
+            lambda: c.opensearch_mapping(bad),
+            lambda: c.opensearch_indices(bad),
+        ):
+            with pytest.raises(ToolInputError):
+                await call()
+    assert seen == []
+
+
+async def test_dashboard_ids_off_the_allow_list_are_rejected_with_no_dot_segment_to_lean_on():
+    """Same masking, same fix, on the third guard that builds a path segment."""
+    c, seen = _recording_client()
+    for bad in ("..%2f..%2farkime%2fapi%2fhunts", "id%2e%2e%2fx"):
+        assert not client_mod._DOT_SEGMENT.search(bad), f"{bad!r} is caught by the wrong guard"
+        with pytest.raises(ToolInputError) as err:
+            await c.dashboard_export(bad)
+        assert bad in str(err.value)
+    assert seen == []
+
+
+async def test_every_guarded_path_component_refuses_an_empty_value():
+    """An empty segment collapses the path -- pin it, don't inherit it.
+
+    Today each guard rejects "" only as a side effect of its quantifier ("+",
+    "{16,128}"). Nothing asserted it, so a guard rewritten as "match if the
+    value is non-empty AND well-formed" would send "/mapi/opensearch//_search"
+    and friends with the suite still green.
+    """
+    c, seen = _recording_client()
+    for call in (
+        lambda: c.aggregate(fields=""),
+        lambda: c.dashboard_export(""),
+        lambda: c.opensearch_dsl("", {}),
+        lambda: c.netbox_get(""),
+        lambda: c.arkime_file_by_hash(""),
+    ):
+        with pytest.raises(ToolInputError):
+            await call()
+    assert seen == []
+
+
 async def test_opensearch_accepts_wildcard_patterns():
     c, seen = _recording_client()
     await c.opensearch_dsl("arkime_sessions3-*", {"query": {}})
@@ -131,6 +217,50 @@ async def test_arkime_bodyhash_is_guarded_and_accepts_a_real_hash():
     assert seen == []
     await c.arkime_file_by_hash("a" * 32)
     assert seen[0].url.path == f"/arkime/api/sessions/bodyhash/{'a' * 32}"
+
+
+async def test_body_hash_must_be_hex_within_the_digest_lengths():
+    """Pins the shape and both length bounds of _HASH_RE.
+
+    The test above only feeds a value containing "..", which _DOT_SEGMENT
+    catches on its own; these are all ".."-free, so _HASH_RE is the only guard
+    that can reject them, and 15/129 characters sit one either side of the
+    16..128 window the pattern allows.
+    """
+    c, seen = _recording_client(responder=lambda _r: httpx.Response(200, content=b"x"))
+    for bad in ("g" * 32, "a" * 15, "a" * 129, "abcdef0123456789?a=b", "abcdef0123456789/x"):
+        assert not client_mod._DOT_SEGMENT.search(bad), f"{bad!r} is caught by the wrong guard"
+        with pytest.raises(ToolInputError):
+            await c.arkime_file_by_hash(bad)
+    assert seen == []
+    # The three digest widths Arkime actually stores, all still accepted.
+    digests = (
+        "d41d8cd98f00b204e9800998ecf8427e",
+        "da39a3ee5e6b4b0d3255bfef95601890afd80709",
+        "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855",
+    )
+    for digest in digests:
+        await c.arkime_file_by_hash(digest)
+    assert [r.url.path for r in seen] == [f"/arkime/api/sessions/bodyhash/{d}" for d in digests]
+
+
+def test_the_argument_guard_rejects_a_dot_dot_segment_by_itself():
+    """_checked's second half, pinned without the path backstop in front of it.
+
+    _FIELD_RE and the index/dashboard classes all admit ".", so ".." passes
+    fullmatch and only _DOT_SEGMENT inside _checked stops it. Driven through a
+    tool, _checked_path in get/post answers first and this layer could be
+    deleted unnoticed -- so this calls _checked directly and defence in depth
+    is two tested layers rather than one tested layer and one hope.
+    """
+    for pattern, what in (
+        (client_mod._FIELD_RE, "field name"),
+        (client_mod._INDEX_RE, "index"),
+        (client_mod._DASHBOARD_ID_RE, "dashboard id"),
+    ):
+        assert pattern.fullmatch(".."), f"{what} class no longer needs the dot-segment check"
+        with pytest.raises(ToolInputError):
+            client_mod._checked("..", pattern, what, "a shape")
 
 
 async def test_extracted_file_name_stays_one_encoded_segment():
@@ -289,6 +419,53 @@ def test_from_env_reads_both_bounds(monkeypatch: pytest.MonkeyPatch):
     c = MalcolmClient.from_env()
     assert c._max_concurrency == 3
     assert c._max_requests_per_minute == 42
+
+
+@pytest.mark.parametrize("raw", ["0", "abc", "-5", ""])
+def test_a_bound_that_would_disable_the_limiter_falls_back_and_says_so(
+    raw: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+):
+    """A zero is the interesting case: it is all digits, so only the "> 0" half
+    of _positive_int_env rejects it, and a cap of 0 is not "no cap" but a broken
+    one -- _rate_limit would index an empty deque. A blank value is the unset
+    case and must fall back silently rather than warn."""
+    monkeypatch.setenv("MALCOLM_MAX_CONCURRENCY", raw)
+    monkeypatch.setenv("MALCOLM_MAX_REQUESTS_PER_MINUTE", raw)
+    with caplog.at_level(logging.WARNING, logger=client_mod.logger.name):
+        c = MalcolmClient.from_env()
+
+    assert c._max_concurrency == client_mod._DEFAULT_MAX_CONCURRENCY
+    assert c._max_requests_per_minute == client_mod._DEFAULT_MAX_REQUESTS_PER_MINUTE
+    warned = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    if raw:
+        assert len(warned) == 2, warned
+        assert all(repr(raw) in message for message in warned), warned
+    else:
+        assert warned == []
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"max_requests_per_minute": 0},
+        {"max_requests_per_minute": -1},
+        {"max_concurrency": 0},
+        {"max_concurrency": -1},
+    ],
+)
+def test_a_non_positive_bound_passed_in_code_raises_at_construction(kwargs: dict[str, int]):
+    """The standalone-import path the module docstring advertises.
+
+    from_env can no longer produce these, but a direct caller could, and the
+    failure used to land far away: max_requests_per_minute=0 raised IndexError
+    out of _rate_limit's empty deque on the first request, max_concurrency=0
+    hung until the connect timeout. The env path logs and falls back because a
+    deployment typo must not stop the server; a caller writing 0 in code has a
+    bug that a substituted default would hide.
+    """
+    with pytest.raises(ValueError) as err:
+        MalcolmClient(base_url="https://malcolm.example", **kwargs)
+    assert next(iter(kwargs)) in str(err.value)
 
 
 def test_from_env_defaults_are_generous(monkeypatch: pytest.MonkeyPatch):

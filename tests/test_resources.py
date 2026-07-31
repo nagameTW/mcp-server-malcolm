@@ -13,9 +13,10 @@ import json
 import httpx
 import pytest
 from conftest import tool_text
-from mcp.server.caching import CacheHint
+from mcp.client import Client
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ResourceError
+from mcp_types.version import MODERN_PROTOCOL_VERSIONS
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.resources import (
@@ -162,15 +163,42 @@ async def test_an_upstream_failure_raises_instead_of_returning_a_message():
         await mcp.read_resource(MALCOLM_FIELDS_URI)
 
 
-def test_cache_hints_are_declared_for_the_frozen_methods():
-    """Pins both the TTLs and the deliberate omissions. `cache_hints` has no
-    public accessor on MCPServer, so this reaches through to the lowlevel
-    server the way conftest owns the CallToolResult shape."""
-    hints = create_server()._lowlevel_server.cache_hints
+async def test_cache_hints_reach_a_modern_peer_over_a_connection(monkeypatch: pytest.MonkeyPatch):
+    """Pins the TTLs and the deliberate omissions as a peer receives them.
 
-    assert hints == {
-        "tools/list": CacheHint(ttl_ms=3_600_000, scope="public"),
-        "prompts/list": CacheHint(ttl_ms=3_600_000, scope="public"),
-        "resources/list": CacheHint(ttl_ms=3_600_000, scope="public"),
-        "resources/read": CacheHint(ttl_ms=3_600_000, scope="private"),
-    }
+    Asserting the `cache_hints` dict would compare the literal to the literal it
+    was written from and could never fail for a wire-level reason -- the hints
+    only become observable after ServerRunner fills `ttlMs`/`cacheScope` into
+    each result and the per-version sieve decides whether to keep them. So this
+    runs a real client against `create_server()`, on the in-process connection
+    that negotiates the modern era.
+
+    Deliberately NOT pinned: the handshake era. A `mode="legacy"` peer
+    negotiates 2025-11-25 and reads `ttl_ms=0` on every method, because the
+    SDK's sieve drops 2026 fields for a legacy result -- that is the SDK's
+    behaviour, not a decision in this repo, and pinning it here would turn an
+    SDK back-port into a failure of a test about our hints.
+    """
+    monkeypatch.setattr(
+        MalcolmClient, "from_env", classmethod(lambda cls: _mock_client(_catalogue_handler()))
+    )
+    async with Client(create_server()) as client:
+        assert client.session.protocol_version in MODERN_PROTOCOL_VERSIONS
+
+        for method, call in (
+            ("tools/list", client.session.list_tools),
+            ("prompts/list", client.session.list_prompts),
+            ("resources/list", client.session.list_resources),
+        ):
+            result = await call()
+            assert (result.ttl_ms, result.cache_scope) == (3_600_000, "public"), method
+
+        for uri in (MALCOLM_FIELDS_URI, ARKIME_FIELDS_URI):
+            read = await client.session.read_resource(uri)
+            assert (read.ttl_ms, read.cache_scope) == (3_600_000, "private"), uri
+
+        # The two omissions, from the same connection: server/discover is
+        # per-connection so one method-keyed hint could serve a modern result to
+        # a legacy peer, and there are no resource templates to cache yet.
+        assert client.session.discover_result.ttl_ms == 0
+        assert (await client.session.list_resource_templates()).ttl_ms == 0

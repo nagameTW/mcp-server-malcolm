@@ -74,6 +74,24 @@ def _positive_int_env(name: str, default: int) -> int:
     return default
 
 
+def _positive_arg(name: str, value: int) -> int:
+    """Reject a non-positive bound handed to the constructor.
+
+    The two paths differ on purpose. An env var is a deployment's input, and a
+    typo there must not stop the server from starting, so _positive_int_env
+    logs and keeps the default -- the limiter stays on either way. A constructor
+    argument is a programmer's input, reached only by the standalone use the
+    module docstring advertises; substituting a default would hide the caller's
+    bug instead of reporting it. Unchecked, the two values fail far from their
+    cause: max_requests_per_minute=0 makes _rate_limit index an empty deque
+    (IndexError), and max_concurrency=0 leaves every request queued forever on a
+    pool that can never open a connection.
+    """
+    if value < 1:
+        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    return value
+
+
 # -- Path-splicing guards ---------------------------------------------------
 # Every value below is interpolated into an upstream URL path. httpx removes
 # dot segments before sending, so an unchecked value walks out of its endpoint:
@@ -177,6 +195,10 @@ class MalcolmClient:
 
     Wraps /mapi/* endpoints (unified gateway) and /arkime/api/* endpoints.
     Handles authentication, SSL, timeouts, and field caching.
+
+    Raises:
+        ValueError: max_concurrency or max_requests_per_minute below 1. See
+            _positive_arg for why this raises where the env path falls back.
     """
 
     def __init__(
@@ -193,8 +215,10 @@ class MalcolmClient:
         self._auth = httpx.BasicAuth(username, password)
         self._ssl_verify = ssl_verify
         self._timeout = timeout
-        self._max_concurrency = max_concurrency
-        self._max_requests_per_minute = max_requests_per_minute
+        self._max_concurrency = _positive_arg("max_concurrency", max_concurrency)
+        self._max_requests_per_minute = _positive_arg(
+            "max_requests_per_minute", max_requests_per_minute
+        )
         self._request_times: deque[float] = deque()
         self._rate_lock = asyncio.Lock()
         self._http: httpx.AsyncClient | None = None
