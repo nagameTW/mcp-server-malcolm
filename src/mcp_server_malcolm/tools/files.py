@@ -30,7 +30,7 @@ _PATH_CHARS = ("/", "\\")
 
 # The downloaded body is held in memory. Zeek's own ceiling
 # (EXTRACTED_FILE_MAX_BYTES) defaults to 128 MB, so cap under it and send
-# anything larger to url_only. Same cap as arkime.py's file download.
+# anything larger to url_only. Same cap as arkime_content.py's file download.
 _MAX_BYTES = 100 * 1024 * 1024
 
 # The file.mime_type values that mean "native executable" -- the shortcut
@@ -356,6 +356,24 @@ def _first(value: Any) -> Any:
     return value
 
 
+def _str_list(value: Any) -> list[str] | None:
+    """A scanner's rule/scanner names as list[str], whichever shape arrived.
+
+    Unmeasured on this deployment, unlike every other key in _file_row: all 50
+    filescan records sampled on v26.07.1 carry hits 0 and therefore no
+    filescan.rules subobject at all, so the populated shape could not be
+    observed. FileRow declares both keys `list[str]`, and a dict branch that
+    fails validation does NOT fall back to the `str` branch of the tool's
+    return union, so a single hit arriving as a bare string would take the
+    whole file-scan answer down at exactly the moment a file matched a rule.
+    """
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return [str(item) for item in value if item not in (None, "")]
+    return [str(value)] if str(value) else None
+
+
 def _is_true(value: Any) -> bool:
     """Zeek flags arrive as "T"/"F" from the Zeek log and as bools from filescan."""
     return value is True or (isinstance(value, str) and value.upper() == "T")
@@ -414,8 +432,8 @@ def _file_row(source: dict[str, Any]) -> FileRow:
         "severity": event.get("severity"),
         "severity_tags": event.get("severity_tags"),
         "scan_hits": scan.get("hits"),
-        "scan_rules": rules.get("name"),
-        "scan_scanners": rules.get("scanner"),
+        "scan_rules": _str_list(rules.get("name")),
+        "scan_scanners": _str_list(rules.get("scanner")),
         "zeek_uid": _first(zeek.get("uid")),
     }
 

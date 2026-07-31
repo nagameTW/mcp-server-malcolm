@@ -270,8 +270,8 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
                     "action": row.get("action"),
                     "owner": row.get("creator") or row.get("user"),
                     "description": row.get("description"),
-                    "last_run": row.get("lastRun") or row.get("lpValue"),
-                    "matched_sessions": row.get("count"),
+                    "last_run": _number(row.get("lastRun") or row.get("lpValue")),
+                    "matched_sessions": _number(row.get("count")),
                     "id": row.get("key") or row.get("id"),
                 }
             )
@@ -473,6 +473,27 @@ def _tag_list(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     return [tag.strip() for tag in str(value or "").split(",") if tag.strip()]
+
+
+def _number(value: Any) -> int | None:
+    """A cron query's counters as a plain int, or None when it is not a number.
+
+    Coerced rather than declared loosely, and for the same reason _tag_list
+    exists: this lab has zero crons, so `lastRun`/`lpValue` and `count` were
+    never observed populated. CronQuery declares them `int`, and a dict branch
+    that fails validation does NOT fall back to the `str` branch of the return
+    union -- one float or one numeric string in one row would take the whole
+    tool down rather than cost one key. _positive below already tolerates "the
+    strings Arkime sometimes sends" from this same server, so the tolerance is
+    measured even where the value is not. Widening the declaration to
+    int | float | str would validate too, but it would hand the caller a
+    `last_run` it has to parse before it can compare it to a session time,
+    which is the work this tool exists to have already done.
+    """
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _percent(value: Any) -> Any:

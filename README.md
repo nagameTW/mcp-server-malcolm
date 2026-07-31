@@ -26,7 +26,7 @@ The server splits write access into five classes, each behind its own environmen
 [mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 ```
 
-Every write is additive. Version 1 has no tool that deletes data, removes a tag, or touches user accounts. It leaves those out on purpose (see [Non-goals](#non-goals)).
+Every write but one is additive: the exception is `arkime_cancel_hunt`, which stops a hunt job in progress rather than adding to it. None of them deletes data, removes a tag, or touches a user account — those stay out on purpose (see [Non-goals](#non-goals)).
 
 ## Why an MCP layer
 
@@ -106,8 +106,11 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 |------|-------------|
 | `arkime_field_search` | Look up the field names Arkime expressions accept (`ip.src`, `port.dst`) — a separate vocabulary from the ECS names `malcolm_field_search` returns |
 | `arkime_sessions` | Search Arkime sessions with Arkime expression syntax |
+| `arkime_sessions_summary` | Total sessions, bytes and packets for an expression, plus per-field breakdowns — size a match before something expensive (like a hunt) acts on it |
 | `arkime_session_detail` | Fetch all fields (full SPI document) for one session |
 | `arkime_session_pcap` | Fetch a session's PCAP and report its size and file-magic validity (metadata only, nothing written to disk) |
+| `arkime_session_payload` | Read a session's decoded payload — the bytes that crossed the wire, not parsed fields (plain text, not JSON) |
+| `arkime_session_file_by_hash` | Fetch the file ONE named session carried, by md5/sha256 (metadata only, nothing written to disk) — pins the answer to that session, unlike `arkime_file_by_hash`, which serves the most recent match across every session |
 | `arkime_unique` | List distinct values of one field, with optional counts |
 | `arkime_multiunique` | Unique value combinations across several fields (e.g. src.ip + dst.port pairs) |
 | `arkime_spigraph` | Top values of one field with a time-series graph |
@@ -116,6 +119,7 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 | `arkime_connections` | Source/destination connection graph (nodes and links) |
 | `arkime_file_by_hash` | Extract the transferred file whose md5/sha256 matches (metadata only, nothing written to disk) |
 | `arkime_sessions_csv` | Export sessions as a compact CSV table — about half the tokens of the same rows as JSON |
+| `arkime_build_query` | Compile an Arkime expression into the OpenSearch DSL it becomes, without running it — hand the result to `search_dsl` for a clause Arkime's syntax can't express |
 
 ### Arkime saved objects and capture health
 
@@ -123,9 +127,11 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 |------|-------------|
 | `arkime_views` | List the saved search views the team curated, with each one's expression |
 | `arkime_shortcuts` | List named value lists (IOC sets) and what each holds, plus the `$name` token to use in an expression |
+| `arkime_crons` | List Arkime's cron queries — saved expressions that re-run on a schedule and explain where an unrecognized session tag came from |
 | `arkime_reverse_dns` | Reverse-resolve one IP to its PTR hostname |
 | `arkime_pcap_files` | List the PCAP files Arkime has indexed, with each file's size, packet/session counts and time span |
 | `arkime_node_stats` | Capture-node health: dropped packets, disk, memory, queues — warns when a node is losing packets, since that turns a gap into what looks like an absence |
+| `arkime_hunt_status` | List Arkime hunt jobs and their progress — queued, running or finished. Registered unconditionally: it only reads job status, so it stays available with every write class off |
 
 Arkime's `connections.csv` is deliberately not wrapped: on Arkime 6.6.0 it emits a nine-column header over seven-column rows, so every column after the second is mislabeled. `arkime_connections` answers the same question correctly.
 
@@ -144,11 +150,15 @@ Arkime's `connections.csv` is deliberately not wrapped: on Arkime 6.6.0 it emits
 |------|-------------|
 | `malcolm_related_sessions` | Find all sessions related to a Zeek UID |
 | `malcolm_saved_objects` | Find the dashboards, visualizations and saved searches this Malcolm ships (111 dashboards, without their multi-KB layout blobs) |
+| `malcolm_saved_object_detail` | Read one saved object's query, filters and index pattern already resolved — recovers the KQL/Lucene string behind a saved search or visualization |
 | `malcolm_dashboard_export` | Export an OpenSearch Dashboards saved object as JSON |
 | `malcolm_alerting_monitors` | List OpenSearch alerting monitors, what each watches, and whether any have fired — flags when every monitor is disabled |
+| `malcolm_alerting_alerts` | List what OpenSearch alerting monitors have actually fired, in any lifecycle state (ACTIVE, ACKNOWLEDGED, COMPLETED, ERROR, DELETED) |
+| `malcolm_alerting_monitor_detail` | Read one alerting monitor's full query and trigger conditions — tells a monitor watching nothing from one that is simply quiet |
 | `malcolm_anomaly_detectors` | List anomaly detectors, what each models, and how many anomalies exist — flags when none were ever recorded |
+| `malcolm_anomaly_results` | Read which entities one anomaly detector scored as anomalous in a time window, worst first — the window is epoch MILLISECONDS, unlike every `arkime_*` tool |
 
-The ten tools that build their own rows — the file, Arkime-inventory and Dashboards ones — declare a typed return, so a client receives `structuredContent` as well as the text. The rest pass an upstream response through verbatim and have no shape to declare.
+The 15 tools that build their own rows — the file, Arkime-inventory and Dashboards ones — declare a typed return, so a client receives `structuredContent` as well as the text. The rest pass an upstream response through verbatim and have no shape to declare.
 
 ## Write tools (opt-in)
 
@@ -158,17 +168,17 @@ Each class is enabled by setting its flag to `true`. Nothing here runs unless yo
 |-------|------|-------|----------|
 | alerting | `MALCOLM_MCP_ENABLE_ALERTING` | `malcolm_create_alert` | `POST /mapi/event` |
 | arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
-| hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`, `arkime_hunt_status` | `POST /arkime/api/hunt` |
+| hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`, `arkime_cancel_hunt` | `POST /arkime/api/hunt`, `PUT /arkime/api/hunt/<id>/cancel` |
 | pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /server/php/submit.php` |
 | arkime-view | `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `arkime_create_view`, `arkime_create_shortcut` | `POST /arkime/api/view`, `POST /arkime/api/shortcut` |
 
 - **alerting**: `malcolm_create_alert` indexes an analyst- or agent-generated finding as an alert document you can see in Malcolm's dashboards. It uses `/mapi/event`, Malcolm's own purpose-built write endpoint, which is the template the other classes follow.
 - **arkime-tag**: `arkime_add_tags` adds tags to sessions. It only adds; tag removal needs a higher Arkime role and its own safety design, so it's deferred.
-- **hunt-job**: `arkime_create_hunt` launches a cross-PCAP packet search (expensive, so scope the query first). `arkime_hunt_status` reads job progress and ships with the class.
+- **hunt-job**: `arkime_create_hunt` launches a cross-PCAP packet search (expensive, so scope the query first). `arkime_cancel_hunt` stops one that is queued or running — not additive, since a cancelled scan can't resume. Job progress is read with `arkime_hunt_status`, which is a read tool now and stays available with this class off (see [Arkime saved objects and capture health](#arkime-saved-objects-and-capture-health)).
 - **pcap-upload**: `malcolm_upload_pcap` sends a local capture file to Malcolm for ingestion, with a client-side size cap. The file must live inside `MALCOLM_MCP_UPLOAD_DIR`; if that staging directory is unset, uploads are refused, so the tool can never be steered into reading an arbitrary file off the host.
 - **arkime-view**: `arkime_create_view` saves a named search expression and `arkime_create_shortcut` saves a named value list (IOC set) referenced in expressions as `$name`. Both are additive — they let an agent persist hunting knowledge for the human team, and neither deletes or overwrites.
 
-Every write tool carries the MCP annotations `readOnlyHint: false` and `destructiveHint: false`, so an MCP client can apply its own confirmation step before the call runs.
+Every write tool carries the MCP annotation `readOnlyHint: false`, so an MCP client can apply its own confirmation step before the call runs. `destructiveHint` is `false` on every additive write and `true` on the one exception, `arkime_cancel_hunt`, which stops in-progress work rather than adding to it.
 
 ## Security model
 
@@ -464,7 +474,7 @@ arkime_create_hunt(
 
 Every tool here reshapes what Malcolm returns — trimming, renaming, and in a few
 places correcting it. `scripts/api_parity_check.py` proves that reshaping never
-changes the facts: for each of the 41 tools it asks the same question twice, once
+changes the facts: for each of the 51 tools it asks the same question twice, once
 through a real MCP stdio session and once with a direct HTTP call to Malcolm, and
 compares the values that carry meaning.
 
@@ -492,8 +502,9 @@ so adding a tool without a parity check fails the run.
 | `/mapi/ingest-stats`, `/mapi/indices` | GET | `malcolm_data_coverage` |
 | `/mapi/dashboard-export/<id>` | GET | `malcolm_dashboard_export` |
 | `/dashboards/api/saved_objects/_find` | GET | `malcolm_saved_objects` |
-| `/mapi/opensearch/_plugins/_alerting/monitors/*` | POST, GET | `malcolm_alerting_monitors` |
-| `/mapi/opensearch/_plugins/_anomaly_detection/detectors/*` | POST | `malcolm_anomaly_detectors` |
+| `/dashboards/api/saved_objects/<type>/<id>` | GET | `malcolm_saved_object_detail` |
+| `/mapi/opensearch/_plugins/_alerting/monitors/*` | POST, GET | `malcolm_alerting_monitors`, `malcolm_alerting_monitor_detail`, `malcolm_alerting_alerts` |
+| `/mapi/opensearch/_plugins/_anomaly_detection/detectors/*` | POST, GET | `malcolm_anomaly_detectors`, `malcolm_anomaly_results` |
 | `/mapi/opensearch/<index>/_search` | POST | `search_dsl` |
 | `/mapi/opensearch/<index>/_count` | POST | `count` |
 | `/mapi/opensearch/_cat/indices` | GET | `list_indices` |
@@ -505,6 +516,10 @@ so adding a tool without a parity check fails the run.
 | `/arkime/api/fields` | GET | `arkime_field_search` |
 | `/arkime/api/sessions` | GET | `arkime_sessions`, `arkime_session_detail` (via an `id ==` expression) |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
+| `/arkime/api/session/<node>/<id>/packets` | GET | `arkime_session_payload` |
+| `/arkime/api/session/<node>/<id>/bodyhash/<hash>` | GET | `arkime_session_file_by_hash` |
+| `/arkime/api/sessions/summary` | POST | `arkime_sessions_summary` |
+| `/arkime/api/buildquery` | POST | `arkime_build_query` |
 | `/arkime/api/unique`, `/arkime/api/multiunique` | GET | `arkime_unique`, `arkime_multiunique` |
 | `/arkime/api/spigraph` | GET | `arkime_spigraph` |
 | `/arkime/api/spiview` | GET | `arkime_spiview` |
@@ -513,11 +528,14 @@ so adding a tool without a parity check fails the run.
 | `/arkime/api/sessions/bodyhash/<hash>` | GET | `arkime_file_by_hash` |
 | `/arkime/api/sessions.csv` | GET | `arkime_sessions_csv` |
 | `/arkime/api/views`, `/arkime/api/shortcuts` | GET | `arkime_views`, `arkime_shortcuts` |
+| `/arkime/api/crons` | GET | `arkime_crons` |
 | `/arkime/api/reversedns` | GET | `arkime_reverse_dns` |
 | `/arkime/api/files` | GET | `arkime_pcap_files` |
 | `/arkime/api/stats` | GET | `arkime_node_stats` |
 | `/arkime/api/sessions/addtags` | POST | `arkime_add_tags` (write) |
-| `/arkime/api/hunt`, `/arkime/api/hunts` | POST, GET | `arkime_create_hunt`, `arkime_hunt_status` (write + read) |
+| `/arkime/api/hunt` | POST | `arkime_create_hunt` (write) |
+| `/arkime/api/hunt/<id>/cancel` | PUT | `arkime_cancel_hunt` (write) |
+| `/arkime/api/hunts` | GET | `arkime_hunt_status` |
 | `/arkime/api/view`, `/arkime/api/shortcut` | POST | `arkime_create_view`, `arkime_create_shortcut` (write) |
 | `/extracted-files/<name>` | GET | `malcolm_extract_file` |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap` (write) |

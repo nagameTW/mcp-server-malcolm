@@ -17,6 +17,7 @@ from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.server import create_server
 from mcp_server_malcolm.tools.dashboards import register_dashboard_tools
+from mcp_server_malcolm.tools.detections import register_detection_tools
 
 
 def _mock_client(handler):
@@ -29,8 +30,12 @@ def _mock_client(handler):
 
 
 def _tools(handler):
+    """Saved objects and the detections that were split out of that module: one
+    server, so these tests keep asking the same questions after the split."""
     mcp = MCPServer("t")
-    register_dashboard_tools(mcp, _mock_client(handler))
+    client = _mock_client(handler)
+    register_dashboard_tools(mcp, client)
+    register_detection_tools(mcp, client)
     return mcp
 
 

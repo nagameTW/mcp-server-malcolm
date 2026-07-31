@@ -1437,8 +1437,15 @@ class MalcolmClient:
             for 2024-04-25), so an empty-looking hunt can be traced to a window
             that selected no daily index at all. An expression Arkime cannot
             parse comes back as an upstream 400 and therefore raises.
+
+        Through _arkime_post, not self.post, even though this route does not
+        currently demand the token: measured, the parity run reaches
+        arkime_sessions (which sets ARKIME-COOKIE) before this call and still
+        gets an answer. One shared path for every Arkime POST is what keeps
+        that "currently" from being load-bearing, and keeps the next Arkime
+        POST from being written as a plain self.post because this one was.
         """
-        return await self.post(
+        return await self._arkime_post(
             "/arkime/api/buildquery", _arkime_query_params(expression, time_from, time_to)
         )
 
@@ -1479,6 +1486,7 @@ class MalcolmClient:
             {"ids": ids, "tags": tags, "segments": segments},
         )
 
+    @_upstream
     async def _arkime_post(self, path: str, body: dict[str, Any]) -> Any:
         """POST an Arkime route whose token demand depends on the cookie jar.
 
@@ -1497,7 +1505,17 @@ class MalcolmClient:
         first-party token, same Basic-auth user. Every Arkime POST that is not
         one of the always-guarded write routes (those use _arkime_token_post,
         which primes a token instead of waiting for one) goes through here, so
-        a route added later cannot rediscover this the hard way.
+        a route added later cannot rediscover this the hard way. Checked by
+        test_every_arkime_post_shares_the_cookie_path, because the claim is
+        only worth making if something fails when it stops being true.
+
+        @_upstream here rather than on each caller: self.post carries it, so a
+        method moved off self.post onto this one would otherwise silently lose
+        the redaction that keeps userinfo credentials in MALCOLM_URL out of an
+        httpx error message, and hand tools a bare httpx exception instead of
+        the one type they branch on. Harmless where a caller already wraps it
+        (_write_arkime_tags does): UpstreamError is not an httpx error, so the
+        outer wrapper passes it straight through.
 
         A unit test only reproduces it if its transport keeps cookies -- the
         failure is cross-call state, not a bad request in isolation.
