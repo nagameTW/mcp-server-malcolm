@@ -36,19 +36,30 @@ _LOAD_BEARING = {
     "arkime_views",
     "arkime_shortcuts",
     "malcolm_saved_objects",
-    # the standing detections, and both alert mechanisms
+    # what already exists, one level down: the curated query itself
+    "malcolm_saved_object_detail",
+    # scheduled queries that write tags into the data they match
+    "arkime_crons",
+    # the standing detections, and all three alert mechanisms
     "malcolm_alerts",
     "malcolm_alerting_monitors",
+    "malcolm_alerting_alerts",
+    "malcolm_alerting_monitor_detail",
     "malcolm_anomaly_detectors",
+    "malcolm_anomaly_results",
     # finding and drilling into sessions
     "malcolm_search",
     "search_dsl",
     "arkime_sessions",
+    "arkime_sessions_summary",
+    "arkime_build_query",
     "arkime_session_detail",
     "arkime_session_pcap",
+    "arkime_session_payload",
     # files
     "malcolm_file_scans",
     "malcolm_extract_file",
+    "arkime_session_file_by_hash",
     "arkime_file_by_hash",
     # pivots and naming
     "malcolm_aggregate",

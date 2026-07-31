@@ -40,6 +40,10 @@ def test_batch3_tools_registered():
         "malcolm_saved_objects",
         "malcolm_alerting_monitors",
         "malcolm_anomaly_detectors",
+        "malcolm_alerting_alerts",
+        "malcolm_alerting_monitor_detail",
+        "malcolm_anomaly_results",
+        "malcolm_saved_object_detail",
     ):
         assert name in names
 
@@ -376,6 +380,562 @@ async def test_anomaly_detectors_reports_none_configured():
     assert "no anomaly detectors" in out.lower()
 
 
+# -- malcolm_alerting_alerts --------------------------------------------
+
+# One alert as the plugin sends it. Kept whole on purpose: this lab has never
+# raised one (its only monitor is disabled), so the tool passes rows through
+# rather than trimming to a key set nobody has measured.
+_ALERT = {
+    "id": "s6xUsZ8Bao8axaN3Ff2K",
+    "monitor_id": "NYUZsZ8Bao8axaN3ef1f",
+    "monitor_name": "Malcolm API Loopback Monitor",
+    "trigger_name": "Malcolm API Loopback Trigger",
+    "severity": "4",
+    "state": "COMPLETED",
+    "start_time": 1714003200000,
+    "end_time": 1714006800000,
+}
+
+
+@pytest.mark.asyncio
+async def test_alerting_alerts_reaches_the_history_the_monitor_list_hides():
+    """malcolm_alerting_monitors pins alertState=ACTIVE, so a monitor that fired
+    and recovered is invisible there. Every filter has to reach the request."""
+    seen = {}
+
+    def handler(req):
+        seen["path"] = req.url.path
+        seen["params"] = dict(req.url.params)
+        return httpx.Response(200, json={"alerts": [_ALERT], "totalAlerts": 1})
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool(
+                "malcolm_alerting_alerts",
+                {
+                    "alert_state": "completed",
+                    "monitor_id": "NYUZsZ8Bao8axaN3ef1f",
+                    "severity": "4",
+                    "search": "loopback",
+                },
+            )
+        )
+    )
+
+    assert seen["path"] == "/mapi/opensearch/_plugins/_alerting/monitors/alerts"
+    # Upstream names them singular; monitorIds is a 400 suggesting monitorId.
+    assert seen["params"] == {
+        "alertState": "COMPLETED",
+        "monitorId": "NYUZsZ8Bao8axaN3ef1f",
+        "severityLevel": "4",
+        "searchString": "loopback",
+    }
+    assert out["total"] == 1
+    assert out["showing"] == 1
+    # Passed through unrenamed: which trigger fired, when, and at what severity.
+    assert out["alerts"][0] == _ALERT
+
+
+@pytest.mark.asyncio
+async def test_alerting_alerts_reports_none_without_raising():
+    """Zero alerts is an answer, not a failure — and the usual cause is a
+    disabled monitor, which the sentence has to point at."""
+
+    def handler(req):
+        return httpx.Response(200, json={"alerts": [], "totalAlerts": 0})
+
+    out = tool_text(await _tools(handler).call_tool("malcolm_alerting_alerts", {}))
+
+    assert "no alerts in any state" in out.lower()
+    assert "malcolm_alerting_monitors" in out
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("args", "needle"),
+    [
+        ({"alert_state": "FIRING"}, "FIRING"),
+        ({"severity": "high"}, "high"),
+    ],
+)
+async def test_alerting_alerts_rejects_a_filter_upstream_would_swallow(args, needle):
+    """Measured on v26.07.1: alertState=BOGUS and severityLevel=high both answer
+    200 with an empty list rather than 400, so an unchecked typo reads to an
+    agent as "nothing ever fired"."""
+
+    def handler(req):
+        raise AssertionError("no request may leave with an unknown filter value")
+
+    raised = await raised_by(_tools(handler), "malcolm_alerting_alerts", args)
+
+    assert isinstance(raised, ToolInputError)
+    assert needle in str(raised)
+
+
+# -- malcolm_alerting_monitor_detail ------------------------------------
+
+_MONITOR_DETAIL = {
+    "_id": "NYUZsZ8Bao8axaN3ef1f",
+    "_version": 1,
+    "monitor": {
+        "name": "Malcolm API Loopback Monitor",
+        "monitor_type": "query_level_monitor",
+        "enabled": False,
+        "schedule": {"period": {"interval": 10, "unit": "MINUTES"}},
+        "inputs": [
+            {
+                "search": {
+                    "indices": ["arkime_sessions3-*"],
+                    "query": {
+                        "size": 0,
+                        "query": {
+                            "bool": {"filter": [{"range": {"firstPacket": {"from": "now-10m"}}}]}
+                        },
+                    },
+                }
+            }
+        ],
+        "triggers": [
+            {
+                "query_level_trigger": {
+                    "id": "MoUZsZ8Bao8axaN3d_3-",
+                    "name": "Malcolm API Loopback Trigger",
+                    "severity": "4",
+                    "condition": {
+                        "script": {
+                            "source": "ctx.results[0].hits.total.value > 999999999",
+                            "lang": "painless",
+                        }
+                    },
+                    "actions": [{"id": "a1", "name": "Malcolm API Loopback Action"}],
+                }
+            }
+        ],
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_monitor_detail_shows_the_query_and_the_firing_condition():
+    """The two things the monitor LIST cannot show, and the only way to judge
+    whether a monitor's silence means anything: this one fires above 999999999
+    hits, so it is configured never to."""
+    seen = {}
+
+    def handler(req):
+        seen["path"] = req.url.path
+        return httpx.Response(200, json=_MONITOR_DETAIL)
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool(
+                "malcolm_alerting_monitor_detail", {"monitor_id": "NYUZsZ8Bao8axaN3ef1f"}
+            )
+        )
+    )
+
+    assert seen["path"] == "/mapi/opensearch/_plugins/_alerting/monitors/NYUZsZ8Bao8axaN3ef1f"
+    assert out["id"] == "NYUZsZ8Bao8axaN3ef1f"
+    assert out["schedule"] == "every 10 MINUTES"
+    assert out["inputs"][0]["indices"] == ["arkime_sessions3-*"]
+    assert out["inputs"][0]["query"]["size"] == 0
+    assert out["triggers"][0] == {
+        "name": "Malcolm API Loopback Trigger",
+        "severity": "4",
+        "condition": "ctx.results[0].hits.total.value > 999999999",
+        "actions": ["Malcolm API Loopback Action"],
+    }
+    assert "disabled" in out["note"]
+
+
+@pytest.mark.asyncio
+async def test_monitor_detail_answers_for_a_monitor_with_nothing_configured():
+    """A monitor with no inputs and no triggers is the empty case here. It must
+    answer rather than raise, and say why it can never alert — that silence is
+    indistinguishable from a healthy monitor with nothing to report."""
+    bare = {"_id": "empty", "monitor": {"name": "Bare monitor", "enabled": True}}
+
+    def handler(req):
+        return httpx.Response(200, json=bare)
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool(
+                "malcolm_alerting_monitor_detail", {"monitor_id": "empty"}
+            )
+        )
+    )
+
+    assert out["name"] == "Bare monitor"
+    assert "inputs" not in out
+    assert "no triggers" in out["note"]
+    assert "disabled" not in out["note"]
+
+
+@pytest.mark.asyncio
+async def test_monitor_detail_keeps_a_bucket_level_trigger_it_cannot_read_a_script_from():
+    """A bucket-level trigger's condition is not a painless script. The trigger
+    still has to appear, with `condition` absent rather than invented."""
+    bucket = {
+        "_id": "b",
+        "monitor": {
+            "name": "Bucket monitor",
+            "enabled": True,
+            "triggers": [
+                {
+                    "bucket_level_trigger": {
+                        "name": "Bucket trigger",
+                        "severity": "2",
+                        "condition": {"buckets_path": {"count": "_count"}},
+                    }
+                }
+            ],
+        },
+    }
+
+    def handler(req):
+        return httpx.Response(200, json=bucket)
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool("malcolm_alerting_monitor_detail", {"monitor_id": "b"})
+        )
+    )
+
+    assert out["triggers"] == [{"name": "Bucket trigger", "severity": "2"}]
+    assert "note" not in out
+
+
+# -- malcolm_anomaly_results --------------------------------------------
+
+# The lab's traffic window, in the milliseconds this route wants.
+_START_MS, _END_MS = 1714003200000, 1714089600000
+
+
+def _anomaly_handler(buckets, state="DISABLED", seen=None):
+    def handler(req):
+        if req.url.path.endswith("/_profile"):
+            return httpx.Response(200, json={"state": state})
+        if seen is not None:
+            seen["path"] = req.url.path
+            seen["params"] = dict(req.url.params)
+            seen["body"] = json.loads(req.content)
+        return httpx.Response(200, json={"buckets": buckets})
+
+    return handler
+
+
+@pytest.mark.asyncio
+async def test_anomaly_results_asks_the_named_detector_for_its_own_window():
+    seen = {}
+    bucket = {
+        "key": {"source.ip": "192.0.2.10", "destination.ip": "198.51.100.7"},
+        "doc_count": 3,
+        "max_anomaly_grade": 0.87,
+    }
+    out = json.loads(
+        tool_text(
+            await _tools(_anomaly_handler([bucket], state="RUNNING", seen=seen)).call_tool(
+                "malcolm_anomaly_results",
+                {
+                    "detector_id": "94UZsZ8Bao8axaN3EPyz",
+                    "start_time_ms": _START_MS,
+                    "end_time_ms": _END_MS,
+                    "order": "Occurrence",
+                },
+            )
+        )
+    )
+
+    assert seen["path"].endswith("/detectors/94UZsZ8Bao8axaN3EPyz/results/_topAnomalies")
+    assert seen["body"]["start_time_ms"] == _START_MS
+    assert seen["body"]["end_time_ms"] == _END_MS
+    # Lowercased for the caller: "SEVERITY" is a 400 upstream.
+    assert seen["body"]["order"] == "occurrence"
+    assert out["detector_state"] == "RUNNING"
+    # Buckets are the plugin's own, keyed by the detector's category fields.
+    assert out["anomalies"] == [bucket]
+    # The window is echoed so a millisecond mix-up is visible in the answer.
+    assert out["window"] == "2024-04-25T00:00:00Z to 2024-04-26T00:00:00Z"
+
+
+@pytest.mark.asyncio
+async def test_anomaly_results_explains_an_empty_window_by_the_detector_state():
+    """The gap this tool closes: no buckets from a DISABLED detector means
+    nothing was ever computed, not that the traffic was clean. It must answer,
+    not raise."""
+    out = tool_text(
+        await _tools(_anomaly_handler([])).call_tool(
+            "malcolm_anomaly_results",
+            {
+                "detector_id": "94UZsZ8Bao8axaN3EPyz",
+                "start_time_ms": _START_MS,
+                "end_time_ms": _END_MS,
+            },
+        )
+    )
+
+    assert "no anomalies" in out.lower()
+    assert "disabled" in out.lower()
+    assert "never ran" in out.lower()
+
+
+@pytest.mark.asyncio
+async def test_anomaly_results_still_answers_when_the_state_lookup_fails():
+    def handler(req):
+        if req.url.path.endswith("/_profile"):
+            raise httpx.ConnectError("profile route down")
+        return httpx.Response(200, json={"buckets": [{"key": {"a": "b"}, "doc_count": 1}]})
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool(
+                "malcolm_anomaly_results",
+                {
+                    "detector_id": "94UZsZ8Bao8axaN3EPyz",
+                    "start_time_ms": _START_MS,
+                    "end_time_ms": _END_MS,
+                },
+            )
+        )
+    )
+
+    assert out["showing"] == 1
+    assert "detector_state" not in out
+    assert "profile route down" in out["detector_state_error"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("args", "needle"),
+    [
+        ({"start_time_ms": 1714003200, "end_time_ms": _END_MS}, "SECONDS"),
+        ({"start_time_ms": _START_MS, "end_time_ms": 1714089600}, "SECONDS"),
+        ({"start_time_ms": _END_MS, "end_time_ms": _START_MS}, "later than"),
+        ({"start_time_ms": _START_MS, "end_time_ms": _END_MS, "order": "worst"}, "worst"),
+    ],
+)
+async def test_anomaly_results_rejects_a_window_that_would_answer_empty(args, needle):
+    """Epoch seconds are a window in 1970 upstream and answer empty, which is
+    indistinguishable from a detector that scored nothing. Same for a reversed
+    window and for an order upstream 400s on."""
+
+    def handler(req):
+        raise AssertionError("no request may leave with a window that cannot answer")
+
+    raised = await raised_by(
+        _tools(handler), "malcolm_anomaly_results", {"detector_id": "d1", **args}
+    )
+
+    assert isinstance(raised, ToolInputError)
+    assert needle in str(raised)
+
+
+@pytest.mark.asyncio
+async def test_anomaly_results_hands_back_the_plugins_own_refusal():
+    """A 4xx here carries the only actionable part, and httpx's message does not.
+
+    Measured on 26.07.1: one of this lab's five detectors has no category field,
+    and _topAnomalies answers it 400 {"error":{"reason":"No category fields
+    found for detector ID ..."}}. Raised through raise_for_status that reason is
+    dropped and the agent is handed httpx's text instead -- the status and the
+    internal URL, neither of which it can act on, one of which it should not see.
+    """
+
+    def handler(req):
+        if req.url.path.endswith("/_profile"):
+            return httpx.Response(200, json={"state": "DISABLED"})
+        return httpx.Response(
+            400,
+            json={
+                "error": {
+                    "reason": "No category fields found for detector ID IoZBtp8Bao8axaN3dQNb"
+                },
+                "status": 400,
+            },
+        )
+
+    raised = await raised_by(
+        _tools(handler),
+        "malcolm_anomaly_results",
+        {
+            "detector_id": "IoZBtp8Bao8axaN3dQNb",
+            "start_time_ms": _START_MS,
+            "end_time_ms": _END_MS,
+        },
+    )
+
+    assert isinstance(raised, UpstreamError)
+    assert raised.status == 400
+    assert "No category fields found" in str(raised)
+    assert "malcolm.example" not in str(raised), "the upstream URL is not the agent's business"
+    assert "_topAnomalies" not in str(raised)
+
+
+# -- malcolm_saved_object_detail ----------------------------------------
+
+# A saved search as this Malcolm stores one: the query is a JSON *string* two
+# levels down, and its index is a reference NAME resolved through references[].
+_SAVED_SEARCH = {
+    "id": "bc940221-83d5-416e-a353-dc8fc2f84141",
+    "type": "search",
+    "updated_at": "2026-07-30T03:34:22.282Z",
+    "attributes": {
+        "title": "DCE/RPC - Logs",
+        "description": "",
+        "hits": 0,
+        "columns": ["source.ip", "destination.ip", "zeek.dce_rpc.operation"],
+        "sort": [["firstPacket", "desc"]],
+        "kibanaSavedObjectMeta": {
+            "searchSourceJSON": json.dumps(
+                {
+                    "highlightAll": False,
+                    "version": True,
+                    "filter": [
+                        {
+                            "meta": {"negate": False, "key": "network.protocol", "type": "phrase"},
+                            "query": {"match_phrase": {"network.protocol": "dce_rpc"}},
+                        }
+                    ],
+                    "query": {"query": "event.dataset:dce_rpc", "language": "lucene"},
+                    "indexRefName": "kibanaSavedObjectMeta.searchSourceJSON.index",
+                }
+            )
+        },
+    },
+    "references": [
+        {
+            "name": "kibanaSavedObjectMeta.searchSourceJSON.index",
+            "type": "index-pattern",
+            "id": "arkime_sessions3-*",
+        }
+    ],
+}
+
+
+@pytest.mark.asyncio
+async def test_saved_object_detail_resolves_the_query_and_the_index_reference():
+    """Both indirections in one object: searchSourceJSON needs a second parse,
+    and indexRefName is meaningless until looked up in references[]. Leaving
+    either to the caller is what this tool exists to avoid."""
+    seen = {}
+
+    def handler(req):
+        seen["path"] = req.url.path
+        return httpx.Response(200, json=_SAVED_SEARCH)
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool(
+                "malcolm_saved_object_detail",
+                {"object_id": "bc940221-83d5-416e-a353-dc8fc2f84141"},
+            )
+        )
+    )
+
+    assert seen["path"] == (
+        "/dashboards/api/saved_objects/search/bc940221-83d5-416e-a353-dc8fc2f84141"
+    )
+    assert out["query"] == "event.dataset:dce_rpc"
+    # lucene and kuery are not interchangeable, so the dialect travels with it.
+    assert out["language"] == "lucene"
+    assert out["index_pattern"] == "arkime_sessions3-*"
+    assert out["filters"][0]["query"] == {"match_phrase": {"network.protocol": "dce_rpc"}}
+    assert out["columns"] == ["source.ip", "destination.ip", "zeek.dce_rpc.operation"]
+    assert out["sort"] == [["firstPacket", "desc"]]
+    assert "note" not in out
+
+
+@pytest.mark.asyncio
+async def test_saved_object_detail_follows_a_visualization_to_its_saved_search():
+    """150 of 200 visualizations sampled on this Malcolm carry an empty query of
+    their own and inherit one from a saved search named only as "search_0"."""
+    vis = {
+        "id": "bcfa8900-06ac-11ec-8c6b-353266ade330",
+        "type": "visualization",
+        "attributes": {
+            "title": "Severity Tags",
+            "visState": '{"title":"Severity Tags","type":"table","aggs":[]}',
+            "savedSearchRefName": "search_0",
+            "kibanaSavedObjectMeta": {
+                "searchSourceJSON": '{"query":{"query":"","language":"kuery"},"filter":[]}'
+            },
+        },
+        "references": [
+            {"name": "search_0", "type": "search", "id": "abd55c60-06a5-11ec-8c6b-353266ade330"}
+        ],
+    }
+
+    def handler(req):
+        return httpx.Response(200, json=vis)
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool(
+                "malcolm_saved_object_detail",
+                {
+                    "object_id": "bcfa8900-06ac-11ec-8c6b-353266ade330",
+                    "object_type": "visualization",
+                },
+            )
+        )
+    )
+
+    assert out["based_on_search"] == "abd55c60-06a5-11ec-8c6b-353266ade330"
+    # An empty query must not read as "matches everything".
+    assert "query" not in out
+    assert "abd55c60-06a5-11ec-8c6b-353266ade330" in out["note"]
+    # The aggregation blob is the bulk of a visualization and is left out.
+    assert "visState" not in json.dumps(out)
+
+
+@pytest.mark.asyncio
+async def test_saved_object_detail_answers_for_an_object_that_carries_no_query():
+    """The empty path: an object with no searchSourceJSON at all. It must still
+    answer with what it does have, and must not raise."""
+    index_pattern = {
+        "id": "arkime_sessions3-*",
+        "type": "index-pattern",
+        "attributes": {"title": "arkime_sessions3-*", "fields": "[...400 KB of field JSON...]"},
+        "references": [],
+    }
+
+    def handler(req):
+        return httpx.Response(200, json=index_pattern)
+
+    out = json.loads(
+        tool_text(
+            await _tools(handler).call_tool(
+                "malcolm_saved_object_detail",
+                {"object_id": "arkime_sessions3-*", "object_type": "index-pattern"},
+            )
+        )
+    )
+
+    assert out["title"] == "arkime_sessions3-*"
+    # The note is type-aware: an index pattern is what a query points AT, so
+    # "no query" here does not mean "selects everything" as it would elsewhere.
+    assert "holds no query" in out["note"]
+    # The field list is hundreds of KB (949,909 bytes measured live) and is
+    # never part of the answer.
+    assert "fields" not in out
+
+
+@pytest.mark.asyncio
+async def test_saved_object_detail_rejects_an_unknown_type():
+    def handler(req):
+        raise AssertionError("no request may leave for an unsupported object type")
+
+    raised = await raised_by(
+        _tools(handler),
+        "malcolm_saved_object_detail",
+        {"object_id": "abc", "object_type": "widget"},
+    )
+
+    assert isinstance(raised, ToolInputError)
+    assert "widget" in str(raised)
+
+
 # -- failure handling ---------------------------------------------------
 
 
@@ -386,6 +946,13 @@ async def test_anomaly_detectors_reports_none_configured():
         ("malcolm_saved_objects", {"object_type": "dashboard"}),
         ("malcolm_alerting_monitors", {}),
         ("malcolm_anomaly_detectors", {}),
+        ("malcolm_alerting_alerts", {}),
+        ("malcolm_alerting_monitor_detail", {"monitor_id": "NYUZsZ8Bao8axaN3ef1f"}),
+        (
+            "malcolm_anomaly_results",
+            {"detector_id": "d1", "start_time_ms": _START_MS, "end_time_ms": _END_MS},
+        ),
+        ("malcolm_saved_object_detail", {"object_id": "abc"}),
     ],
 )
 async def test_every_dashboard_tool_reports_a_transport_failure(tool, args):

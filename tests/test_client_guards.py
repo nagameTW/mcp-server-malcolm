@@ -19,7 +19,7 @@ from mcp_server_malcolm import client as client_mod
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 
-_BASE = "https://otex:hunter2@malcolm.example"
+_BASE = "https://operator1:hunter2@malcolm.example"
 
 
 def _recording_client(
