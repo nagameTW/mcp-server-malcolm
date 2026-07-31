@@ -541,6 +541,90 @@ async def test_saved_object_detail_unwraps_a_query_string_object():
         assert "note" not in row, "the query was recovered, so there is nothing to explain"
 
 
+# -- 4. the rows this lab holds none of, in the shapes upstream may send -----
+#
+# Layer 2 above only covers a key the fixture happens to populate, and the
+# fixture is built from what this deployment actually returns. Where the
+# deployment holds zero rows of a kind, no amount of green says anything about
+# the declaration: arkime_crons and the filescan rule keys are the two places a
+# key is declared narrowly and was never observed populated (measured today: 0
+# cron queries, and 0 of 50 sampled filescan records carry filescan.rules at
+# all, because all 50 scored hits 0).
+
+_POPULATED_CRON = {
+    "data": [
+        {
+            "name": "modbus watch",
+            "query": "protocols == modbus",
+            "tags": "modbus,ot",
+            "enabled": True,
+            "action": "tag",
+            "creator": "operator1",
+            # A cron's progress marker, as a NON-INTEGRAL float. Arkime's
+            # viewer is Node, where JSON has one number type and an epoch is
+            # Date.now()/1000 -- integral only where someone remembered the
+            # floor -- and GET /api/stats already answers freeSpaceP and
+            # memoryP as floats on this same server (measured, v26.07.1).
+            #
+            # Measured against the pre-fix `last_run: int` declaration, driving
+            # each shape through this same client: int, integral float and
+            # "42" all survive (pydantic coerces in lax mode), while 1714003200.5,
+            # an epoch in milliseconds, "1,024" and an ISO date string each
+            # raise "2 validation errors for arkime_cronsOutput" and the caller
+            # gets nothing. That is the whole point of the union caveat: a dict
+            # branch that fails validation does not fall back to the str branch,
+            # so one odd row costs the entire answer rather than one key.
+            "lpValue": 1714003200.5,
+            "count": "42",
+            "key": "c1",
+        }
+    ]
+}
+
+_FILESCAN_HIT = {
+    "results": [
+        {
+            "_source": {
+                "file": {"name": "dropper.bin", "hash": {"md5": "0" * 32}},
+                "event": {"severity": 7, "severity_tags": ["Malicious"]},
+                "zeek": {"files": {"extracted": "dropper.bin"}},
+                # One rule matched, so upstream has one name to report rather
+                # than a list of them. FileRow declares list[str].
+                "filescan": {"hits": 1, "rules": {"name": "EICAR", "scanner": "ScanYara"}},
+            }
+        }
+    ]
+}
+
+
+@pytest.mark.asyncio
+async def test_crons_validates_for_a_populated_cron_row():
+    """The case this lab cannot produce: a cron query that has actually run."""
+    mcp = _server(_POPULATED_CRON)
+    async with Client(mcp) as client:
+        result = await client.call_tool("arkime_crons", {})
+        assert not result.is_error, result.content
+        row = (result.structured_content or {})["result"]["crons"][0]
+        assert row["last_run"] == 1714003200
+        assert row["matched_sessions"] == 42
+        assert row["tags"] == ["modbus", "ot"]
+        assert row["enabled"] is True
+
+
+@pytest.mark.asyncio
+async def test_file_scans_validates_when_one_rule_matched():
+    """A scanner hit is the moment this tool matters most, and the one shape
+    every filescan record on this lab lacks."""
+    mcp = _server(_FILESCAN_HIT)
+    async with Client(mcp) as client:
+        result = await client.call_tool("malcolm_file_scans", {})
+        assert not result.is_error, result.content
+        row = (result.structured_content or {})["result"]["files"][0]
+        assert row["scan_rules"] == ["EICAR"]
+        assert row["scan_scanners"] == ["ScanYara"]
+        assert row["scan_hits"] == 1
+
+
 @pytest.mark.asyncio
 async def test_saved_object_detail_keeps_an_unrecognised_query_shape():
     """Degrade to text rather than raise: an unknown dict is still evidence."""

@@ -27,9 +27,11 @@ from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.tools import (
     arkime,
+    arkime_content,
     arkime_inventory,
     correlation,
     dashboards,
+    detections,
     dsl,
     fields,
     files,
@@ -75,8 +77,10 @@ def _every_tool(handler, upload_dir: str | None = None) -> MCPServer:
         netbox.register_netbox_tools,
         correlation.register_correlation_tools,
         arkime.register_arkime_tools,
+        arkime_content.register_arkime_content_tools,
         arkime_inventory.register_arkime_inventory_tools,
         dashboards.register_dashboard_tools,
+        detections.register_detection_tools,
     ):
         register(mcp, client)
     for register_write in (

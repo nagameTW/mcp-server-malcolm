@@ -38,7 +38,9 @@ async def test_pcap_tool_validates_magic_no_disk_write():
     def handler(req):
         return httpx.Response(200, content=b"\xd4\xc3\xb2\xa1\x02\x00\x04\x00rest-of-pcap")
 
-    from mcp_server_malcolm.tools.arkime import register_arkime_tools
+    from mcp_server_malcolm.tools.arkime_content import (
+        register_arkime_content_tools as register_arkime_tools,
+    )
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
@@ -54,7 +56,9 @@ async def test_pcap_tool_rejects_injection_session_id():
     def handler(req):
         raise AssertionError("must not download for a non-id session_id")
 
-    from mcp_server_malcolm.tools.arkime import register_arkime_tools
+    from mcp_server_malcolm.tools.arkime_content import (
+        register_arkime_content_tools as register_arkime_tools,
+    )
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
@@ -70,7 +74,9 @@ async def test_pcap_tool_flags_non_pcap_body(tmp_path, monkeypatch):
     def handler(req):
         return httpx.Response(200, content=b"<html>not a pcap</html>")
 
-    from mcp_server_malcolm.tools.arkime import register_arkime_tools
+    from mcp_server_malcolm.tools.arkime_content import (
+        register_arkime_content_tools as register_arkime_tools,
+    )
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
@@ -89,7 +95,9 @@ async def test_pcap_tool_url_only_skips_download():
         called["n"] += 1
         return httpx.Response(200, content=b"\xa1\xb2\xc3\xd4")
 
-    from mcp_server_malcolm.tools.arkime import register_arkime_tools
+    from mcp_server_malcolm.tools.arkime_content import (
+        register_arkime_content_tools as register_arkime_tools,
+    )
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
