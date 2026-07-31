@@ -39,6 +39,16 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
      call out the state that reads like good news but is not: every monitor
      disabled, or detectors that were never started. These are OpenSearch
      alerting rules and ML baselines — a different mechanism from Suricata.
+   - malcolm_alerting_alerts(alert_state="ALL") -> what those monitors actually
+     fired. The monitors list counts ACTIVE alerts only, so one that fired and
+     recovered is invisible there.
+   - malcolm_alerting_monitor_detail(monitor_id="<id>") -> the query and the
+     firing condition behind one monitor. This is how you tell "nothing
+     happened" from "no traffic could ever satisfy that condition".
+   - malcolm_anomaly_results(detector_id="<id>", start_time_ms=1714003200000,
+       end_time_ms=1714089600000) -> which entity a detector scored anomalous
+     and when, with its run state beside the answer. EPOCH MILLISECONDS here,
+     unlike every arkime_* tool.
 
 3. REUSE WHAT THE TEAM ALREADY BUILT before writing a query yourself.
    - arkime_views() -> saved search expressions someone curated. Take a view's
@@ -46,10 +56,18 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
    - arkime_shortcuts() -> named value lists (IOC sets). Each row gives the
      exact $name token to drop into an expression, so you reference the list
      rather than pasting every value.
+   - arkime_crons() -> saved expressions that re-run on a schedule and stamp
+     their own tags onto whatever matches. The only way to explain a tag you
+     find in session data that nothing in the session accounts for.
    - malcolm_saved_objects(object_type="dashboard", search="DNS") -> Malcolm
      ships over a hundred dashboards and one usually already covers your
      protocol. Feed a dashboard id to malcolm_dashboard_export to read how it
      is built.
+   - malcolm_saved_object_detail(object_id="<id>", object_type="search") -> the
+     query string a human curated, ready to hand to malcolm_search or
+     search_dsl. malcolm_saved_objects lists titles and ids only, and
+     malcolm_dashboard_export resolves dashboard ids only, so for a saved
+     search or a visualization this is the route.
 
 4. FIND SESSIONS. Pick the dialect:
    - Field filter + human time: malcolm_search(
@@ -64,13 +82,27 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
    - Many rows rather than a few: arkime_sessions_csv(expression=...) returns
      the same sessions as a compact table at roughly half the tokens. It
      carries no session id, so use arkime_sessions when you need to drill in.
+   - SIZE IT FIRST when the match could be huge, or when arkime_create_hunt
+     wants a session count: arkime_sessions_summary(expression=...) returns
+     total sessions, bytes and packets plus per-field breakdowns in one call.
+   - The expression syntax cannot say substring, wildcard, fuzzy or script.
+     Compile the part it can with arkime_build_query(expression=...), edit the
+     DSL it returns, and run that with search_dsl.
 
 5. DRILL INTO ONE SESSION (use the id from arkime_sessions):
    - arkime_session_detail(session_id) -> full SPI document (all fields).
    - arkime_session_pcap(session_id)   -> validate/size the PCAP.
-   - arkime_file_by_hash(file_hash="<md5-or-sha256>") -> extract the actual
-     transferred file whose content hash matches (pull the malware sample; the
-     hash comes from a session's http.md5 / http.sha256 field).
+   - arkime_session_payload(session_id, base="hex") -> the decoded bytes that
+     crossed the wire. base="hex" makes a binary protocol legible, "ascii" a
+     text one; raise `packets` to read further into the conversation.
+   - arkime_session_file_by_hash(session_id, file_hash="<md5-or-sha256>") ->
+     the file THIS session carried (metadata and hashes only, never the bytes).
+     Prefer it whenever you have a session id: its sibling below searches every
+     session and serves the most recent body carrying that hash, which is the
+     wrong transfer once a file has moved more than once.
+   - arkime_file_by_hash(file_hash="<md5-or-sha256>") -> the same lookup with no
+     session in hand: find wherever a known-bad hash crossed the wire (the hash
+     comes from a session's http.md5 / http.sha256 field).
 
 6. CHASE THE FILES that crossed the wire (needs Zeek file extraction on):
    - malcolm_file_scans(executables_only=True) -> the binaries Zeek carved out,
@@ -111,9 +143,10 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
      -> save an IOC list, then reference it as $c2_ips in later expressions.
 
 Golden rules: confirm field names before you use them; Arkime tools take EPOCH
-seconds while Malcolm/DSL tools take strings like "7 days ago"; only
-arkime_sessions yields an id you can feed to the PCAP/payload/tag tools; and an
-empty result is not evidence until you know the capture had no gap."""
+seconds while Malcolm/DSL tools take strings like "7 days ago" and
+malcolm_anomaly_results takes MILLISECONDS; only arkime_sessions yields an id
+you can feed to the payload/PCAP/file/tag tools; and an empty result is not
+evidence until you know the capture had no gap."""
 
 
 def register_prompts(mcp: MCPServer) -> None:

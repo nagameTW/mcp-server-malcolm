@@ -19,13 +19,26 @@ hold is that no fact differs and none is invented.
 
 Each check declares: the tool call, the raw request, and a comparison that
 pulls the same values out of both sides.
+
+A comparison both sides answer empty proves nothing, so real content is found
+first wherever the deployment holds any -- a session that really carries a
+body, a saved search that really carries a query. Where it holds none (this
+lab has zero cron queries, zero hunt jobs, one permanently disabled monitor
+and detectors that were never started) the check compares the SHAPE and the
+exact upstream response instead, says EMPTY-PATH CHECK in its own output line,
+and where the tool guards an input the API waves through, asserts that guard
+-- which is a difference between the two sides that an empty answer cannot
+hide.
 """
 
 import asyncio
 import hashlib
+import html
 import json
 import os
 import pathlib
+import re
+from datetime import datetime, timezone
 
 import httpx
 from mcp import ClientSession, StdioServerParameters
@@ -229,9 +242,9 @@ async def main() -> None:
         r = (await api.get("/mapi/netbox/dcim/devices", params={"limit": 2})).json()
         check("malcolm_netbox_query", t["count"] == r["count"], f"count={t['count']}")
 
-        t = await jcall("malcolm_netbox_lookup", {"ip": "192.168.65.7"})
+        t = await jcall("malcolm_netbox_lookup", {"ip": "203.0.113.7"})
         r = (
-            await api.get("/mapi/netbox/ipam/ip-addresses", params={"address": "192.168.65.7"})
+            await api.get("/mapi/netbox/ipam/ip-addresses", params={"address": "203.0.113.7"})
         ).json()
         check(
             "malcolm_netbox_lookup",
@@ -448,6 +461,191 @@ async def main() -> None:
             "url_only URL matches the documented route",
         )
 
+        # The summary route is POST-only and drops the window when asked with a
+        # GET, so the raw side has to be a POST too or the two answer different
+        # questions. recordsFiltered from the plain sessions route is a third
+        # party to the argument: it makes this more than the summary body
+        # echoed back.
+        summary_body = {
+            "fields": "protocols,ip.dst",
+            "expression": "protocols == dns",
+            "startTime": T0,
+            "stopTime": T1,
+        }
+        t = await jcall(
+            "arkime_sessions_summary",
+            {
+                "expression": "protocols == dns",
+                "fields": "protocols,ip.dst",
+                "time_from": T0,
+                "time_to": T1,
+            },
+        )
+        # POST here is CSRF-guarded: once any Arkime GET has put an ARKIME-COOKIE
+        # in the jar, a POST without the matching x-arkime-cookie header is
+        # answered 500 {"success":false,"text":"Missing token"} -- so the raw
+        # side has to replay the token the way Arkime's own UI does.
+        token = {"x-arkime-cookie": api.cookies.get("ARKIME-COOKIE") or ""}
+        r = (
+            await api.post("/arkime/api/sessions/summary", json=summary_body, headers=token)
+        ).json()
+        assert isinstance(r, list), f"summary route did not answer with a list: {r}"
+        raw_totals = {k: v for k, v in r[0].items() if k not in ("graph", "map")}
+        raw_breakdowns = [e for e in r[1:] if isinstance(e, dict) and e.get("field")]
+        dns_sessions = (
+            await api.get(
+                "/arkime/api/sessions",
+                params={**aq, "expression": "protocols == dns", "length": 1},
+            )
+        ).json()["recordsFiltered"]
+        check(
+            "arkime_sessions_summary",
+            t["totals"] == raw_totals
+            and t["breakdowns"] == raw_breakdowns
+            and t["totals"]["sessions"] == dns_sessions,
+            f"{t['totals']['sessions']:,} sessions == the sessions route's own "
+            f"recordsFiltered; {len(raw_breakdowns)} breakdowns identical",
+        )
+
+        # Compiling is only half of it: the DSL the tool hands back is RUN here,
+        # against the index it named, and has to select the same sessions Arkime
+        # selects for the expression it was compiled from.
+        t = await jcall(
+            "arkime_build_query",
+            {"expression": "protocols == dns", "time_from": T0, "time_to": T1},
+        )
+        r = (
+            await api.post(
+                "/arkime/api/buildquery",
+                json={"expression": "protocols == dns", "startTime": T0, "stopTime": T1},
+            )
+        ).json()
+        compiled = (
+            await api.post(
+                f"/mapi/opensearch/{t['index']}/_count", json={"query": t["query_dsl"]["query"]}
+            )
+        ).json()["count"]
+        check(
+            "arkime_build_query",
+            t["query_dsl"] == r["esquery"]
+            and t["index"] == r["indices"]
+            and compiled == dns_sessions,
+            f"index={t['index']}, DSL identical, and running it counts {compiled:,} docs "
+            f"— the same total the sessions route reports for that expression",
+        )
+
+        # Payload and carried bodies exist only for a session with a fileId
+        # (~186,551 of this deployment's ~6M documents), so one is searched for
+        # rather than assumed, as for the PCAP check above. Sessions carrying an
+        # http.md5 are the ones that satisfy both of the next two checks.
+        carriers = (
+            await api.get(
+                "/arkime/api/sessions",
+                params={
+                    **aq,
+                    "expression": "http.md5 == EXISTS!",
+                    "length": 20,
+                    "fields": "http.md5,node,id",
+                    "order": "lastPacket:desc",
+                },
+            )
+        ).json()["data"]
+
+        pay_row, pay_html = None, ""
+        for cand in carriers:
+            frag = (
+                await api.get(
+                    f"/arkime/api/session/{cand['node']}/{cand['id']}/packets",
+                    params={"base": "hex", "packets": 4},
+                )
+            ).text
+            if "<pre>" in frag and len(frag) > 1000:
+                pay_row, pay_html = cand, frag
+                break
+        assert pay_row, "no session in the window renders any packet payload"
+        t = await call(
+            "arkime_session_payload",
+            {"session_id": pay_row["id"], "node": pay_row["node"], "base": "hex", "packets": 4},
+        )
+        # Arkime answers this route with an HTML fragment; the tool flattens it
+        # and marks each packet's direction. Flattened independently here and
+        # compared with whitespace collapsed, so the payload bytes have to
+        # survive intact while the formatting is free to differ.
+        want = " ".join(html.unescape(re.sub(r"<[^>]*>", " ", pay_html)).split())
+        got = " ".join(t.replace("[src]", " ").replace("[dst]", " ").split())
+        groups = len(re.findall(r"(?<![0-9a-f])[0-9a-f]{4}(?![0-9a-f])", want))
+        check(
+            "arkime_session_payload",
+            got == want and groups > 20,
+            f"{len(want):,} chars of decoded payload, {groups} hex groups, identical "
+            f"to the API's own render of session {pay_row['id']}",
+        )
+
+        body_row, body_hash, body_bytes = None, "", b""
+        for cand in carriers:
+            hashes = (cand.get("http") or {}).get("md5") or []
+            for h in (hashes if isinstance(hashes, list) else [hashes])[:4]:
+                resp = await api.get(
+                    f"/arkime/api/session/{cand['node']}/{cand['id']}/bodyhash/{h}"
+                )
+                # 400 "No match" is the usual answer: a hash the session carried
+                # is not the same as a body Arkime can still reconstruct.
+                if resp.status_code == 200 and resp.content:
+                    body_row, body_hash, body_bytes = cand, h, resp.content
+                    break
+            if body_row:
+                break
+        assert body_row, "no session in the window serves a carried body"
+        t = await jcall(
+            "arkime_session_file_by_hash",
+            {"session_id": body_row["id"], "file_hash": body_hash, "node": body_row["node"]},
+        )
+        check(
+            "arkime_session_file_by_hash",
+            t["found"] is True
+            and t["size_bytes"] == len(body_bytes)
+            and t["md5"] == hashlib.md5(body_bytes, usedforsecurity=False).hexdigest()
+            and t["sha256"] == hashlib.sha256(body_bytes).hexdigest()
+            and t["md5"] == body_hash
+            and t["magic"] == body_bytes[:4].hex(),
+            f"{t['size_bytes']:,} bytes; md5/sha256/magic recomputed over the API's own "
+            f"bytes and md5 == the hash asked for",
+        )
+
+        t = await call("arkime_crons", {})
+        r = (await api.get("/arkime/api/crons")).json()
+        # Written against the empty answer on purpose: the first cron anyone adds
+        # fails this check, which is the signal to rewrite it against values.
+        check(
+            "arkime_crons",
+            r == [] and "No cron queries are configured" in t,
+            "EMPTY-PATH CHECK: the API returns [] here, so this compares the shape and "
+            "the sentence the tool answers with, not values",
+        )
+
+        def hunts_without_clock(payload):
+            """The hunt list minus nodeInfo.updateTime, which is the viewer's clock."""
+            info = payload.get("nodeInfo") or {}
+            return {k: v for k, v in payload.items() if k != "nodeInfo"}, info.get("node")
+
+        t_active = await jcall("arkime_hunt_status", {"active_only": True, "limit": 5})
+        r_active = (
+            await api.get("/arkime/api/hunts", params={"length": 5, "history": "false"})
+        ).json()
+        t_done = await jcall("arkime_hunt_status", {"active_only": False, "limit": 5})
+        r_done = (
+            await api.get("/arkime/api/hunts", params={"length": 5, "history": "true"})
+        ).json()
+        check(
+            "arkime_hunt_status",
+            hunts_without_clock(t_active) == hunts_without_clock(r_active)
+            and hunts_without_clock(t_done) == hunts_without_clock(r_done),
+            f"EMPTY-PATH CHECK: {r_active['recordsTotal']} active and "
+            f"{r_done['recordsTotal']} finished hunts here; both halves equal the API "
+            "field for field apart from nodeInfo.updateTime, but with both lists empty "
+            "an inverted active_only flag would still pass",
+        )
+
         # ---- correlation / dashboards ------------------------------------
         conn = (
             await api.post("/mapi/document", json={"limit": 1, "filter": {"event.dataset": "conn"}})
@@ -488,6 +686,75 @@ async def main() -> None:
         r = (await api.get(f"/mapi/dashboard-export/{dash_id}")).json()
         check("malcolm_dashboard_export", t == r, f"export identical for {dash_id}")
 
+        # The query is not reachable by ordinary traversal -- searchSourceJSON is
+        # a JSON string inside the object and the index is a reference NAME
+        # resolved through references[] -- so the raw side parses it here the
+        # same way. Both storage shapes are checked: 25 of this lab's 141 saved
+        # searches wrap the query in the pre-7.x {"query_string": {...}} object,
+        # and handing that dict back is what breaks the declared type.
+        searches = (
+            await api.get(
+                "/dashboards/api/saved_objects/_find",
+                params=[("type", "search"), ("per_page", 200)],
+            )
+        ).json()["saved_objects"]
+
+        def stored_query(obj):
+            meta = (obj["attributes"].get("kibanaSavedObjectMeta") or {}).get("searchSourceJSON")
+            return json.loads(meta or "{}")
+
+        def expected_detail(obj):
+            source = stored_query(obj)
+            query = (source.get("query") or {}).get("query")
+            refs = {ref["name"]: ref["id"] for ref in obj.get("references") or []}
+            return {
+                "title": obj["attributes"]["title"],
+                "query": query
+                if isinstance(query, str)
+                else (query or {}).get("query_string", {}).get("query"),
+                "language": (source.get("query") or {}).get("language", ""),
+                "index_pattern": refs.get(source.get("indexRefName"), ""),
+                "columns": obj["attributes"].get("columns"),
+                "sort": obj["attributes"].get("sort") or [],
+            }
+
+        ordered = sorted(searches, key=lambda o: o["id"])
+        plain = next(
+            o for o in ordered if isinstance((stored_query(o).get("query") or {}).get("query"), str)
+        )
+        wrapped = next(
+            o
+            for o in ordered
+            if isinstance((stored_query(o).get("query") or {}).get("query"), dict)
+        )
+        wrong = []
+        for obj in (plain, wrapped):
+            want = expected_detail(obj)
+            t = await jcall(
+                "malcolm_saved_object_detail", {"object_id": obj["id"], "object_type": "search"}
+            )
+            got = {
+                "title": t.get("title"),
+                "query": t.get("query"),
+                "language": t.get("language"),
+                "index_pattern": t.get("index_pattern"),
+                "columns": t.get("columns"),
+                # _drop_empty removes an empty sort list, which is not a mismatch.
+                "sort": t.get("sort") or [],
+            }
+            if got != want:
+                wrong.append(f"{obj['id']}: {got} != {want}")
+        check(
+            "malcolm_saved_object_detail",
+            not wrong,
+            f"{plain['attributes']['title']!r} (plain string) and "
+            f"{wrapped['attributes']['title']!r} (pre-7.x query_string, unwrapped to "
+            f"{expected_detail(wrapped)['query']!r}): query, language, index pattern, "
+            f"columns and sort all match the stored object"
+            if not wrong
+            else f"{wrong}",
+        )
+
         t = await jcall("malcolm_alerting_monitors", {})
         r = (
             await api.post(
@@ -508,6 +775,67 @@ async def main() -> None:
             == [h["_source"]["name"] for h in r["hits"]["hits"]]
             and t["active_alerts"] == alerts["totalAlerts"],
             f"total={t['total']}, active_alerts={t['active_alerts']} both sides",
+        )
+
+        # No alert has ever been raised here, so the values side is empty on both
+        # sides and proves nothing on its own. What can still differ is the
+        # guard: an unknown alertState is a 200 with an empty list upstream --
+        # indistinguishable from a quiet night -- and an error from the tool.
+        t = await call("malcolm_alerting_alerts", {"alert_state": "ALL"})
+        r = (
+            await api.get(
+                "/mapi/opensearch/_plugins/_alerting/monitors/alerts",
+                params={"alertState": "ALL"},
+            )
+        ).json()
+        bogus = (
+            await api.get(
+                "/mapi/opensearch/_plugins/_alerting/monitors/alerts",
+                params={"alertState": "NONSENSE"},
+            )
+        ).json()
+        try:
+            await call("malcolm_alerting_alerts", {"alert_state": "NONSENSE"})
+            guarded = False
+        except RuntimeError:
+            guarded = True
+        check(
+            "malcolm_alerting_alerts",
+            r["alerts"] == []
+            and r["totalAlerts"] == 0
+            and "No alerts in any state" in t
+            and bogus["totalAlerts"] == 0
+            and guarded,
+            "EMPTY-PATH CHECK: 0 alerts in any state upstream and the tool says so; the "
+            "load-bearing half is alert_state=NONSENSE — refused by the tool, answered "
+            f"200 with {bogus['totalAlerts']} alerts by the API",
+        )
+
+        hit = (
+            await api.post(
+                "/mapi/opensearch/_plugins/_alerting/monitors/_search",
+                json={"query": {"match_all": {}}, "size": 1},
+            )
+        ).json()["hits"]["hits"][0]
+        monitor_id = hit["_id"]
+        raw = (await api.get(f"/mapi/opensearch/_plugins/_alerting/monitors/{monitor_id}")).json()
+        src = raw["monitor"]
+        trigger = next(iter(src["triggers"][0].values()))
+        t = await jcall("malcolm_alerting_monitor_detail", {"monitor_id": monitor_id})
+        check(
+            "malcolm_alerting_monitor_detail",
+            t["id"] == raw["_id"]
+            and t["name"] == src["name"]
+            and t["enabled"] == src["enabled"]
+            and t["monitor_type"] == src["monitor_type"]
+            and [i["indices"] for i in t["inputs"]]
+            == [i["search"]["indices"] for i in src["inputs"]]
+            and [i["query"] for i in t["inputs"]] == [i["search"]["query"] for i in src["inputs"]]
+            and t["triggers"][0]["name"] == trigger["name"]
+            and t["triggers"][0]["severity"] == trigger["severity"]
+            and t["triggers"][0]["condition"] == trigger["condition"]["script"]["source"],
+            f"{src['name']!r}: enabled={src['enabled']}, whole search query identical, "
+            f"trigger fires on {trigger['condition']['script']['source']!r}",
         )
 
         t = await jcall("malcolm_anomaly_detectors", {})
@@ -534,6 +862,75 @@ async def main() -> None:
             == [h["_source"]["name"] for h in r["hits"]["hits"]]
             and t["recorded_anomalies"] == anom["hits"]["total"]["value"],
             f"total={t['total']}, anomalies={t['recorded_anomalies']} both sides",
+        )
+
+        # These detectors were never started, so every window is empty and the
+        # bucket list alone proves nothing. Three things still differ if the tool
+        # is wrong: the run state it quotes comes from a second route, the window
+        # it echoes proves the milliseconds were read as milliseconds, and a
+        # seconds-shaped window is refused here where the API answers it 200 with
+        # an empty list -- a window in 1970 that reads as clean traffic.
+        detector = (
+            await api.post(
+                "/mapi/opensearch/_plugins/_anomaly_detection/detectors/_search",
+                json={"query": {"match_all": {}}, "size": 1},
+            )
+        ).json()["hits"]["hits"][0]
+        det_id = detector["_id"]
+        ms0, ms1 = int(T0) * 1000, int(T1) * 1000
+        top = (
+            f"/mapi/opensearch/_plugins/_anomaly_detection/detectors/{det_id}/results/_topAnomalies"
+        )
+        r = (
+            await api.post(
+                f"{top}?historical=false",
+                json={"size": 10, "order": "severity", "start_time_ms": ms0, "end_time_ms": ms1},
+            )
+        ).json()
+        seconds = (
+            await api.post(
+                f"{top}?historical=false",
+                json={
+                    "size": 10,
+                    "order": "severity",
+                    "start_time_ms": int(T0),
+                    "end_time_ms": int(T1),
+                },
+            )
+        ).json()
+        state = (
+            await api.get(
+                f"/mapi/opensearch/_plugins/_anomaly_detection/detectors/{det_id}/_profile"
+            )
+        ).json()["state"]
+        t = await call(
+            "malcolm_anomaly_results",
+            {"detector_id": det_id, "start_time_ms": ms0, "end_time_ms": ms1},
+        )
+        window = " to ".join(
+            datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            for ms in (ms0, ms1)
+        )
+        try:
+            await call(
+                "malcolm_anomaly_results",
+                {"detector_id": det_id, "start_time_ms": int(T0), "end_time_ms": int(T1)},
+            )
+            guarded = False
+        except RuntimeError:
+            guarded = True
+        check(
+            "malcolm_anomaly_results",
+            r["buckets"] == []
+            and f"No anomalies from detector {det_id}" in t
+            and window in t
+            and state in t
+            and seconds["buckets"] == []
+            and guarded,
+            f"EMPTY-PATH CHECK: detector {detector['_source']['name']!r} has "
+            f"{len(r['buckets'])} anomalies in {window}; the tool quotes back that "
+            f"window and the state {state} the profile route reports, and refuses the "
+            "seconds-shaped window the API answers 200 with an empty list",
         )
 
         # ---- file analysis -------------------------------------------------

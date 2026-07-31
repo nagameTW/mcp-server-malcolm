@@ -87,7 +87,7 @@ def redact(text: str) -> str:
     intact: the host and status code are what make an error actionable, and
     neither is a secret.
 
-    >>> redact("GET https://otex:hunter2@malcolm.example/mapi/fields failed")
+    >>> redact("GET https://operator1:hunter2@malcolm.example/mapi/fields failed")
     'GET https://malcolm.example/mapi/fields failed'
     >>> redact("... /login?user=a&password=hunter2&next=/")
     '... /login?user=a&password=[redacted]&next=/'

@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import html
+import json
 import logging
 import os
 import re
@@ -136,6 +138,42 @@ _NETBOX_PATH_SHAPE = "a NetBox REST path such as 'api/ipam/ip-addresses/'"
 # exactly, so a deployment hashing with something else still resolves.
 _HASH_RE = re.compile(r"[A-Fa-f0-9]{16,128}")
 _HASH_SHAPE = "an md5 or sha256 hex digest"
+
+# Arkime capture-node names, measured on this lab: "arkime" and
+# "capture-4f2a-node". Arkime derives the name from the capture host unless an
+# operator overrides it in config.ini, so the class is the host-name characters
+# plus "_", which that override allows.
+_ARKIME_NODE_RE = re.compile(r"[A-Za-z0-9_.-]+")
+_ARKIME_NODE_SHAPE = "an Arkime capture-node name such as 'capture-4f2a-node'"
+
+# Arkime session ids, measured over 1000 of them here: the base64url alphabet,
+# e.g. "240425-yATE05tK50pD37H4n83ww_-M". ":" and "@" are in the class because
+# the search tools hand out the prefixed spelling ("3@240425:240425-...") and
+# the payload routes accept it -- verified byte-identical responses for both
+# forms -- so rejecting it would break the id a caller copied from a sibling
+# tool. Neither character is a path separator.
+_ARKIME_SESSION_ID_RE = re.compile(r"[A-Za-z0-9_:@-]+")
+_ARKIME_SESSION_ID_SHAPE = "an Arkime session id such as '240425-yATE05tK50pD37H4n83ww_-M'"
+
+# OpenSearch auto-generated document ids: this lab's one alerting monitor, its
+# five anomaly detectors and any Arkime hunt all carry the same shape, measured
+# as 20 characters of the base64url alphabet ("NYUZsZ8Bao8axaN3ef1f").
+_OS_DOC_ID_RE = re.compile(r"[A-Za-z0-9_-]+")
+_OS_DOC_ID_SHAPE = "an OpenSearch document id such as 'NYUZsZ8Bao8axaN3ef1f'"
+
+# Saved-object types, measured across all 1064 objects this lab holds: search,
+# visualization, dashboard, index-pattern and config -- lowercase words joined
+# by a hyphen.
+_SAVED_TYPE_RE = re.compile(r"[a-z][a-z-]*")
+_SAVED_TYPE_SHAPE = "a saved-object type such as 'search', 'visualization' or 'dashboard'"
+
+# Saved-object ids, from the same 1064: mostly UUIDs, some named
+# ("Metricbeat-system-overview"), some legacy Kibana ("AWDG9Qx0xQT5EBNmq3_2").
+# "*" is in the class because the three index-pattern ids ARE their pattern
+# ("arkime_sessions3-*"), and resolving a saved search's references[] entry
+# lands on exactly those; "*" is an ordinary character inside a path segment.
+_SAVED_ID_RE = re.compile(r"[A-Za-z0-9_.*-]+")
+_SAVED_ID_SHAPE = "a saved-object id such as 'abd55c60-06a5-11ec-8c6b-353266ade330'"
 
 # A path segment that is exactly "..", which is what httpx collapses. Written
 # as a segment test rather than a substring one so a carved filename like
@@ -689,17 +727,60 @@ class MalcolmClient:
             {"query": {"match_all": {}}, "size": limit},
         )
 
-    async def alerting_alerts(self) -> dict[str, Any]:
-        """Currently-raised alerts via GET /_plugins/_alerting/monitors/alerts.
+    async def alerting_monitor(self, monitor_id: str) -> dict[str, Any]:
+        """One monitor in full via GET /_plugins/_alerting/monitors/<id>.
 
-        alertState is pinned to ACTIVE: the API defaults to ALL, which counts
-        COMPLETED and ACKNOWLEDGED history alongside what is firing now, so the
-        default would answer a different question from the one asked.
+        The search in alerting_monitors() returns the list; this returns the
+        parts that list omits and that decide whether a monitor is worth
+        trusting: `monitor.inputs[].search` holds the indices and the whole
+        OpenSearch query, `monitor.triggers[]` the firing condition and
+        severity, `monitor.schedule` the interval, and `monitor.enabled` says
+        whether it runs at all -- measured false for this lab's one monitor,
+        which is why nothing ever alerts here.
+
+        Raises:
+            ToolInputError: monitor_id is not shaped like an OpenSearch id.
+            UpstreamError: no monitor has that id (upstream 404).
         """
-        return await self.get(
-            "/mapi/opensearch/_plugins/_alerting/monitors/alerts",
-            params={"alertState": "ACTIVE"},
-        )
+        safe = _checked(monitor_id, _OS_DOC_ID_RE, "monitor id", _OS_DOC_ID_SHAPE)
+        return await self.get(f"/mapi/opensearch/_plugins/_alerting/monitors/{safe}")
+
+    async def alerting_alerts(
+        self,
+        alert_state: str = "ACTIVE",
+        monitor_id: str = "",
+        severity: str = "",
+        search: str = "",
+    ) -> dict[str, Any]:
+        """Raised alerts via GET /_plugins/_alerting/monitors/alerts.
+
+        Args:
+            alert_state: ACTIVE (the default here) restricts the answer to what
+                is firing now. Upstream defaults to ALL, which mixes COMPLETED
+                and ACKNOWLEDGED history in with it and answers a different
+                question, so the pin stays unless a caller asks for history on
+                purpose. Other values: ERROR, DELETED.
+            monitor_id: Restrict to one monitor. The parameter is singular --
+                measured, `monitorIds` is a 400 with OpenSearch itself
+                suggesting `monitorId`.
+            severity: Trigger severity level, "1" (highest) through "5".
+            search: Free-text match across the alert fields.
+
+        Returns:
+            {"alerts": [...], "totalAlerts": N}. Zero alerts is a successful
+            answer -- measured {"alerts": [], "totalAlerts": 0} here, because
+            the only monitor is disabled.
+        """
+        params: dict[str, Any] = {}
+        if alert_state:
+            params["alertState"] = alert_state
+        if monitor_id:
+            params["monitorId"] = monitor_id
+        if severity:
+            params["severityLevel"] = severity
+        if search:
+            params["searchString"] = search
+        return await self.get("/mapi/opensearch/_plugins/_alerting/monitors/alerts", params=params)
 
     async def anomaly_detectors(self, limit: int = 50) -> dict[str, Any]:
         """Anomaly detectors via POST /_plugins/_anomaly_detection/detectors/_search."""
@@ -727,6 +808,135 @@ class MalcolmClient:
             "/mapi/opensearch/_plugins/_anomaly_detection/detectors/results/_search",
             {"query": {"range": {"anomaly_grade": {"gt": 0}}}, "size": 0, "track_total_hits": True},
         )
+
+    async def anomaly_detector_profile(self, detector_id: str) -> dict[str, Any]:
+        """Run state of one detector via GET
+        /_plugins/_anomaly_detection/detectors/<id>/_profile.
+
+        The one call that separates "this detector has never run" from "it ran
+        and found nothing", which the detector list and a zero result count
+        cannot tell apart. Measured on all five detectors here:
+        {"state": "DISABLED"} -- so the zero anomalies this lab reports mean
+        the detectors were never started, not that the traffic is clean.
+
+        Raises:
+            ToolInputError: detector_id is not shaped like an OpenSearch id.
+        """
+        safe = _checked(detector_id, _OS_DOC_ID_RE, "detector id", _OS_DOC_ID_SHAPE)
+        return await self.get(
+            f"/mapi/opensearch/_plugins/_anomaly_detection/detectors/{safe}/_profile"
+        )
+
+    @_upstream
+    async def anomaly_top_results(
+        self,
+        detector_id: str,
+        start_time_ms: int,
+        end_time_ms: int,
+        size: int = 10,
+        order: str = "severity",
+        category_fields: list[str] | None = None,
+        historical: bool = False,
+    ) -> dict[str, Any]:
+        """Worst anomalies a detector found, via POST
+        /_plugins/_anomaly_detection/detectors/<id>/results/_topAnomalies.
+
+        Args:
+            start_time_ms/end_time_ms: EPOCH MILLISECONDS. Every arkime_* method
+                in this client takes seconds; this one does not, and seconds go
+                through without complaint as a window in 1970, so the answer
+                comes back empty and looks like clean traffic. The lab's window
+                is 1714003200000-1714089600000.
+            order: "severity" (highest anomaly grade) or "occurrence" (most
+                frequent). Lowercase only -- measured, "SEVERITY" is a 400
+                reading "Ordering by SEVERITY is not a valid option".
+            category_fields: Entity fields to group by, for a multi-entity
+                detector. Optional: measured, omitting it still answers 200.
+            historical: True asks for the results of a historical analysis
+                task, false (the default) for the real-time detector. It is a
+                QUERY parameter upstream, and putting it in the body instead is
+                silently ignored -- measured, the body form answers 200 from
+                the real-time results, so a caller who thinks they asked for
+                history gets a different question answered. True raises here
+                unless a historical task exists: measured 500
+                "No historical tasks found for detector ID <id>" on all five of
+                this lab's detectors, none of which was ever started.
+
+        Returns:
+            {"buckets": [...]}, empty when the detector found nothing in the
+            window -- a successful answer. GET is not an option: measured, a
+            GET without a body is a 400 "request body is required".
+
+        Raises:
+            ToolInputError: detector_id is not shaped like an OpenSearch id.
+            UpstreamError: the plugin refused the query; .status is the HTTP
+                status and the message carries the plugin's own reason.
+        """
+        safe = _checked(detector_id, _OS_DOC_ID_RE, "detector id", _OS_DOC_ID_SHAPE)
+        body: dict[str, Any] = {
+            "size": size,
+            "order": order,
+            "start_time_ms": start_time_ms,
+            "end_time_ms": end_time_ms,
+        }
+        if category_fields:
+            body["category_field"] = category_fields
+        path = (
+            f"/mapi/opensearch/_plugins/_anomaly_detection/detectors/{safe}"
+            f"/results/_topAnomalies?historical={'true' if historical else 'false'}"
+        )
+        # Not self.post(): raise_for_status() there keeps httpx's message, which
+        # is the internal URL and the status and nothing else. This route's 4xx
+        # bodies name what is actually wrong -- measured on 26.07.1, a detector
+        # with no category field answers 400 {"error":{"reason":"No category
+        # fields found for detector ID ..."}} -- and that reason is the only
+        # part a caller can act on. Same shape as _write_arkime_hunt_cancel.
+        c = await self._client()
+        resp = await c.post(_checked_path(path), json=body)
+        if resp.status_code >= 400:
+            raise UpstreamError(
+                f"the anomaly-detection plugin refused the top-anomalies query "
+                f"({resp.status_code}): {redact(resp.text[:200])}",
+                resp.status_code,
+            )
+        return resp.json()
+
+    async def saved_object(self, obj_type: str, obj_id: str) -> dict[str, Any]:
+        """Fetch one saved object in full via GET /dashboards/api/saved_objects/<type>/<id>.
+
+        dashboards_find() lists titles; this is what turns a title into the
+        query behind it. For a saved search that means the KQL/Lucene string an
+        analyst wrote, which is directly reusable as a hunt.
+
+        Args:
+            obj_type: "search", "visualization" or "dashboard" (this lab also
+                holds "index-pattern" and "config").
+            obj_id: The id dashboards_find() returned.
+
+        Returns:
+            The object as Dashboards sends it, plus a "search_source" key this
+            client decodes, because the query is not reachable by ordinary
+            traversal: attributes.kibanaSavedObjectMeta.searchSourceJSON is a
+            JSON *string* that needs a second parse, and the index it runs
+            against is never inline -- searchSourceJSON.indexRefName is a
+            placeholder resolved against the top-level references[] array.
+            "search_source" is {"query", "language", "filters", "index_pattern"}
+            with "" for whatever the object does not carry, and {} when there is
+            no searchSourceJSON at all.
+
+            A visualization has no indexRefName: measured, its index arrives
+            through references[] as a "search" entry, so the chain is
+            visualization -> that search's id -> this method again.
+
+        Raises:
+            ToolInputError: obj_type or obj_id is not shaped like one.
+            UpstreamError: nothing has that type/id pair (upstream 404, which
+                is also what an unknown *type* returns).
+        """
+        safe_type = _checked(obj_type, _SAVED_TYPE_RE, "saved-object type", _SAVED_TYPE_SHAPE)
+        safe_id = _checked(obj_id, _SAVED_ID_RE, "saved-object id", _SAVED_ID_SHAPE)
+        obj = await self.get(f"/dashboards/api/saved_objects/{safe_type}/{safe_id}")
+        return {**obj, "search_source": _decode_search_source(obj)}
 
     # -- NetBox (forwarded) ---------------------------------------------
 
@@ -1058,6 +1268,190 @@ class MalcolmClient:
         safe = _checked(file_hash, _HASH_RE, "body hash", _HASH_SHAPE)
         return await self.get_raw(f"/arkime/api/sessions/bodyhash/{safe}")
 
+    @_upstream
+    async def arkime_session_packets(
+        self,
+        node: str,
+        session_id: str,
+        base: str = "hex",
+        packets: int = 10,
+    ) -> str:
+        """Decode one session's packet payload via GET /api/session/<node>/<id>/packets.
+
+        Arkime answers this route with an HTML *fragment* (text/html), not
+        JSON: two Bootstrap columns, source on the left and destination on the
+        right, one row per coalesced packet. The tags are flattened to text
+        here rather than in the tool layer because the direction of each packet
+        is recorded nowhere but the column's CSS class, and a caller stripping
+        tags naively merges the two halves of the conversation without noticing.
+
+        Args:
+            node: Capture node from the session document. Measured on 26.07.1:
+                Arkime resolves the capture file itself and returns the same
+                6,008 bytes for a node that did not record the session, so this
+                is positional bookkeeping rather than a filter.
+            session_id: Either spelling works. The bare id and the prefixed
+                "3@240425:240425-..." form arkime_sessions hands out returned
+                byte-identical bodies.
+            base: "hex" for the offset + hex + ASCII gutter that renders a
+                modbus PDU legibly, or "ascii"/"utf8" for text protocols. An
+                unknown value is not an error -- Arkime silently falls back to
+                its ASCII rendering.
+            packets: How many packets to read. Left off upstream, Arkime renders
+                the whole session -- measured 1,066,665 bytes of HTML at
+                base=hex for one 11 MB session, against 54,017 at packets=10 --
+                hence the default of 10. It counts packets, not rendered
+                blocks: consecutive same-direction packets are coalesced into
+                one block, and a packet with no payload renders none at all, so
+                on a session that opens with a TCP handshake packets=2 is a
+                legitimate 391-byte answer carrying only the column headers.
+
+        Returns:
+            Plain text, with "[src]" / "[dst]" marking each packet's direction.
+            Two answers are empty rather than failed, both arriving as HTTP 200
+            and both returned as their own short text: "No pcap data found"
+            when the session has no fileId (only ~186,551 of this lab's ~6M
+            documents have one, and only those carry payload), and "Problem
+            loading packets for <id> Error: Not found" when no session has that
+            id.
+
+        Raises:
+            ToolInputError: node or session_id is not shaped like one.
+        """
+        safe_node = _checked(node, _ARKIME_NODE_RE, "Arkime node", _ARKIME_NODE_SHAPE)
+        safe_id = _checked(
+            session_id, _ARKIME_SESSION_ID_RE, "session id", _ARKIME_SESSION_ID_SHAPE
+        )
+        resp = await self.get_raw(
+            f"/arkime/api/session/{safe_node}/{safe_id}/packets",
+            params={"base": base, "packets": packets},
+        )
+        resp.raise_for_status()
+        return _packets_to_text(resp.text)
+
+    @_upstream
+    async def arkime_session_bodyhash(
+        self, node: str, session_id: str, body_hash: str, max_bytes: int = 0
+    ) -> tuple[int, bytes]:
+        """Download a session body by content hash, via
+        GET /api/session/<node>/<id>/bodyhash/<hash>.
+
+        Scoped to one session, unlike arkime_file_by_hash, which searches every
+        session for the most recent body with that hash and needs no node. Use
+        this when a session is already in hand and its own transfer is wanted;
+        use the sibling to find where a known-bad hash appeared at all.
+
+        Returns:
+            (status_code, body). Measured against a hash this dataset does not
+            hold: HTTP 400 with the body b"No match", so a 400 here is the
+            answer "nothing in this session hashes to that", not a fault -- the
+            body is returned empty and nothing is raised.
+
+        Raises:
+            ToolInputError: node, session_id or body_hash is not shaped like one.
+            ValueError: the response exceeds max_bytes.
+        """
+        safe_node = _checked(node, _ARKIME_NODE_RE, "Arkime node", _ARKIME_NODE_SHAPE)
+        safe_id = _checked(
+            session_id, _ARKIME_SESSION_ID_RE, "session id", _ARKIME_SESSION_ID_SHAPE
+        )
+        safe_hash = _checked(body_hash, _HASH_RE, "body hash", _HASH_SHAPE)
+        c = await self._client()
+        path = _checked_path(f"/arkime/api/session/{safe_node}/{safe_id}/bodyhash/{safe_hash}")
+        async with c.stream("GET", path) as resp:
+            if resp.status_code >= 400:
+                return resp.status_code, b""
+            return resp.status_code, await _read_capped(resp, max_bytes, "Session body")
+
+    async def arkime_sessions_summary(
+        self,
+        fields: str,
+        expression: str = "",
+        time_from: str = "",
+        time_to: str = "",
+    ) -> dict[str, Any]:
+        """Total sessions/bytes/packets plus a per-field breakdown, via
+        POST /api/sessions/summary.
+
+        POST, not GET, and the difference is a wrong answer rather than an
+        error. The parameters only travel in a JSON body -- the same values as
+        query parameters are a 400 -- and a GET carrying that body drops the
+        window on the floor: measured side by side on 26.07.1, GET answered
+        sessions=0 over graph.xmin=1785468240000 (Arkime's default recent
+        window) where POST answered sessions=4,377,209 over the
+        graph.xmin=1714003200000 that was asked for.
+
+        Args:
+            fields: Comma-separated field names, one breakdown per name.
+                Arkime accepts its expression names ("ip.src") and the dotted
+                ECS names ("source.ip", "destination.port"), and SILENTLY
+                IGNORES db names: measured, fields="srcIp" returns the totals
+                and no breakdown at all rather than an error. Required upstream
+                -- omitting it is an HTTP 400.
+            expression: Arkime expression scoping the summary.
+            time_from/time_to: Epoch-seconds strings. Omitted, Arkime summarises
+                its default recent window, which on a historical capture reports
+                zero and looks like a broken tool.
+
+        Returns:
+            {"totals": {...}, "breakdowns": [...]}. Upstream sends a bare list
+            -- totals first, then one entry per field, then a trailing empty
+            dict as a sentinel -- so it is reshaped here; the sentinel and any
+            field Arkime dropped are filtered out, which means comparing the
+            "field" key of each breakdown against what was asked is how a
+            caller detects a name Arkime did not recognise. An expression that
+            matches nothing is a successful answer with sessions/bytes 0, and
+            it still carries one breakdown per field, each with an empty "data"
+            list -- measured with "ip == 203.0.113.99" over
+            1714003200-1714089600. Only a field Arkime refused collapses to the
+            sentinel, which is what keeps the two cases apart.
+        """
+        body: dict[str, Any] = {"fields": fields}
+        if expression:
+            body["expression"] = expression
+        if time_from:
+            body["startTime"] = time_from
+        if time_to:
+            body["stopTime"] = time_to
+        data = await self._arkime_post("/arkime/api/sessions/summary", body)
+        if not isinstance(data, list) or not data:
+            return {"totals": {}, "breakdowns": []}
+        return {
+            "totals": data[0],
+            "breakdowns": [e for e in data[1:] if isinstance(e, dict) and e.get("field")],
+        }
+
+    async def arkime_buildquery(
+        self, expression: str = "", time_from: str = "", time_to: str = ""
+    ) -> dict[str, Any]:
+        """Translate an Arkime expression into OpenSearch DSL, via POST /api/buildquery.
+
+        Arkime compiles the expression and the window without running the
+        search, which is how a caller checks what an expression really asks
+        before spending a scan on it, and how an expression gets handed to
+        search_dsl for clauses Arkime's own syntax cannot express.
+
+        Returns:
+            {"esquery": {...}, "indices": "..."}. `indices` is the concrete
+            list the window resolves to (measured: "arkime_sessions3-240425"
+            for 2024-04-25), so an empty-looking hunt can be traced to a window
+            that selected no daily index at all. An expression Arkime cannot
+            parse comes back as an upstream 400 and therefore raises.
+        """
+        return await self.post(
+            "/arkime/api/buildquery", _arkime_query_params(expression, time_from, time_to)
+        )
+
+    async def arkime_crons(self) -> Any:
+        """List Arkime's standing periodic queries, via GET /api/crons.
+
+        A cron query re-runs an expression on a schedule and tags what it
+        matches, so this is where a tag nobody recognises comes from. Returns a
+        list, empty when a deployment has none configured -- measured [] here,
+        which is a fact about this deployment and not a route fault.
+        """
+        return await self.get("/arkime/api/crons")
+
     # -- Write primitives (gated) ---------------------------------------
     # Every method here issues a mutating request. By convention they are
     # named _write_* and imported ONLY from tools/write/*.py — a seam test
@@ -1077,37 +1471,66 @@ class MalcolmClient:
     async def _write_arkime_tags(self, ids: str, tags: str, segments: str = "no") -> dict[str, Any]:
         """POST /arkime/api/sessions/addtags — additive tagging (Arkime v6.5.0).
 
-        checkHeaderToken passes with no token when the request has no
-        cookie/referer. But a prior hunt-prime may have left an ARKIME-COOKIE
-        in the shared jar; httpx would then send it as a Cookie header, which
-        flips Arkime to checkCookieToken. So if a cookie is present, replay it
-        as x-arkime-cookie too (same first-party token, same Basic-auth user)
-        to stay consistent. Tags are sanitized to [-a-zA-Z0-9_:,] server-side.
+        Tags are sanitized to [-a-zA-Z0-9_:,] server-side. See _arkime_post for
+        why this cannot be a plain self.post().
+        """
+        return await self._arkime_post(
+            "/arkime/api/sessions/addtags",
+            {"ids": ids, "tags": tags, "segments": segments},
+        )
+
+    async def _arkime_post(self, path: str, body: dict[str, Any]) -> Any:
+        """POST an Arkime route whose token demand depends on the cookie jar.
+
+        Arkime's checkHeaderToken accepts a request carrying no token at all,
+        as long as it also carries no cookie or referer. The catch is that any
+        earlier GET of a session route answers with Set-Cookie ARKIME-COOKIE;
+        httpx keeps it in the jar this client shares for its whole lifetime,
+        and Arkime then sees a cookie and switches to checkCookieToken. So the
+        same POST that worked on a fresh process answers HTTP 500
+        {"success":false,"text":"Missing token"} from that moment on -- and
+        arkime_sessions, which sets the cookie, is the centre of this server's
+        own documented hunt flow, so in practice "from that moment on" means
+        "after the first search".
+
+        Replaying the cookie as the header satisfies both states: same
+        first-party token, same Basic-auth user. Every Arkime POST that is not
+        one of the always-guarded write routes (those use _arkime_token_post,
+        which primes a token instead of waiting for one) goes through here, so
+        a route added later cannot rediscover this the hard way.
+
+        A unit test only reproduces it if its transport keeps cookies -- the
+        failure is cross-call state, not a bad request in isolation.
         """
         c = await self._client()
         token = c.cookies.get("ARKIME-COOKIE")
         headers = {"x-arkime-cookie": token} if token else {}
-        resp = await c.post(
-            "/arkime/api/sessions/addtags",
-            json={"ids": ids, "tags": tags, "segments": segments},
-            headers=headers,
-        )
+        resp = await c.post(path, json=body, headers=headers)
         resp.raise_for_status()
         return resp.json()
+
+    async def _arkime_cookie_headers(self, c: httpx.AsyncClient) -> dict[str, str]:
+        """Prime and return the x-arkime-cookie header a CSRF-guarded route needs.
+
+        GET /arkime/api/hunts first so Arkime's setCookie middleware issues an
+        ARKIME-COOKIE, then hand it back to replay as the header. The userId in
+        the token matches because both requests carry the same Basic auth →
+        same X-Forwarded-User. The one mechanism for every guarded route:
+        without it, Arkime answers 500 {"success":false,"text":"Missing token"}.
+        """
+        await c.get("/arkime/api/hunts", params={"length": 1})
+        token = c.cookies.get("ARKIME-COOKIE")
+        return {"x-arkime-cookie": token} if token else {}
 
     @_upstream
     async def _arkime_token_post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         """POST to a checkCookieToken-guarded Arkime route with the token dance.
 
-        First GET /arkime/api/hunts so Arkime's setCookie middleware issues an
-        ARKIME-COOKIE, then replay it as the x-arkime-cookie header on the POST.
-        The userId in the token matches because both requests carry the same
-        Basic auth → same X-Forwarded-User. Shared by hunt/view/shortcut writes.
+        See _arkime_cookie_headers for the dance itself. Shared by the
+        hunt/view/shortcut writes.
         """
         c = await self._client()
-        await c.get("/arkime/api/hunts", params={"length": 1})
-        token = c.cookies.get("ARKIME-COOKIE")
-        headers = {"x-arkime-cookie": token} if token else {}
+        headers = await self._arkime_cookie_headers(c)
         resp = await c.post(path, json=body, headers=headers)
         resp.raise_for_status()
         return resp.json()
@@ -1134,6 +1557,38 @@ class MalcolmClient:
         list is referenced in expressions as $<name>.
         """
         return await self._arkime_token_post("/arkime/api/shortcut", shortcut)
+
+    @_upstream
+    async def _write_arkime_hunt_cancel(self, hunt_id: str) -> dict[str, Any]:
+        """PUT /arkime/api/hunt/<id>/cancel — stop a running hunt job.
+
+        CSRF-guarded exactly like the POST writes, and through the same
+        _arkime_cookie_headers dance rather than a second mechanism: measured
+        on 26.07.1, the bare PUT answers 500 {"success":false,"text":"Missing
+        token"}, and the same PUT with the primed cookie replayed as
+        x-arkime-cookie gets past the guard and fails on the id instead
+        (500 {"success":false,"text":"Error canceling hunt"} for one that does
+        not exist). Cancelling leaves the hunt row in place with its partial
+        results, so it stops work rather than destroying it.
+
+        A non-2xx raises with Arkime's own text attached, because those two
+        500s mean opposite things -- the plumbing broke, or the id was wrong --
+        and httpx's message carries only the status.
+
+        Raises:
+            ToolInputError: hunt_id is not shaped like an Arkime hunt id.
+            UpstreamError: Arkime refused the cancel; .status is the HTTP status.
+        """
+        safe = _checked(hunt_id, _OS_DOC_ID_RE, "hunt id", _OS_DOC_ID_SHAPE)
+        c = await self._client()
+        headers = await self._arkime_cookie_headers(c)
+        resp = await c.put(_checked_path(f"/arkime/api/hunt/{safe}/cancel"), headers=headers)
+        if resp.status_code >= 400:
+            raise UpstreamError(
+                f"Arkime refused the hunt cancel ({resp.status_code}): {redact(resp.text[:200])}",
+                resp.status_code,
+            )
+        return resp.json()
 
     @_upstream
     async def _write_upload_pcap(
@@ -1265,6 +1720,55 @@ async def _read_capped(resp: httpx.Response, max_bytes: int, what: str) -> bytes
             raise ValueError(f"{what} exceeds cap {max_bytes} bytes")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+# Arkime records each packet's direction in the column's CSS class and nowhere
+# else in the fragment, so the class becomes a marker before the tags go.
+_PACKET_DIRECTION = re.compile(r'<div class="[^"]*session(src|dst)"[^>]*>')
+_BLOCK_CLOSE = re.compile(r"</(?:div|pre|h4|em)>")
+_HTML_TAG = re.compile(r"<[^>]*>")
+_BLANK_RUN = re.compile(r"\n{3,}")
+
+
+def _packets_to_text(fragment: str) -> str:
+    """Flatten Arkime's packets HTML fragment into readable text.
+
+    Entities are unescaped LAST, after the tags are gone: the hex gutter
+    renders payload bytes as &amp;, &gt; and &#47;, so unescaping first would
+    manufacture markup out of data and the tag strip would then eat it. &nbsp;
+    becomes a plain space rather than U+00A0 so the result stays greppable.
+    """
+    marked = _PACKET_DIRECTION.sub(lambda m: f"\n[{m.group(1)}]\n", fragment)
+    text = html.unescape(_HTML_TAG.sub("", _BLOCK_CLOSE.sub("\n", marked)))
+    lines = "\n".join(line.rstrip() for line in text.replace("\xa0", " ").splitlines())
+    return _BLANK_RUN.sub("\n\n", lines).strip()
+
+
+def _decode_search_source(obj: dict[str, Any]) -> dict[str, Any]:
+    """Pull the query out of a Dashboards saved object; {} when it carries none.
+
+    Two indirections upstream, both of which a caller traversing the object
+    normally would miss: searchSourceJSON is a JSON string inside the parsed
+    object, and the index it queries is a reference *name* that only means
+    something once looked up in the object's own references[] array.
+    """
+    meta = obj.get("attributes", {}).get("kibanaSavedObjectMeta", {})
+    raw = meta.get("searchSourceJSON")
+    if not isinstance(raw, str):
+        return {}
+    try:
+        source = json.loads(raw)
+    except ValueError:
+        logger.warning("[malcolm] saved object %s has unparseable searchSourceJSON", obj.get("id"))
+        return {}
+    refs = {r.get("name"): r for r in obj.get("references", []) if isinstance(r, dict)}
+    query = source.get("query") or {}
+    return {
+        "query": query.get("query", ""),
+        "language": query.get("language", ""),
+        "filters": source.get("filter", []),
+        "index_pattern": refs.get(source.get("indexRefName"), {}).get("id", ""),
+    }
 
 
 def _arkime_query_params(expression: str, time_from: str, time_to: str) -> dict[str, Any]:

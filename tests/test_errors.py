@@ -37,11 +37,11 @@ def test_upstream_error_status_is_none_when_no_response_arrived() -> None:
     ("raw", "gone", "kept"),
     [
         (
-            "GET https://otex:hunter2@malcolm.example/mapi/fields -> 401",
+            "GET https://operator1:hunter2@malcolm.example/mapi/fields -> 401",
             "hunter2",
             "malcolm.example",
         ),
-        ("https://admin:p%40ss@10.0.0.1/x", "p%40ss", "10.0.0.1"),
+        ("https://admin:p%40ss@192.0.2.1/x", "p%40ss", "192.0.2.1"),
         ("POST /auth?password=hunter2&doctype=conn", "hunter2", "doctype=conn"),
         ("/x?api_key=abc123&q=1", "abc123", "q=1"),
         ("/x?TOKEN=abc123", "abc123", "/x?"),
