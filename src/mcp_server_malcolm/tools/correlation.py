@@ -26,8 +26,9 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         uid: Annotated[
             str,
             Field(
-                description='Zeek connection UID to correlate on, e.g. "CYeji2z7CKmPRGyga". '
-                "Required (non-empty)."
+                description="Zeek connection UID as it appears in the zeek.uid field, "
+                'e.g. "CYeji2z7CKmPRGyga". An Arkime session id (the "3@240425-..." '
+                "form) is a different key and correlates nothing here."
             ),
         ],
         limit: Annotated[
@@ -44,8 +45,11 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Use this to pivot from a single connection UID to everything tied to it: it
         queries zeek.uid (the direct connection) and rootId (Malcolm's cross-log link,
         carrying references from other log types like files, dns, ssl) in one call.
-        For a plain field query without the dual direct/related split, use
-        `malcolm_search` with a zeek.uid filter.
+        Zeek UIDs only: to pivot from an Arkime session id use
+        arkime_session_detail, and for a plain single-field query without the dual
+        direct/related split use malcolm_search with a zeek.uid filter. This tool
+        earns its place only where one connection is recorded under two different
+        keys.
 
         Behavior: runs TWO independent Malcolm searches (one per match kind); `limit`
         caps EACH side separately, so up to 2×limit sessions come back total. The two
@@ -53,10 +57,11 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         instead the result carries a `direct_error` or `related_error` string for the
         side that failed while still returning the side that succeeded (check for those
         keys); both failing is reported as an error, since nothing was correlated.
-        No time filter is applied — both searches use Malcolm's default window.
-        Requires Malcolm access (Basic auth), inherited from the server config. Returns a
-        JSON object with separate "direct" and "related" hit lists plus a "summary" count
-        (and per-side error keys only when a side fails).
+        Neither search is time-filtered — like malcolm_search, both cover all
+        retained history, so an empty result is a real absence rather than a
+        window. Returns a JSON object with separate "direct" and "related" hit
+        lists plus a "summary" count (and per-side error keys only when a side
+        fails).
         """
         if not uid.strip():
             raise ToolInputError(

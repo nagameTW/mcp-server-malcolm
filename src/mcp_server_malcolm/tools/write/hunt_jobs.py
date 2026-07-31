@@ -40,7 +40,7 @@ _WRITE = {
 # was making progress and the scan cannot be resumed, so destructiveHint is
 # true. Not idempotent either -- an id Arkime cannot act on answers 500
 # {"success":false,"text":"Error canceling hunt"} rather than a quiet no-op
-# (measured on 26.07.1 with an id that does not exist).
+# (measured on Malcolm v26.07.1 with an id that does not exist).
 _CANCEL = {
     "readOnlyHint": False,
     "destructiveHint": True,
@@ -63,15 +63,20 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         search_type: Annotated[
             str,
             Field(
-                description="How to interpret search; one of ascii, asciicase, hex, regex, "
-                "hexregex."
+                description="How to read search: ascii ignores case, asciicase does not, hex "
+                "matches the packet's hex bytes, and regex / hexregex are RE2 patterns over "
+                "the text / the hex.",
+                json_schema_extra={"enum": list(_SEARCH_TYPES)},
             ),
         ],
         total_sessions: Annotated[
             int,
             Field(
-                description="Number of sessions the expression + window match; bounds the scope. "
-                "Must be > 0. Get it from count / arkime_sessions first.",
+                description="How many sessions the expression + window match; Arkime uses it as "
+                "the progress denominator and refuses a hunt above the huntLimit set in its "
+                "own config.ini (Arkime ships that default at 1,000,000; this server cannot "
+                "read the deployment's value). Must be > 0. Get it from "
+                "arkime_sessions_summary.",
             ),
         ],
         start_time: Annotated[
@@ -83,7 +88,13 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
             str, Field(description="Arkime expression scoping which sessions to hunt.")
         ],
         packet_type: Annotated[
-            str, Field(description='Packet stream to scan: "raw" or "reassembled".')
+            str,
+            Field(
+                description="raw searches each captured packet on its own; reassembled decodes "
+                "the session first, so it is the only one that finds a pattern straddling a "
+                "packet boundary.",
+                json_schema_extra={"enum": ["raw", "reassembled"]},
+            ),
         ] = "raw",
         size: Annotated[int, Field(description="Max packets to examine per session.", ge=1)] = 50,
         src: Annotated[bool, Field(description="Search source-side packets.")] = True,
@@ -93,15 +104,19 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
 
         Use this only when indexed session metadata can't answer the question
         and you must look inside packet payloads. It is expensive: capture nodes
-        re-read raw PCAP, so scope it tightly. Before creating one, run count or
-        arkime_sessions with the same expression + time window to size it and
-        set total_sessions. To tag sessions you already found instead, use
-        arkime_add_tags; to save a metadata search, use arkime_create_view.
-        Additive — queues a new job and changes nothing existing (calling twice
-        queues two hunts). The action is audited, and the tool is registered
-        only when the hunt-job write class is enabled. Track progress with
-        arkime_hunt_status, and stop one you scoped too widely with
-        arkime_cancel_hunt. Returns the raw Arkime response.
+        re-read raw PCAP, so scope it tightly. Before creating one, size it with
+        arkime_sessions_summary — same expression, same window, same dialect —
+        and pass its session total as total_sessions. To tag sessions you
+        already found instead, use arkime_add_tags; to save a metadata search,
+        use arkime_create_view. Additive — queues a new job and changes nothing
+        existing (calling twice queues two hunts). The action is audited, and
+        the tool is registered only when the hunt-job write class is enabled.
+        Track progress with arkime_hunt_status, and stop one you scoped too
+        widely with arkime_cancel_hunt. total_sessions admits the job rather
+        than bounding it: Arkime refuses one above its huntLimit, then replaces
+        the number with the count its own query returns as soon as the job
+        starts, so a value that is off skews the progress percentage rather
+        than truncating the scan. Returns the raw Arkime response.
         """
         if not name.strip():
             raise ToolInputError('name is required — the hunt name, e.g. "beacon-bytes".')
@@ -166,7 +181,7 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
             str,
             Field(
                 description="The hunt's own id, as `id` in arkime_hunt_status output "
-                '(e.g. "NYUZsZ8Bao8axaN3ef1f") — not the hunt name.'
+                "— an opaque 20-character string, not the hunt name."
             ),
         ],
     ) -> str:
@@ -187,8 +202,8 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         """
         if not hunt_id.strip():
             raise ToolInputError(
-                'hunt_id is required — a hunt id such as "NYUZsZ8Bao8axaN3ef1f", '
-                "read from arkime_hunt_status."
+                "hunt_id is required — the opaque id from an arkime_hunt_status "
+                "row's `id` field, not the hunt's name."
             )
 
         result = await run_write(

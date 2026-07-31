@@ -185,17 +185,16 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         pull bytes by a hash Arkime recorded on a session rather than by Zeek's
         file record.
 
-        Both record types Malcolm files under this dataset are returned: Zeek's
-        record of the transfer and, for a scanned file, Strelka's — which adds
-        the scan verdict — so one file can come back as two rows. A row's
+        Both record types Malcolm files under this dataset are returned, so one
+        file can come back as two rows: Zeek's record of the transfer, and
+        Strelka's scan verdict, which is the only row `scan_hits` appears on —
+        0 there means Strelka scanned the file and matched nothing. A row's
         `extracted` value is the argument malcolm_extract_file takes; a row
         carrying `note` instead was seen on the wire but is not on disk.
 
-        Returns JSON {"count", "files"}: per file the timestamp, name, MIME
-        type, size, both endpoints, md5/sha256, Malcolm's severity, any
-        Strelka/YARA/ClamAV hits, and the `extracted` name — absent values are
-        omitted. No match returns a sentence saying so, naming the field if a
-        filter used one Malcolm does not index, rather than an empty list.
+        No match returns a sentence saying so, naming the field if a filter used
+        one Malcolm does not index, rather than an empty list. Field names are
+        in the output schema.
         """
         extra = parse_json_object(filters, "filters", '{"source.ip":"192.0.2.7"}') or {}
 
@@ -237,7 +236,8 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 description="The `extracted` value from a malcolm_file_scans row "
                 "(Zeek's zeek.files.extracted). A full "
                 '"extracted-files/<name>" URI is accepted too. Names are flat — '
-                "the extracted-files directory has no subdirectories."
+                "the extracted-files directory has no subdirectories, so a name "
+                "carrying a path separator is refused before any request is sent."
             ),
         ],
         url_only: Annotated[
@@ -256,16 +256,17 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         one carved file.
 
         The bytes never enter the response and nothing is written to disk — a
-        carved file may be live malware. The body is streamed against a size cap
-        and an oversized file is refused before it is read; url_only=True
-        returns the URL alone, without contacting Malcolm at all. Names are
-        flat, so a filename containing a path separator is rejected unsent.
+        carved file may be live malware. The body is streamed against a 100 MB
+        cap — under Malcolm's own 128 MB extraction ceiling
+        (EXTRACTED_FILE_MAX_BYTES) — and a larger file is refused before it is
+        read; url_only=True skips the download without contacting Malcolm at
+        all.
 
-        Returns JSON: found, size_bytes, sha256 of the bytes actually served
-        (compare it against the record's sha256), the first four magic bytes as
-        hex, and the download URL. A 404 comes back as found:false — the index
-        record outlives the file, which Malcolm prunes. Any other error status
-        is reported as a failure, not as a missing file: it says nothing about
+        The returned sha256 is computed over the bytes actually served: compare
+        it with the malcolm_file_scans row's to see whether the file on disk is
+        still the one Zeek recorded. A 404 comes back as found:false — the index
+        record outlives the file, which Malcolm prunes. Any other error status is
+        reported as a failure, not as a missing file: it says nothing about
         whether the file is on disk.
         """
         name = filename.strip()
@@ -359,8 +360,8 @@ def _first(value: Any) -> Any:
 def _str_list(value: Any) -> list[str] | None:
     """A scanner's rule/scanner names as list[str], whichever shape arrived.
 
-    Unmeasured on this deployment, unlike every other key in _file_row: all 50
-    filescan records sampled on v26.07.1 carry hits 0 and therefore no
+    Unmeasured on Malcolm v26.07.1, unlike every other key in _file_row: all 50
+    filescan records sampled on Malcolm v26.07.1 carry hits 0 and therefore no
     filescan.rules subobject at all, so the populated shape could not be
     observed. FileRow declares both keys `list[str]`, and a dict branch that
     fails validation does NOT fall back to the `str` branch of the tool's

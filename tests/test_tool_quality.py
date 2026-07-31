@@ -108,8 +108,12 @@ _TYPED_OUTPUT = {
     "arkime_pcap_files",
     "arkime_node_stats",
     "malcolm_saved_objects",
+    "malcolm_saved_object_detail",
     "malcolm_alerting_monitors",
+    "malcolm_alerting_alerts",
+    "malcolm_alerting_monitor_detail",
     "malcolm_anomaly_detectors",
+    "malcolm_anomaly_results",
 }
 
 

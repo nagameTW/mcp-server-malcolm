@@ -60,7 +60,12 @@ def register_arkime_view_tools(
         arkime_create_hunt. Additive — creates a new view and changes nothing
         existing (calling twice with the same name creates a second view). The
         action is audited, and the tool is registered only when the arkime-view
-        write class is enabled. Returns the raw Arkime response.
+        write class is enabled. Arkime files the view under the account this
+        server authenticates as and shares it with nobody — this tool sends no
+        users and no roles, and a view is visible only to its owner plus
+        whoever it was shared with, so a teammate on another account will not
+        find it in arkime_views or in the Arkime UI. Returns the raw Arkime
+        response.
         """
         if not name.strip():
             raise ToolInputError('name is required — the view name, e.g. "dns-to-c2".')
@@ -97,7 +102,12 @@ def register_arkime_view_tools(
         ],
         shortcut_type: Annotated[
             str,
-            Field(description='Value type; one of "string", "number", "ip".'),
+            Field(
+                description="Type Arkime stores the values as; it has to match the field the "
+                "expression compares them against, or that expression is rejected with "
+                '"shortcut must be of type ...".',
+                json_schema_extra={"enum": list(_SHORTCUT_TYPES)},
+            ),
         ] = "string",
         description: Annotated[
             str, Field(description="Optional free-text description of the shortcut.")
@@ -111,7 +121,11 @@ def register_arkime_view_tools(
         Additive — creates a new shortcut and changes nothing existing (calling
         twice with the same name creates a second shortcut). The action is
         audited, and the tool is registered only when the arkime-view write
-        class is enabled. Returns the raw Arkime response.
+        class is enabled. Read it back with arkime_shortcuts, which hands you
+        the exact $name token to paste into an expression — and, like a view,
+        the shortcut is filed under the account this server authenticates as
+        and shared with nobody, so another account will not see it there.
+        Returns the raw Arkime response.
         """
         if not name.strip():
             raise ToolInputError('name is required — the shortcut name, e.g. "c2_ips".')

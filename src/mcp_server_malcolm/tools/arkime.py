@@ -49,15 +49,44 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         ] = "",
         limit: Annotated[int, Field(description="Max fields to return.", ge=1, le=200)] = 50,
     ) -> str:
-        """Discover the field names Arkime expressions accept — call before writing one.
+        """Discover the field names Arkime's routes accept — call before writing one.
 
-        Arkime's expression parser has its own vocabulary (ip.src, port.dst,
-        protocols, country) and rejects the dotted ECS names malcolm_field_search
-        reports (source.ip, destination.port). That makes this the field-discovery
-        tool for every arkime_* tool, exactly as malcolm_field_search is for the
-        malcolm_* ones. Each row gives both names: use "exp" inside an `expression`
-        argument, and "db" where a tool asks for an Arkime db field (arkime_connections,
-        arkime_multiunique). Returns "exp | db | type | group" lines with the help text.
+        Arkime names the same field more than once, and which spelling a
+        parameter wants is decided per PARAMETER, not per tool. This is the
+        field-discovery tool for every arkime_* tool, as malcolm_field_search
+        is for the malcolm_* ones. Returns "exp | db | type | group" lines with
+        the help text. Route the two columns like this — every number measured
+        on Malcolm v26.07.1 over one 24-hour window:
+
+        - "exp" (ip.src, port.dst, protocols): every `expression` argument, and
+          the field lists of arkime_unique, arkime_multiunique and
+          arkime_spigraphhierarchy. exp=ip.src,ip.dst returned 692 multiunique
+          rows and 140 spigraphhierarchy table rows; exp=srcIp,dstIp returned
+          the body "Unknown expression srcIp" under HTTP 200 from multiunique
+          and HTTP 403 from spigraphhierarchy, so those three parameters reject
+          a db name before the request rather than pass it on.
+        - "db" (srcIp, dstPort, node): arkime_connections' src_field and
+          dst_field, and nothing else. srcIp/dstIp returned a 10-node graph;
+          ip.src/dstIp returned HTTP 403 and srcIp/port.dst HTTP 500.
+        - A THIRD spelling, the storage path, is what arkime_spigraph's field
+          and arkime_spiview's spi take. It is the same string as the db column
+          for 4,034 of the 4,051 fields here; the other seventeen print a
+          camelCase db alias and store under a dotted name instead — srcIp is
+          source.ip, dstPort is destination.port, totBytes is network.bytes,
+          dstGEO is destination.geo.country_iso_code — and the dotted one is
+          what those two parameters want.
+
+        A dotted storage path is also accepted wherever the exp column is:
+        exp=destination.port returned the same 10,000 unique lines as
+        exp=port.dst and exp=network.bytes 5,544, while exp=dstPort returned
+        none. It is the one spelling that answers on every route.
+
+        The catalogue is far bigger than a keyword suggests — measured on
+        v26.07.1: 4,051 fields, of which 942 match "ip" and 114 match "http" —
+        so the list usually stops at `limit` and says "... and N more". Read a
+        field you cannot see as "not on this page" rather than absent, and
+        narrow with group, of which this deployment has 192, instead of raising
+        limit.
         """
         results = await client.search_arkime_fields(keyword=keyword, group=group)
 
@@ -88,10 +117,24 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 "search. Field existence is the literal token EXISTS!, as in "
                 '"zeek.ftp.password == EXISTS!". A list is an OR: "port == [80,443]". '
                 "Field names are Arkime's own, NOT the ECS names malcolm_field_search "
-                "returns — look them up with arkime_field_search."
+                "returns — look them up with arkime_field_search. A name Arkime "
+                "cannot resolve is not an error: measured on Malcolm v26.07.1, "
+                '"nosuch.field==1" over a window holding 6M sessions answered '
+                "matched:0 with no marker, indistinguishable from a query that "
+                "genuinely found nothing."
             ),
         ],
-        limit: Annotated[int, Field(description="Max sessions to return.", ge=1, le=100)] = 10,
+        limit: Annotated[
+            int,
+            Field(
+                description="Max sessions to return. Each row is a JSON object "
+                "carrying its own keys, which is why this stops at 100; when you "
+                "want thousands of rows and no session id, arkime_sessions_csv "
+                "takes up to 10,000.",
+                ge=1,
+                le=100,
+            ),
+        ] = 10,
         time_from: Annotated[
             str,
             Field(
@@ -107,10 +150,11 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     ) -> str:
         """Search Arkime sessions by expression; returns trimmed rows each carrying a session id.
 
-        This is the ONLY search returning a session id usable by
-        arkime_session_pcap, arkime_session_detail, arkime_file_by_hash, and
-        arkime_add_tags. For the complete field set of one session use
-        arkime_session_detail; for its PCAP bytes/metadata use
+        This is the ONLY search returning a session id, and every
+        session-scoped tool needs one: arkime_session_detail,
+        arkime_session_pcap, arkime_session_payload,
+        arkime_session_file_by_hash and arkime_add_tags. For one session's own
+        row use arkime_session_detail; for its PCAP bytes/metadata use
         arkime_session_pcap. To search with Malcolm filter dicts and dateparser
         times instead of Arkime expressions and epoch seconds, use
         malcolm_search. Returns `matched` (how many sessions the expression
@@ -134,7 +178,7 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         # recordsFiltered is how many sessions the expression matched;
         # recordsTotal is how many exist in the index at all. Reporting the
         # latter as "total" told an agent that `protocols == ssh` matched
-        # 6,030,807 sessions when it matched 134 (measured on 26.07.1).
+        # 6,030,807 sessions when it matched 134 (measured on Malcolm v26.07.1).
         result = {
             "matched": data.get("recordsFiltered", 0),
             "showing": len(sessions),
@@ -159,7 +203,13 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         ] = "",
         counts: Annotated[
             bool,
-            Field(description="Include a per-value occurrence count (default true)."),
+            Field(
+                description="Include a per-value occurrence count (default true). "
+                "Turning it off cuts about a third of the characters (measured on "
+                "v26.07.1: 91,033 down to 59,931 for one field over a 24-hour "
+                "window) and is the right choice when you only need the value set "
+                "itself — to paste into arkime_create_shortcut, for instance."
+            ),
         ] = True,
         time_from: Annotated[
             str,
@@ -183,8 +233,21 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         what values a field holds.
 
         Returns plain TEXT (one value per line, not JSON) — Arkime streams it
-        directly. "(no values)" with no time range usually means the data is
-        older than Arkime's default window rather than absent: pass time_from.
+        directly. "(no values)" has TWO causes and this route cannot tell them
+        apart: the window holds nothing, or the field name does not resolve.
+        Measured on Malcolm v26.07.1, field="nosuch.field" over a window with
+        6M sessions answers HTTP 200 with a zero-byte body, exactly like a
+        genuinely empty result — where every sibling is loud (arkime_multiunique
+        says "Unknown expression", arkime_spigraphhierarchy answers 403,
+        arkime_sessions_summary lists the name in ignored_fields). So check the
+        spelling against arkime_field_search's exp column before assuming the
+        window is wrong; only then pass time_from.
+
+        A wide field is truncated silently at Arkime's aggregation ceiling of
+        10,000 values, with no marker and no error: measured on Malcolm v26.07.1, one
+        port field returned exactly 10,000 lines over a window that held 16,005
+        distinct values. Treat a round 10,000 as "there are more", and scope
+        with expression rather than reading it as the whole value set.
         """
         if not field.strip():
             raise ToolInputError(
@@ -206,7 +269,22 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     async def arkime_spigraph(
         field: Annotated[
             str,
-            Field(description='One Arkime field, e.g. "ip.dst", "protocols", "http.host".'),
+            Field(
+                description="One Arkime field named by its STORAGE PATH, e.g. "
+                '"destination.ip", "protocol", "http.host" — arkime_field_search\'s '
+                "db column. NOT the exp column: measured on Malcolm v26.07.1 over one "
+                "24-hour window, field=destination.ip, field=protocol and "
+                "field=http.host each filled the requested size, while "
+                "field=ip.dst, field=protocols, field=dstIp, field=port.dst and "
+                "field=dstPort each returned 0 — every one of them HTTP 200, so "
+                "an empty result is the only signal a name was wrong. The db "
+                "column is "
+                "the storage path for all but seventeen fields, which print a "
+                "camelCase alias (srcIp, dstPort, totBytes, dstGEO) and store "
+                "under the dotted name (source.ip, destination.port, "
+                "network.bytes, destination.geo.country_iso_code); pass the "
+                "dotted one for those."
+            ),
         ],
         expression: Annotated[
             str,
@@ -216,7 +294,14 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             ),
         ] = "",
         size: Annotated[
-            int, Field(description="Number of top values to return.", ge=1, le=100)
+            int,
+            Field(
+                description="Number of top values to return. It bounds how many "
+                "distinct values are graphed, never how many time buckets each "
+                "one is split into — Arkime decides that from the time range.",
+                ge=1,
+                le=100,
+            ),
         ] = 20,
         time_from: Annotated[
             str,
@@ -237,6 +322,25 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         nested multi-level hierarchy use arkime_spigraphhierarchy; for many
         fields profiled at once use arkime_spiview. Returns the raw Arkime
         spigraph response (top values with time-bucketed counts).
+
+        The bucket width is Arkime's choice, taken from the range asked for and
+        not exposed as a parameter — measured on Malcolm v26.07.1: 1 second for a
+        10-minute window, 60 seconds from 30 minutes out to 2 days, an hour at
+        7 days and wider. Buckets holding no session are left out entirely, so
+        a 24-hour window came back as 368 buckets rather than 1,440. Compare
+        the shape of two graphs, never their bucket counts.
+
+        An empty items list is HTTP 200 whatever went wrong, but the response
+        says which: `recordsFiltered` counts the sessions the expression and
+        window matched, before the field is aggregated. Measured on Malcolm v26.07.1,
+        field=ip.dst over a window holding data returned 0 items with
+        recordsFiltered 6,016,935, while field=destination.ip with no time
+        range returned 0 items with recordsFiltered 0. So a non-zero
+        recordsFiltered under an empty items list means the FIELD NAME did not
+        resolve — re-read the `field` description, the storage-path spelling is
+        the usual cause. Only recordsFiltered 0 is a time-range problem: pass
+        time_from, since Arkime defaults to a recent-only window that a
+        historical capture falls outside.
         """
         if not field.strip():
             raise ToolInputError(
@@ -259,9 +363,22 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         spi: Annotated[
             str,
             Field(
-                description="Comma-separated Arkime fields, each optionally "
-                'suffixed ":<count>" to cap its values, e.g. '
-                '"protocols:10,ip.dst:20,http.host".'
+                description="Comma-separated Arkime fields named by their STORAGE "
+                'PATH, each optionally suffixed ":<count>" to cap its values, e.g. '
+                '"protocol:10,destination.ip:20,http.host" — the same spelling '
+                "arkime_spigraph's field takes. NOT the exp column: measured on "
+                "v26.07.1 over one 24-hour window, spi=protocol:10 returned 10 "
+                "buckets, spi=destination.ip:20 returned 20 and spi=http.host:5 "
+                "returned 5, while spi=protocols:10, spi=ip.dst:20 and spi=dstIp:20 "
+                "each returned an empty bucket list under HTTP 200. For the "
+                "seventeen fields whose db column is a camelCase alias, pass the "
+                "dotted storage path instead (source.ip for srcIp, "
+                "destination.port for dstPort). A field left without the suffix "
+                "takes Arkime's own default of 10 values, not all of them: "
+                "spi=protocol:10 returned 10 of that field's 52 values "
+                "(spi=protocol:1000 returns all 52) and swept the remaining 139,902 "
+                "sessions into sum_other_doc_count. Pass a count whenever you need "
+                "a known depth."
             ),
         ],
         expression: Annotated[
@@ -291,6 +408,21 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         combinations use arkime_multiunique; for a nested drill-down hierarchy
         use arkime_spigraphhierarchy. Returns the raw Arkime spiview response
         (per-field top values with counts).
+
+        Each field also reports sum_other_doc_count, the sessions its listed
+        values do not account for; a large one means the top-N hid most of the
+        distribution.
+
+        A field always comes back under its own key, with an empty bucket list
+        and HTTP 200 when nothing aggregated, so the key's presence proves
+        nothing. `recordsFiltered` is what separates the two causes: it counts
+        the sessions the expression and window matched, before any field is
+        aggregated. Measured on Malcolm v26.07.1, spi=protocols:10 over a window
+        holding data returned 0 buckets with recordsFiltered 6,016,935, while
+        spi=protocol:10 with no time range returned 0 buckets with
+        recordsFiltered 0. A non-zero recordsFiltered under empty buckets means
+        that FIELD NAME did not resolve; only recordsFiltered 0 is a time-range
+        problem, fixed by passing time_from.
         """
         if not spi.strip():
             raise ToolInputError(
@@ -312,15 +444,26 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         src_field: Annotated[
             str,
             Field(
-                description="Arkime DB field for source nodes (default srcIp). Use an Arkime db "
-                "name (srcIp, dstIp, dstPort, node) — NOT a dotted ECS name like ip.src."
+                description="Arkime db field for source nodes (default srcIp). "
+                "Common choices: srcIp, dstIp, dstPort, node — arkime_field_search's "
+                "db column. The dotted storage path works here too and gives the "
+                "identical graph: measured on Malcolm v26.07.1 over one 24-hour window, "
+                "srcIp/dstIp and source.ip/destination.ip both returned 10 nodes and "
+                "8 links. What this route will NOT take is the exp column: "
+                "srcField=ip.src returned HTTP 403 and dstField=port.dst HTTP 500 "
+                '"TypeError: Cannot read properties of undefined", so the sixteen '
+                "expression names whose db spelling differs are refused here before "
+                "the request is sent."
             ),
         ] = "srcIp",
         dst_field: Annotated[
             str,
             Field(
-                description="Arkime DB field for destination nodes (default dstIp; use dstPort to "
-                "graph by port). Arkime db name only, NOT a dotted ECS name."
+                description="Arkime db field for destination nodes (default dstIp; "
+                "dstPort graphs by port instead of by host — measured on Malcolm v26.07.1, "
+                "srcIp/dstPort returned 15 nodes and 11 links against srcIp/dstIp's "
+                "10 and 8). Same vocabulary as src_field: db column or dotted storage "
+                "path, never the exp column."
             ),
         ] = "dstIp",
         expression: Annotated[
@@ -346,12 +489,22 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Returns nodes and links between two fields — useful for tracing lateral
         movement or mapping which hosts a suspect IP communicated with. NOTE the
-        src/dst fields take Arkime *db* names (srcIp, dstIp, dstPort, node), not
-        the dotted ECS names the other tools use — a dotted name errors inside
-        Arkime. For distinct field-tuple pairs as text rather than a graph use
+        src/dst fields take Arkime *db* names (srcIp, dstIp, dstPort, node) or
+        the dotted storage paths (source.ip, destination.port), which resolve to
+        the same graph; the one vocabulary this route rejects is the expression
+        names arkime_sessions uses in `expression` (ip.src, port.dst). For
+        distinct field-tuple pairs as text rather than a graph use
         arkime_multiunique; for a nested top-N hierarchy use
         arkime_spigraphhierarchy. Returns the raw Arkime connections response
         (nodes and links).
+
+        The graph is built from a bounded slice of the matching sessions rather
+        than from all of them, and that bound is not a parameter here: measured
+        on Malcolm v26.07.1, a 24-hour window whose expression matched 6,005,737
+        sessions produced 10 nodes and 8 links, while the same window held 112
+        distinct source addresses. Nothing in the response marks the shortfall,
+        so narrow with expression and a tight window before reading a sparse
+        graph as "these are the only hosts talking".
         """
         data = await client.arkime_connections(
             src_field=src_field.strip() or "srcIp",
@@ -403,6 +556,15 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         use arkime_unique; for a source/destination graph use arkime_connections;
         for a nested hierarchy use arkime_spigraphhierarchy. Returns plain TEXT
         (one combination per line, not JSON).
+
+        "(no values)" with no time range usually means the data predates
+        Arkime's default recent window rather than being absent: pass
+        time_from. Every field added multiplies the rows, well past the 10,000
+        values arkime_unique stops at — measured on Malcolm v26.07.1 over one 24-hour
+        window, a two-field tuple returned 22,548 lines and a three-field tuple
+        50,817, about 2 MB of text. Scope it with expression first, or size the
+        match with
+        arkime_sessions_summary before asking for the tuples.
         """
         if not fields.strip():
             raise ToolInputError(
@@ -457,6 +619,15 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         result is nested. For a single field plus a time graph use
         arkime_spigraph; for a source/destination graph use arkime_connections.
         Returns the raw Arkime spigraph-hierarchy response (nested value tree).
+
+        Level 1 is the outermost, and every deeper level's top values are
+        counted inside their own parent rather than globally, so a value that
+        is common overall can be missing from a branch where it is rare. Each
+        level keeps Arkime's top 20 and this tool does not expose that number:
+        measured on Malcolm v26.07.1, a two-level tree returned 20 first-level values
+        out of the 112 the window held, each parent carrying a different number
+        of children. An empty tree with no time range usually means the data
+        predates Arkime's default recent window: pass time_from.
         """
         if not fields.strip():
             raise ToolInputError(
@@ -473,6 +644,10 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
 
+    # Arkime's own connections.csv is deliberately not wrapped: on Arkime 6.6.0 it
+    # emits nine header columns over seven-column rows, so every column after
+    # the second is mislabeled. arkime_connections serves the same question as
+    # JSON instead.
     @mcp.tool(title="Export sessions as CSV", annotations=_READ)
     async def arkime_sessions_csv(
         expression: Annotated[
@@ -489,7 +664,7 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 '("source.ip,destination.port") — the names malcolm_field_search '
                 "returns, NOT Arkime db names (srcIp) or expression names "
                 "(ip.src). A name Arkime does not accept is never reported as an "
-                "error: measured on 6.6.0 it either comes back as an empty column "
+                "error: measured on Arkime 6.6.0 it either comes back as an empty column "
                 "or the request hangs until it times out. Leave empty for "
                 "Arkime's default columns, which always work."
             ),
@@ -514,9 +689,7 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         session this host made" when you intend to read the result as a table.
         Use arkime_sessions instead when you need a session id to drill into
         (this returns none), and arkime_connections for a who-talked-to-whom
-        summary — Arkime's connections.csv is not wrapped here because on 6.6.0
-        it emits nine header columns over seven-column rows, so every column
-        after the second is mislabeled.
+        summary.
 
         Returns raw CSV TEXT with a header row, not JSON. `limit` bounds the
         rows exactly. A request naming a column Arkime does not accept hangs
@@ -587,12 +760,11 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         """Total sessions, bytes and packets for an expression, plus per-field breakdowns.
 
         Sizes a result set in one call, before something expensive acts on it.
-        arkime_create_hunt needs total_sessions and its own guidance sends you
-        to count or arkime_sessions for it: both mean a second call, a dialect
-        switch for count, and neither reports bytes or packets. Use this
-        instead. For the matching sessions themselves use arkime_sessions, and
-        for a value distribution without the totals use arkime_unique or
-        arkime_spiview.
+        It is what arkime_create_hunt's total_sessions wants, in one call and
+        in the same dialect — count means a dialect switch, and neither count
+        nor arkime_sessions reports bytes or packets. For the matching sessions
+        themselves use arkime_sessions, and for a value distribution without
+        the totals use arkime_unique or arkime_spiview.
 
         Returns JSON {"totals", "breakdowns"}: totals carry sessions, bytes,
         dataBytes, packets and the first/last packet timestamps (Arkime's empty
@@ -658,20 +830,14 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     ) -> str:
         """Translate an Arkime expression into the OpenSearch DSL it compiles to, without running it.
 
-        Write the easy syntax, get the powerful one. This server's three query
-        dialects are not interchangeable, and Arkime's is the friendliest to
-        write but cannot express a substring or wildcard match, a fuzzy term or
-        a script clause. Compile the part you can say here, edit the returned
-        DSL, then run it with search_dsl (or count, which takes the inner query
-        clause only). It is also how to see what an expression really asks
-        before spending a scan on it — no search is executed here.
-
         Do NOT use this to run a search: nothing is executed and no session
-        comes back. When the expression already says what you mean, send it
-        straight to arkime_sessions for the rows, or arkime_sessions_summary for
-        the totals — compiling it first buys nothing. Come here only when the
-        DSL itself is the goal: a clause Arkime's syntax cannot express, or a
-        look at the compiled query before it is run.
+        comes back. Come here only when the DSL itself is the goal — a
+        substring, wildcard, fuzzy or script clause Arkime's syntax cannot say,
+        or a look at the compiled query before spending a scan on it. Compile
+        the part the expression can express, edit the returned DSL, then run it
+        with search_dsl (or count, which takes the inner query clause only).
+        When the expression already says what you mean, send it straight to
+        arkime_sessions for the rows or arkime_sessions_summary for the totals.
 
         Returns JSON shaped for that handoff: `index` and `query_dsl`, the two
         arguments search_dsl takes, plus the compiled body's own size and sort,
@@ -693,7 +859,7 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         esquery = data.get("esquery") if isinstance(data, dict) else None
         if not isinstance(esquery, dict):
-            # Measured on 26.07.1: a parse error and an unknown field are both
+            # Measured on Malcolm v26.07.1: a parse error and an unknown field are both
             # HTTP 200 carrying {"error": ...} and no esquery, so nothing raised
             # on the way here. Left alone it would look like a successful
             # translation of an empty query.

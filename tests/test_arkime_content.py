@@ -217,6 +217,17 @@ async def test_payload_rejects_a_base_arkime_would_silently_replace():
 
 
 @pytest.mark.asyncio
+async def test_payload_base_advertises_its_closed_set_without_delegating_the_check():
+    """`base` carries its enum in the schema (a client can offer the three, and
+    Glama's scorer counts it) while validation stays in the handler above --
+    declaring it as a Literal would move rejection into Pydantic and replace
+    this repo's message, which names the silent-ASCII trap, with a generic one."""
+    tools = {t.name: t for t in await _server(lambda req: None).list_tools()}
+    base = tools["arkime_session_payload"].input_schema["properties"]["base"]
+    assert sorted(base["enum"]) == ["ascii", "hex", "utf8"]
+
+
+@pytest.mark.asyncio
 async def test_payload_rejects_a_traversing_session_id():
     def handler(req):
         raise AssertionError("must not reach Arkime")

@@ -73,6 +73,11 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         response (matching documents); when nothing matched and a filter names a
         field Malcolm does not index, the correct field name is reported above
         the response.
+
+        Two defaults to know before the first call: with no time_from this
+        searches ALL retained history, where malcolm_aggregate covers only the
+        last 24 hours; and filter values are matched exactly, so any wildcard or
+        substring has to go to search_dsl instead.
         """
         parsed = _parse_filters(filters)
         data = await client.search(
@@ -127,6 +132,12 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         response (bucket keys with doc counts); when no buckets came back and an
         aggregated or filtered field is not one Malcolm indexes, the correct
         field name is reported above the response.
+
+        With no time_from this covers only the LAST 24 HOURS, unlike
+        malcolm_search which covers all history. Against a capture older than a
+        day that returns an empty bucket list, which reads as "no such traffic"
+        when it means "nothing in the last day" — suspect the window before the
+        data.
         """
         parsed = _parse_filters(filters)
         data = await client.aggregate(
@@ -177,7 +188,12 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         ] = "",
         limit: Annotated[int, Field(description="Max alerts to return.", ge=1, le=500)] = 20,
         time_from: Annotated[
-            str, Field(description="Start time, dateparser format. Empty = recent window.")
+            str,
+            Field(
+                description="Start time, dateparser format. Empty searches ALL history, "
+                "but the signature/category substring pre-scan then sees only the last "
+                "24 hours — pass a range when hunting an older signature."
+            ),
         ] = "",
         time_to: Annotated[
             str, Field(description="End time, dateparser format. Empty = now.")
@@ -188,14 +204,24 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Use this instead of malcolm_search when hunting Suricata alerts: it maps
         each argument to the correct Malcolm field for you (you don't need to
         know whether it's suricata.alert.signature or rule.name). It always
-        filters event.dataset=alert.
+        filters event.dataset=alert. These are Suricata IDS alerts, signature
+        matches on the wire; three other things on this server are also called
+        alerts and are different mechanisms — malcolm_alerting_monitors and
+        malcolm_alerting_alerts are the OpenSearch alerting plugin's standing
+        rules and their firings, malcolm_anomaly_detectors is its machine-learning
+        baseline, and malcolm_create_alert (alerting write class) records a
+        finding of your own.
 
         Behavior: `signature` and `category` are substring searches, which Malcolm
         cannot express in a filter (its filters are exact terms), so this tool
         resolves the substring against the field's 500 most common values first
         and filters on the matches. A substring that matches no recorded value
         returns a message saying so rather than an empty result set — that is the
-        difference between "no such signature here" and "no alerts fired".
+        difference between "no such signature here" and "no alerts fired". That
+        pre-scan is the one place the time range bites: it reads only the last 24
+        hours, while the alert search itself covers ALL history when time_from is
+        empty, so on a capture older than a day every signature reads as
+        unrecorded until you pass time_from.
         Returns the raw Malcolm /mapi/document response (matching alert documents).
         """
         filters: dict[str, Any] = {"event.dataset": "alert"}

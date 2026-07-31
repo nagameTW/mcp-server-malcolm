@@ -39,8 +39,11 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         field_type: Annotated[
             str,
             Field(
-                description='Filter by OpenSearch field type, e.g. "keyword", "ip", "long", '
-                '"date". Empty = any type.'
+                description="Filter by the type Malcolm reports for a field — measured on "
+                'Malcolm v26.07.1 those are "string", "integer", "float", "date", '
+                '"ip" and "geo". They are NOT OpenSearch type names: "keyword", "long" '
+                'and "text" match nothing here, even though index_mapping reports the '
+                "same fields under those names. Empty = any type."
             ),
         ] = "",
     ) -> str:
@@ -48,9 +51,19 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this first, before any query, to confirm a field name exists — Malcolm uses
         non-standard names (e.g. http.useragent, NOT http.user_agent). To then see the
-        VALUES a field holds, use `malcolm_field_values`; to see which datasets contain
-        it, use `malcolm_field_profile`. Pass at least one argument. Returns a text list
-        of "name (type)" lines, sorted alphabetically, capped at 100 fields.
+        VALUES a field holds, use malcolm_field_values; to see which datasets contain
+        it, use malcolm_field_profile. Do NOT source an arkime_* argument from here:
+        these are the names malcolm_* and search_dsl take, and Arkime has its own
+        spelling for the same field (ip.src, srcIp) that arkime_field_search reports.
+        Pass at least one argument. Returns a text list of "name (type)" lines,
+        sorted alphabetically.
+
+        Arguments narrow (AND), they never widen, and the mapping is big enough
+        that one keyword rarely lands: it runs to thousands of fields, and a
+        keyword as common as "ip" matches over a thousand of them on its own.
+        The header line counts every match but only the first 100 names are
+        printed, so add a prefix or a field_type rather than reading the printed
+        list as the whole answer.
         """
         results = await client.search_fields(
             keyword=keyword,
@@ -97,7 +110,10 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         ] = "{}",
         time_from: Annotated[
             str,
-            Field(description="Start time, dateparser format. Empty = Malcolm's recent window."),
+            Field(
+                description="Start time, dateparser format. Empty = the last 24 hours, "
+                "which holds nothing on a capture older than that."
+            ),
         ] = "",
         time_to: Annotated[
             str, Field(description="End time, dateparser format. Empty = now.")
@@ -107,11 +123,18 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this to see what values a field actually holds before filtering on it, so
         you don't invent values. To confirm the field NAME exists first, use
-        `malcolm_field_search`; to see which datasets carry the field, use
-        `malcolm_field_profile`. For multi-field or nested bucketing, use
-        `malcolm_aggregate`. A "-" in the output is Malcolm's placeholder for
+        malcolm_field_search; to see which datasets carry the field, use
+        malcolm_field_profile. For multi-field or nested bucketing, use
+        malcolm_aggregate. A "-" in the output is Malcolm's placeholder for
         documents where the field is absent, not a value you can filter on.
         Returns a text list of "value (N docs)" lines.
+
+        With no time range this reads only the last 24 hours, so a value that
+        exists only in older data is missing here and reads as invalid —
+        measured on Malcolm v26.07.1, network.protocol lists nothing at the
+        default window while its top value carries millions of documents once
+        time_from reaches the capture. Pass time_from before concluding a value
+        is not in this Malcolm.
         """
         parsed_filters = parse_json_object(filters, "filters", '{"event.dataset":"alert"}')
 
@@ -151,8 +174,8 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         time_from: Annotated[
             str,
             Field(
-                description="Start time, dateparser format. Empty = recent-only; pass a "
-                "range for historical data."
+                description="Start time, dateparser format. Empty = the last 24 hours; "
+                "pass a range for historical data."
             ),
         ] = "",
         time_to: Annotated[
@@ -163,17 +186,16 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         Use this to learn where a field lives (e.g. whether it only appears in SSL or DNS
         records) before scoping a query. To confirm the field NAME first, use
-        `malcolm_field_search`; to list its distinct VALUES, use `malcolm_field_values`.
+        malcolm_field_search; to list its distinct VALUES, use malcolm_field_values.
 
         Behavior: first resolves the name against the index mapping, then aggregates over
         event.dataset. Three distinct text outcomes — (1) unknown field → a "not found"
         message with close-name suggestions (no profile); (2) known field but no matching
         documents in the time window → an "exists but no documents" message; (3) a
         per-dataset "event.dataset=<name> (N docs)" list. The dataset counts honor the
-        time window: with no range it uses Malcolm's default recent window, so a field
-        that only has old data can resolve as known yet profile as empty — pass
-        time_from/time_to to reach historical data. Requires Malcolm access (Basic auth),
-        inherited from the server config. Returns plain text, not JSON.
+        time window: with no range it uses the last 24 hours, so a field that only has
+        old data can resolve as known yet profile as empty — pass time_from/time_to to
+        reach historical data. Returns plain text, not JSON.
         """
         # First check if the field exists at all
         resolution = await client.resolve_field(field)
