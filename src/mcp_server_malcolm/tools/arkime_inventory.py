@@ -1,8 +1,15 @@
-"""Arkime reads that are not session search: saved objects, capture inventory, health."""
+"""Arkime reads that are not session search: saved objects, capture inventory,
+health, hunt-job status.
+
+Everything here is a plain GET, so it registers unconditionally. arkime_hunt_status
+lived in the hunt-job WRITE module until it moved here: it reads /arkime/api/hunts
+and mutates nothing, so gating it only hid queued jobs from a read-only deployment.
+"""
 
 from __future__ import annotations
 
 import ipaddress
+import json
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
@@ -49,6 +56,27 @@ class Shortcut(TypedDict, total=False):
 class ShortcutList(TypedDict):
     count: int
     shortcuts: list[Shortcut]
+
+
+class CronQuery(TypedDict, total=False):
+    """One standing periodic query. Keys this deployment left unset are dropped,
+    so a query that has never run carries no `last_run`."""
+
+    name: str
+    expression: str
+    tags: list[str]
+    enabled: bool
+    action: str
+    owner: str
+    description: str
+    last_run: int
+    matched_sessions: int
+    id: str
+
+
+class CronQueryList(TypedDict):
+    count: int
+    crons: list[CronQuery]
 
 
 class ReverseDns(TypedDict, total=False):
@@ -193,6 +221,63 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             for row in rows
         ]
         return {"count": len(shortcuts), "shortcuts": shortcuts}
+
+    @mcp.tool(title="List Arkime cron queries", annotations=_READ)
+    async def arkime_crons() -> CronQueryList | str:
+        """List Arkime's cron queries — saved expressions that re-run on a schedule.
+
+        Use this for two questions. First, the same one arkime_views answers:
+        which searches has the human team thought worth keeping. Second, and
+        only this tool can answer it: where a tag came from. A cron query
+        re-runs its expression every few minutes and stamps its own tags onto
+        whatever matches, so those tags sit in session data with nothing in the
+        session explaining them — this list is the explanation. For saved
+        searches nobody schedules use arkime_views, for named value lists (IOC
+        sets) use arkime_shortcuts, and to see the tags actually present in the
+        data use malcolm_field_values on the `tags` field.
+
+        Returns JSON {"count", "crons"}: per query the name, the expression,
+        the tags it applies, whether it is `enabled`, its `action` (what it does
+        with a match), owner, and `last_run` as epoch seconds. Disabled queries
+        are listed too — a query switched off last week still explains tags
+        already sitting in the data. A deployment with none configured gets a
+        plain sentence instead of an empty list; that is an answer, not a fault
+        (measured: this lab has zero).
+        """
+        data = await client.arkime_crons()
+
+        # Measured as a bare JSON list on Arkime 6.6.0; the {"data": [...]}
+        # envelope its sibling routes use is accepted rather than assumed away.
+        if isinstance(data, dict):
+            data = data.get("data")
+        rows = data if isinstance(data, list) else []
+        if not rows:
+            return (
+                "No cron queries are configured on this Arkime. Nothing is tagging "
+                "sessions on a schedule, so any tag in the data came from a person, "
+                "from an enrichment pipeline, or from arkime_add_tags."
+            )
+        crons = [
+            _drop_empty(
+                {
+                    "name": row.get("name"),
+                    "expression": row.get("query"),
+                    "tags": _tag_list(row.get("tags")),
+                    # _drop_empty drops None/""/[]/{} but keeps False, which is
+                    # what this key needs: a disabled query is the interesting
+                    # one when a tag stopped appearing.
+                    "enabled": bool(row.get("enabled")),
+                    "action": row.get("action"),
+                    "owner": row.get("creator") or row.get("user"),
+                    "description": row.get("description"),
+                    "last_run": _number(row.get("lastRun") or row.get("lpValue")),
+                    "matched_sessions": _number(row.get("count")),
+                    "id": row.get("key") or row.get("id"),
+                }
+            )
+            for row in rows
+        ]
+        return {"count": len(crons), "crons": crons}
 
     @mcp.tool(title="Reverse-resolve an IP", annotations=_READ)
     async def arkime_reverse_dns(
@@ -347,6 +432,68 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             nodes.append(entry)
 
         return {"count": len(nodes), "nodes": nodes}
+
+    @mcp.tool(title="List hunt jobs", annotations=_READ)
+    async def arkime_hunt_status(
+        active_only: Annotated[
+            bool,
+            Field(
+                description="If true, show queued/running/paused jobs; if false, finished "
+                "(history) jobs."
+            ),
+        ] = True,
+        limit: Annotated[int, Field(description="Max hunts to return.", ge=1)] = 50,
+    ) -> str:
+        """List Arkime hunt jobs and their progress/status (read-only).
+
+        Use this to see what packet-payload searches this Arkime is running or
+        has run — the ones a human queued in the Arkime UI as much as the ones
+        arkime_create_hunt queued, since both land in the same list. Poll it to
+        watch a job finish and see how many sessions matched, and read a hunt's
+        `id` here before passing it to arkime_cancel_hunt. Registered
+        unconditionally: it only reads /arkime/api/hunts, so it stays available
+        with every write class off; creating and cancelling hunts are the parts
+        the hunt-job write class gates. Note the two halves are separate lists —
+        active_only=true never shows a finished job, so a hunt that vanished
+        from one call has moved to the other, not disappeared. A deployment
+        that has never run a hunt gets an empty `data` list, which is an answer.
+        Returns the raw Arkime hunts response.
+        """
+        data = await client.arkime_hunts(length=limit, history=not active_only)
+        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+
+def _tag_list(value: Any) -> list[str]:
+    """Arkime keeps a cron query's tags as one comma-separated string.
+
+    A list is accepted as well: this lab has zero crons configured, so the
+    populated shape could not be measured and the cheaper assumption is not
+    worth a wrong answer.
+    """
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return [tag.strip() for tag in str(value or "").split(",") if tag.strip()]
+
+
+def _number(value: Any) -> int | None:
+    """A cron query's counters as a plain int, or None when it is not a number.
+
+    Coerced rather than declared loosely, and for the same reason _tag_list
+    exists: this lab has zero crons, so `lastRun`/`lpValue` and `count` were
+    never observed populated. CronQuery declares them `int`, and a dict branch
+    that fails validation does NOT fall back to the `str` branch of the return
+    union -- one float or one numeric string in one row would take the whole
+    tool down rather than cost one key. _positive below already tolerates "the
+    strings Arkime sometimes sends" from this same server, so the tolerance is
+    measured even where the value is not. Widening the declaration to
+    int | float | str would validate too, but it would hand the caller a
+    `last_run` it has to parse before it can compare it to a session time,
+    which is the work this tool exists to have already done.
+    """
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _percent(value: Any) -> Any:

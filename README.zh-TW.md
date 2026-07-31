@@ -24,7 +24,7 @@ write 存取分成五個 class，各自有一個環境變數開關，預設全�
 [mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 ```
 
-所有 write 都是「新增」性質。v1 沒有任何工具會刪資料、移除 tag、或動到使用者帳號。這些是刻意不做的（見 [不做的事](#不做的事)）。
+除了一個例外，每個 write 都是「新增」性質：例外是 `arkime_cancel_hunt`，它停掉的是進行中的 hunt 工作，不是新增內容。沒有任何工具會刪資料、移除 tag、或動到使用者帳號——這些是刻意不做的（見 [不做的事](#不做的事)）。
 
 ## 為什麼要有 MCP 這一層
 
@@ -98,8 +98,11 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 |------|------|
 | `arkime_field_search` | 查詢 Arkime expression 能用的欄位名稱（`ip.src`、`port.dst`）——跟 `malcolm_field_search` 回傳的 ECS 名稱是兩套字彙 |
 | `arkime_sessions` | 用 Arkime expression 語法搜尋 session |
+| `arkime_sessions_summary` | 統計某個 expression 命中的 session、bytes、packets 總量，並依欄位列出細分——在跑貴的動作（例如 hunt）之前先估算範圍 |
 | `arkime_session_detail` | 抓單一 session 的全部欄位（完整 SPI 文件） |
 | `arkime_session_pcap` | 抓某 session 的 PCAP，回報大小與 magic 驗證結果（只回 metadata，不落地） |
+| `arkime_session_payload` | 讀出某個 session 解碼後的 payload——線路上實際傳輸的位元組，不是解析後的欄位（純文字，不是 JSON） |
+| `arkime_session_file_by_hash` | 依 md5/sha256 抓「這一個」session 帶的檔案（只回 metadata，不落地）——答案釘死在這個 session 上，跟會回傳最近一次相符 session 的 `arkime_file_by_hash` 不同 |
 | `arkime_unique` | 列出某欄位的不重複值，可帶計數 |
 | `arkime_multiunique` | 跨多個欄位的不重複值組合（例如 src.ip + dst.port 配對） |
 | `arkime_spigraph` | 某欄位的 top 值加時序圖 |
@@ -108,6 +111,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | `arkime_connections` | 來源/目的連線圖（nodes 與 links） |
 | `arkime_file_by_hash` | 依 md5/sha256 萃取傳輸過的檔案（只回 metadata，不落地） |
 | `arkime_sessions_csv` | 把 session 匯出成精簡 CSV 表（同樣的資料，token 大約是 JSON 的一半） |
+| `arkime_build_query` | 把 Arkime expression 編譯成它對應的 OpenSearch DSL，但不執行——把結果交給 `search_dsl`，處理 Arkime 語法表達不出來的子句 |
 
 ### Arkime 儲存物件與擷取健康度
 
@@ -115,9 +119,11 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 |------|------|
 | `arkime_views` | 列出團隊存下來的搜尋 view，附各自的 expression |
 | `arkime_shortcuts` | 列出具名值清單（IOC 集合）與內容，並給出在 expression 裡引用的 `$name` |
+| `arkime_crons` | 列出 Arkime 的 cron query——排程重跑的搜尋，用來解釋 session 上莫名其妙的 tag 是哪來的 |
 | `arkime_reverse_dns` | 把單一 IP 反解成 PTR 主機名 |
 | `arkime_pcap_files` | 列出 Arkime 已索引的 PCAP 檔，含大小、封包/session 數與時間範圍 |
 | `arkime_node_stats` | 擷取節點健康度：丟包、磁碟、記憶體、佇列——節點正在丟包時會特別警告，因為那會讓「資料缺口」看起來像「沒有這種流量」 |
+| `arkime_hunt_status` | 列出 Arkime hunt 作業與其進度——排隊中、執行中或已完成。一律註冊：只讀作業狀態，所以就算 write class 全關也拿得到 |
 
 Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表頭有 9 欄、資料列只有 7 欄，所以第二欄之後全部對錯位置。同樣的問題用 `arkime_connections` 問，答案是對的。
 
@@ -136,11 +142,15 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 |------|------|
 | `malcolm_related_sessions` | 找出與某個 Zeek UID 相關的所有 session |
 | `malcolm_saved_objects` | 找出這套 Malcolm 內建的 dashboard、visualization 與 saved search（111 個 dashboard，不含各自好幾 KB 的版面配置 JSON） |
+| `malcolm_saved_object_detail` | 讀出單一 saved object 已經解析好的 query、filter 與 index pattern——把 saved search 或 visualization 背後的 KQL/Lucene 字串挖出來 |
 | `malcolm_dashboard_export` | 把 OpenSearch Dashboards 的 saved object 匯出成 JSON |
 | `malcolm_alerting_monitors` | 列出 OpenSearch alerting monitor、各自在監看什麼、以及有沒有觸發過——全部都停用時會特別標明 |
+| `malcolm_alerting_alerts` | 列出 OpenSearch alerting monitor 實際觸發過的告警，涵蓋所有生命週期狀態（ACTIVE、ACKNOWLEDGED、COMPLETED、ERROR、DELETED） |
+| `malcolm_alerting_monitor_detail` | 讀出單一 alerting monitor 完整的 query 與觸發條件——分辨一個 monitor 是「在看但沒事」還是「條件根本打不到」 |
 | `malcolm_anomaly_detectors` | 列出 anomaly detector、各自在建模什麼、以及累積了多少異常——從來沒有記錄過異常時會特別標明 |
+| `malcolm_anomaly_results` | 讀出某個 anomaly detector 在一段時間窗內判定為異常的實體，按嚴重度排序——時間窗是 epoch MILLISECONDS，跟其他 `arkime_*` 工具不同 |
 
-其中十個會自行組出回傳內容的工具（檔案、Arkime inventory、Dashboards 那幾組）有宣告 typed return，所以客戶端除了文字之外還會拿到 `structuredContent`。其餘的工具是把上游回應原樣透傳，沒有形狀可以宣告。
+其中 15 個會自行組出回傳內容的工具（檔案、Arkime inventory、Dashboards 那幾組）有宣告 typed return，所以客戶端除了文字之外還會拿到 `structuredContent`。其餘的工具是把上游回應原樣透傳，沒有形狀可以宣告。
 
 ## Write 工具（需自行開啟）
 
@@ -150,17 +160,17 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 |-------|------|------|------|
 | alerting | `MALCOLM_MCP_ENABLE_ALERTING` | `malcolm_create_alert` | `POST /mapi/event` |
 | arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
-| hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`、`arkime_hunt_status` | `POST /arkime/api/hunt` |
+| hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`、`arkime_cancel_hunt` | `POST /arkime/api/hunt`、`PUT /arkime/api/hunt/<id>/cancel` |
 | pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /server/php/submit.php` |
 | arkime-view | `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `arkime_create_view`、`arkime_create_shortcut` | `POST /arkime/api/view`、`POST /arkime/api/shortcut` |
 
 - **alerting**：`malcolm_create_alert` 把分析師或 agent 產出的發現，寫成一筆能在 Malcolm dashboard 看到的告警文件。它走 `/mapi/event`，這是 Malcolm 自己設計的 write 端點，也是其他 class 效法的範本。
 - **arkime-tag**：`arkime_add_tags` 幫 session 加 tag，只加不減。移除 tag 需要更高的 Arkime 角色和另一套安全設計，所以延後。
-- **hunt-job**：`arkime_create_hunt` 發動一個跨 PCAP 的封包搜尋（很吃資源，所以先把查詢範圍縮小）。`arkime_hunt_status` 讀取作業進度，跟著這個 class 一起出。
+- **hunt-job**：`arkime_create_hunt` 發動一個跨 PCAP 的封包搜尋（很吃資源，所以先把查詢範圍縮小）。`arkime_cancel_hunt` 停掉一個排隊中或執行中的 hunt——不是新增性質，被取消的掃描沒辦法續跑。作業進度用 `arkime_hunt_status` 讀，它現在是讀取工具，這個 class 關著也拿得到（見 [Arkime 儲存物件與擷取健康度](#arkime-儲存物件與擷取健康度)）。
 - **pcap-upload**：`malcolm_upload_pcap` 把本機的封包檔送進 Malcolm 做 ingestion，並在客戶端擋一道大小上限。檔案必須位於 `MALCOLM_MCP_UPLOAD_DIR` 內；若這個 staging 目錄未設定，一律拒絕上傳，讓這個工具不可能被誘導去讀主機上的任意檔案。
 - **arkime-view**：`arkime_create_view` 存一個具名的搜尋 expression，`arkime_create_shortcut` 存一個具名的值清單（IOC 集合），在 expression 裡用 `$name` 引用。兩者都是 additive — 讓 agent 把 hunting 知識留給人類團隊，不刪除也不覆寫。
 
-每個 write 工具都帶著 MCP annotation `readOnlyHint: false` 和 `destructiveHint: false`，讓 MCP 客戶端能在呼叫前套自己的確認步驟。
+每個 write 工具都帶著 MCP annotation `readOnlyHint: false`，讓 MCP 客戶端能在呼叫前套自己的確認步驟。`destructiveHint` 在每個新增性質的 write 上是 `false`，唯一的例外是 `arkime_cancel_hunt`——它停掉的是進行中的工作，不是新增內容，所以標成 `true`。
 
 ## 安全模型
 
@@ -452,7 +462,7 @@ arkime_create_hunt(
 ## 對你自己的 Malcolm 做驗證
 
 這裡每個工具都會重新整理 Malcolm 回來的東西——裁剪、改名，少數地方還會修正它。
-`scripts/api_parity_check.py` 用來證明這些整理從來不會改變事實：41 個工具每一個都問同樣的問題兩次，
+`scripts/api_parity_check.py` 用來證明這些整理從來不會改變事實：51 個工具每一個都問同樣的問題兩次，
 一次走真正的 MCP stdio 連線、一次直接對 Malcolm 發 HTTP，然後比對有意義的那些值。
 
 ```bash
@@ -478,8 +488,9 @@ uv run --with mcp python scripts/api_parity_check.py
 | `/mapi/ingest-stats`、`/mapi/indices` | GET | `malcolm_data_coverage` |
 | `/mapi/dashboard-export/<id>` | GET | `malcolm_dashboard_export` |
 | `/dashboards/api/saved_objects/_find` | GET | `malcolm_saved_objects` |
-| `/mapi/opensearch/_plugins/_alerting/monitors/*` | POST、GET | `malcolm_alerting_monitors` |
-| `/mapi/opensearch/_plugins/_anomaly_detection/detectors/*` | POST | `malcolm_anomaly_detectors` |
+| `/dashboards/api/saved_objects/<type>/<id>` | GET | `malcolm_saved_object_detail` |
+| `/mapi/opensearch/_plugins/_alerting/monitors/*` | POST、GET | `malcolm_alerting_monitors`、`malcolm_alerting_monitor_detail`、`malcolm_alerting_alerts` |
+| `/mapi/opensearch/_plugins/_anomaly_detection/detectors/*` | POST、GET | `malcolm_anomaly_detectors`、`malcolm_anomaly_results` |
 | `/mapi/opensearch/<index>/_search` | POST | `search_dsl` |
 | `/mapi/opensearch/<index>/_count` | POST | `count` |
 | `/mapi/opensearch/_cat/indices` | GET | `list_indices` |
@@ -491,6 +502,10 @@ uv run --with mcp python scripts/api_parity_check.py
 | `/arkime/api/fields` | GET | `arkime_field_search` |
 | `/arkime/api/sessions` | GET | `arkime_sessions`、`arkime_session_detail`（`id ==` 表達式） |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
+| `/arkime/api/session/<node>/<id>/packets` | GET | `arkime_session_payload` |
+| `/arkime/api/session/<node>/<id>/bodyhash/<hash>` | GET | `arkime_session_file_by_hash` |
+| `/arkime/api/sessions/summary` | POST | `arkime_sessions_summary` |
+| `/arkime/api/buildquery` | POST | `arkime_build_query` |
 | `/arkime/api/unique`、`/arkime/api/multiunique` | GET | `arkime_unique`、`arkime_multiunique` |
 | `/arkime/api/spigraph` | GET | `arkime_spigraph` |
 | `/arkime/api/spiview` | GET | `arkime_spiview` |
@@ -501,10 +516,13 @@ uv run --with mcp python scripts/api_parity_check.py
 | `/extracted-files/<name>` | GET | `malcolm_extract_file` |
 | `/arkime/api/sessions.csv` | GET | `arkime_sessions_csv` |
 | `/arkime/api/views`、`/arkime/api/shortcuts` | GET | `arkime_views`、`arkime_shortcuts` |
+| `/arkime/api/crons` | GET | `arkime_crons` |
 | `/arkime/api/reversedns` | GET | `arkime_reverse_dns` |
 | `/arkime/api/files` | GET | `arkime_pcap_files` |
 | `/arkime/api/stats` | GET | `arkime_node_stats` |
-| `/arkime/api/hunt`、`/arkime/api/hunts` | POST、GET | `arkime_create_hunt`、`arkime_hunt_status`（write + read） |
+| `/arkime/api/hunt` | POST | `arkime_create_hunt`（write） |
+| `/arkime/api/hunt/<id>/cancel` | PUT | `arkime_cancel_hunt`（write） |
+| `/arkime/api/hunts` | GET | `arkime_hunt_status` |
 | `/arkime/api/view`、`/arkime/api/shortcut` | POST | `arkime_create_view`、`arkime_create_shortcut`（write） |
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |
 

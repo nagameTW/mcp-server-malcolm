@@ -1,9 +1,13 @@
-"""Write class: hunt-job — POST /arkime/api/hunt (Arkime v6.5.0).
+"""Write class: hunt-job — POST /arkime/api/hunt and PUT /api/hunt/<id>/cancel
+(Arkime v6.5.0/6.6.0).
 
 A hunt makes Arkime capture nodes re-scan raw PCAP for a byte/regex pattern.
 Creating one is a persisted WRITE guarded by checkCookieToken, so the client
-primitive primes an ARKIME-COOKIE first (see MalcolmClient._write_arkime_hunt).
-Reading hunt status (GET /arkime/api/hunts) ships with this class but is a read.
+primitive primes an ARKIME-COOKIE first (see MalcolmClient._write_arkime_hunt);
+cancelling one goes through the same guard. Cancel lives in this class rather
+than its own because it is the undo of the write this class already permits.
+Reading hunt status is a plain GET and now registers unconditionally from
+tools/arkime_inventory.py.
 """
 
 from __future__ import annotations
@@ -32,12 +36,21 @@ _WRITE = {
     "idempotentHint": False,
     "openWorldHint": True,
 }
-# The status tool only reads Arkime, never mutates.
-_READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
+# Cancel is the one write here that acts on existing state: it ends a job that
+# was making progress and the scan cannot be resumed, so destructiveHint is
+# true. Not idempotent either -- an id Arkime cannot act on answers 500
+# {"success":false,"text":"Error canceling hunt"} rather than a quiet no-op
+# (measured on 26.07.1 with an id that does not exist).
+_CANCEL = {
+    "readOnlyHint": False,
+    "destructiveHint": True,
+    "idempotentHint": False,
+    "openWorldHint": True,
+}
 
 
 def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: str | None) -> None:
-    """Register hunt create (write) + status (read). Called only when enabled."""
+    """Register hunt create + cancel. Called only when the class is enabled."""
 
     @mcp.tool(title="Create hunt job", annotations=_WRITE)
     async def arkime_create_hunt(
@@ -87,7 +100,8 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         Additive — queues a new job and changes nothing existing (calling twice
         queues two hunts). The action is audited, and the tool is registered
         only when the hunt-job write class is enabled. Track progress with
-        arkime_hunt_status. Returns the raw Arkime response.
+        arkime_hunt_status, and stop one you scoped too widely with
+        arkime_cancel_hunt. Returns the raw Arkime response.
         """
         if not name.strip():
             raise ToolInputError('name is required — the hunt name, e.g. "beacon-bytes".')
@@ -146,24 +160,43 @@ def register_hunt_job_tools(mcp: MCPServer, client: MalcolmClient, audit_file: s
         )
         return json.dumps(result, indent=2, ensure_ascii=False, default=str)
 
-    @mcp.tool(title="List hunt jobs", annotations=_READ)
-    async def arkime_hunt_status(
-        active_only: Annotated[
-            bool,
+    @mcp.tool(title="Cancel hunt job", annotations=_CANCEL)
+    async def arkime_cancel_hunt(
+        hunt_id: Annotated[
+            str,
             Field(
-                description="If true, show queued/running/paused jobs; if false, finished "
-                "(history) jobs."
+                description="The hunt's own id, as `id` in arkime_hunt_status output "
+                '(e.g. "NYUZsZ8Bao8axaN3ef1f") — not the hunt name.'
             ),
-        ] = True,
-        limit: Annotated[int, Field(description="Max hunts to return.", ge=1)] = 50,
+        ],
     ) -> str:
-        """List Arkime hunt jobs and their progress/status (read-only).
+        """Stop an Arkime hunt job that is queued or running (PUT /arkime/api/hunt/<id>/cancel).
 
-        Use this to check on hunts created with arkime_create_hunt — poll it to
-        see when a job finishes and how many sessions matched. Read-only: it
-        never creates or changes a hunt. This tool ships with the hunt-job write
-        class, so if that class is disabled hunt status is unavailable too.
-        Returns the raw Arkime hunts response.
+        Use this to call off an arkime_create_hunt that was scoped too widely:
+        a hunt has every capture node re-read raw PCAP, and this is the only
+        way to make it stop. Take the id from arkime_hunt_status with
+        active_only=true; the hunt *name* is rejected. Not additive like the
+        rest of this class: it ends work in progress and the scan cannot be
+        resumed, though the hunt row and whatever it matched before stopping
+        stay in place and stay visible to arkime_hunt_status. An id Arkime
+        cannot act on — one that never existed, or a job already finished —
+        comes back as an upstream error rather than a quiet no-op, so a second
+        cancel of the same hunt is not a safe retry. The action is audited, and
+        the tool is registered only when the hunt-job write class is enabled.
+        Returns the raw Arkime response.
         """
-        data = await client.arkime_hunts(length=limit, history=not active_only)
-        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+        if not hunt_id.strip():
+            raise ToolInputError(
+                'hunt_id is required — a hunt id such as "NYUZsZ8Bao8axaN3ef1f", '
+                "read from arkime_hunt_status."
+            )
+
+        result = await run_write(
+            "arkime_cancel_hunt",
+            _CLASS,
+            f"hunt_id={hunt_id.strip()}",
+            {},
+            audit_file,
+            lambda: client._write_arkime_hunt_cancel(hunt_id.strip()),
+        )
+        return json.dumps(result, indent=2, ensure_ascii=False, default=str)

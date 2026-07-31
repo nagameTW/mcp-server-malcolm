@@ -1,7 +1,13 @@
-"""OpenSearch Dashboards saved objects, alerting monitors and anomaly detectors."""
+"""OpenSearch Dashboards saved objects: the dashboards, visualizations and saved
+searches a human curated, and the query behind one of them.
+
+Alerting monitors and anomaly detectors used to live here too; they are in
+detections.py since this file crossed 1000 lines.
+"""
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
@@ -37,63 +43,57 @@ class SavedObjectList(TypedDict):
     objects: list[SavedObject]
 
 
-class Monitor(TypedDict, total=False):
-    """One alerting monitor. `schedule` is rendered in words and is absent for
-    a schedule shape this server does not recognise."""
+class SavedObjectDetail(TypedDict, total=False):
+    """One saved object with its query resolved. `columns`/`sort` exist on a
+    saved search only; `based_on_search` on a visualization only. Aggregation
+    (visState) and panel (panelsJSON) blobs are deliberately absent.
 
-    name: str
+    `query` is always a string, which upstream's is not: on one v26.07.1
+    install, 25 of its 141 saved searches store the pre-7.x shape
+    {"query_string": {"query": "event.dataset:x509", ...}} instead. See
+    _query_text."""
+
+    type: str
     id: str
-    monitor_type: str
-    enabled: bool
-    schedule: str
-    indices: list[str]
-    triggers: list[str]
-
-
-class MonitorList(TypedDict, total=False):
-    """`total` is the server's count, `showing` this page — a short page is not
-    the whole set. `active_alerts` is replaced by `active_alerts_error` when
-    that second lookup fails, since it only enriches the list."""
-
-    total: int
-    showing: int
-    monitors: list[Monitor]
-    active_alerts: int
-    active_alerts_error: str
-    note: str
-
-
-class Detector(TypedDict, total=False):
-    """One anomaly detector and what it models."""
-
-    name: str
-    id: str
+    title: str
     description: str
-    indices: list[str]
-    detector_type: str
-    category_fields: list[str]
-    interval: str
-    features: list[str]
-
-
-class DetectorList(TypedDict, total=False):
-    """`recorded_anomalies` counts results with anomaly_grade above zero, NOT
-    detector runs, of which there is one per interval per entity."""
-
-    total: int
-    showing: int
-    detectors: list[Detector]
-    recorded_anomalies: int
-    recorded_anomalies_error: str
+    updated_at: str
+    query: str
+    language: str
+    filters: list[Any]
+    index_pattern: str
+    columns: list[str]
+    sort: list[Any]
+    based_on_search: str
     note: str
 
 
 # Shared: every tool here reads, never mutates.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
+# Why every tool below returns `X | str` rather than a bare TypedDict, even the
+# two that always answer with a row. A bare TypedDict return is built into an
+# output schema by the SDK's _create_model_from_typeddict, which gives every
+# total=False key `default=None` and leaves its declared type alone. The
+# advertised schema then reads {"sort": {"type": "array", "default": null}}
+# while the dump -- model_dump with no exclude_unset -- puts "sort": null on the
+# wire for every key the row did not populate. The 2026-07-28 spec says a server
+# MUST provide structured results that conform to its outputSchema and a client
+# SHOULD validate them, and null is not an array, so the official SDK client
+# raises instead of returning the answer: measured against this lab, every
+# saved-object type failed with "None is not of type 'array'".
+#
+# The union sends the same TypedDict through pydantic's own NotRequired
+# handling: an unpopulated key is absent from `required`, absent from the wire,
+# and the row rides inside {"result": ...} like every other typed tool here.
+# Declaring the keys `X | None` instead would also validate, but it would put an
+# explicit null on the wire for each one, which is the noise _drop_empty exists
+# to remove and would contradict every docstring that says a key is present only
+# when it means something.
+
 
 def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
-    """Register saved-object, alerting and anomaly-detection reads."""
+    """Register the Dashboards saved-object reads."""
 
     @mcp.tool(title="Find Dashboards saved objects", annotations=_READ)
     async def malcolm_saved_objects(
@@ -173,227 +173,159 @@ def register_dashboard_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             "objects": objects,
         }
 
-    @mcp.tool(title="List alerting monitors", annotations=_READ)
-    async def malcolm_alerting_monitors(
-        limit: Annotated[int, Field(description="Max monitors to return.", ge=1, le=200)] = 50,
-    ) -> MonitorList | str:
-        """List OpenSearch alerting monitors, what each watches, and whether any have fired.
+    @mcp.tool(title="Read one saved object's query and filters", annotations=_READ)
+    async def malcolm_saved_object_detail(
+        object_id: Annotated[
+            str,
+            Field(
+                description="The object's id as malcolm_saved_objects returns it, e.g. "
+                '"bc940221-83d5-416e-a353-dc8fc2f84141". Ids are not unique across '
+                "types, so object_type has to match."
+            ),
+        ],
+        object_type: Annotated[
+            str,
+            Field(
+                description="The object's type, one of: search (a curated query, the "
+                "usual case), visualization, dashboard, index-pattern. A right id with "
+                "the wrong type reads upstream as no such object."
+            ),
+        ] = "search",
+        # `| str` is load-bearing, not decoration -- see the note above _READ.
+    ) -> SavedObjectDetail | str:
+        """Read one saved object with its query, filters and index pattern already resolved.
 
-        Use this to find the standing detections someone already configured, and
-        to check they are actually running — a disabled monitor is silent in
-        exactly the way a healthy one is. These are OpenSearch alerting rules,
-        which are a different thing from Suricata's IDS alerts: for those use
-        malcolm_alerts. To record a new finding rather than read a rule, use
-        malcolm_create_alert (needs the alerting write class).
+        Use this on a saved SEARCH to recover the query a human curated —
+        Malcolm ships 141 of them, and the Arkime-side equivalent is
+        arkime_views — and on a visualization to find the search it is built
+        from. malcolm_saved_objects lists titles and ids and stops there;
+        malcolm_dashboard_export resolves DASHBOARD ids only and answers 200
+        with an embedded 404 for a visualization or saved-search id, so for
+        those two this is the only route. For the traffic a query matches, take
+        the string to malcolm_search or search_dsl.
 
-        Returns JSON {"total", "showing", "active_alerts", "monitors"}: per monitor the
-        name, id, type, whether it is enabled, its schedule in words, the
-        indices it searches and its trigger names. `active_alerts` counts only
-        alerts in the ACTIVE state, not the COMPLETED history the API returns by
-        default; it is replaced by an error key if that second lookup fails,
-        since it only enriches the list. When every monitor is disabled the
-        response says so, and says whether it is speaking for all of them or
-        only the page returned.
+        Three indirections are followed here instead of being handed back: the
+        query sits in kibanaSavedObjectMeta.searchSourceJSON as a JSON *string*
+        needing a second parse, the index is a reference NAME that means nothing
+        until it is looked up in the object's own references[] array, and the
+        query itself is stored in two shapes — a sixth of one install's saved
+        searches used the pre-7.x {"query_string": {"query": "..."}} object
+        rather than a plain string. `query` is always the string.
+
+        Returns JSON: type, id, title, description, updated_at, then query and
+        `language` — "lucene" or "kuery", and they are not interchangeable, so
+        check it before reusing the string — plus filters, index_pattern, and
+        for a saved search the columns and sort order the analyst chose. On this
+        Malcolm the index-pattern reference id is the pattern itself
+        ("arkime_sessions3-*"); elsewhere it can be a UUID, which this tool
+        resolves with object_type="index-pattern". A visualization has no query
+        of its own: `based_on_search` is the id of the saved search it inherits
+        one from. Aggregation (visState) and panel-layout (panelsJSON) blobs are
+        left out; malcolm_dashboard_export returns them for everything on a
+        dashboard. Raises if nothing has that type and id.
         """
-        data = await client.alerting_monitors(limit=min(max(1, limit), 200))
-
-        hits = ((data.get("hits") or {}).get("hits")) or []
-        if not hits:
-            return (
-                "No alerting monitors are configured. Malcolm normally imports "
-                "one (the API loopback monitor) at startup, so an empty list "
-                "may mean monitors were removed rather than never created. "
-                "They are managed in the OpenSearch Dashboards Alerting plugin."
+        wanted = object_type.strip().lower()
+        if wanted not in _OBJECT_TYPES:
+            raise ToolInputError(
+                f"unsupported object_type {object_type!r} — expected one of "
+                f"{', '.join(_OBJECT_TYPES)}."
             )
 
-        monitors = []
-        for hit in hits:
-            src = hit.get("_source") or {}
-            monitors.append(
-                _drop_empty(
-                    {
-                        "name": src.get("name"),
-                        "id": hit.get("_id"),
-                        "monitor_type": src.get("monitor_type"),
-                        "enabled": src.get("enabled"),
-                        "schedule": _schedule(src.get("schedule")),
-                        "indices": _monitor_indices(src.get("inputs")),
-                        "triggers": _trigger_names(src.get("triggers")),
-                    }
-                )
-            )
+        obj = await client.saved_object(wanted, object_id.strip())
+        attrs = obj.get("attributes") or {}
+        source = obj.get("search_source") or {}
 
-        result: dict[str, Any] = {
-            "total": _server_total(data, len(monitors)),
-            "showing": len(monitors),
-            "monitors": monitors,
-        }
-        try:
-            alerts = await client.alerting_alerts()
-            result["active_alerts"] = alerts.get("totalAlerts", len(alerts.get("alerts") or []))
-        except Exception as exc:  # noqa: BLE001
-            # An enrichment failing must not cost the caller the monitor list.
-            result["active_alerts_error"] = str(exc)
-
-        if all(m.get("enabled") is False for m in monitors):
-            complete = result["showing"] >= result["total"]
-            result["note"] = (
-                "every monitor "
-                + ("configured" if complete else "on this page")
-                + " is disabled, so none of them can fire"
-                + (
-                    " — the absence of alerts says nothing about the traffic"
-                    if complete
-                    else "; raise limit to see the rest before concluding anything"
-                )
-            )
-        return result
-
-    @mcp.tool(title="List anomaly detectors", annotations=_READ)
-    async def malcolm_anomaly_detectors(
-        limit: Annotated[int, Field(description="Max detectors to return.", ge=1, le=200)] = 50,
-    ) -> DetectorList | str:
-        """List OpenSearch anomaly detectors, what each models, and whether any anomalies exist.
-
-        Use this to see what machine-learning baselines Malcolm is maintaining
-        over the traffic and whether they have produced anything. This reads the
-        detector configuration, not the traffic: for the underlying documents
-        use malcolm_search, and for Suricata's signature-based alerts use
-        malcolm_alerts, which is a different detection method entirely.
-
-        Returns JSON {"total", "showing", "recorded_anomalies", "detectors"}: per detector
-        the name, id, description, indices modelled, detector type, category
-        fields, run interval in words and the feature names it tracks. The
-        aggregation definitions behind those features are configuration detail
-        and are left out. `recorded_anomalies` counts results whose
-        anomaly_grade is above zero across all detectors — NOT detector runs,
-        of which there is one per interval per entity whether or not anything
-        was anomalous. Zero with detectors configured still needs care: a
-        detector that was never started produces the same zero.
-        """
-        data = await client.anomaly_detectors(limit=min(max(1, limit), 200))
-
-        hits = ((data.get("hits") or {}).get("hits")) or []
-        if not hits:
-            return (
-                "No anomaly detectors are configured. They are created in the "
-                "OpenSearch Dashboards Anomaly Detection plugin."
-            )
-
-        detectors = []
-        for hit in hits:
-            src = hit.get("_source") or {}
-            detectors.append(
-                _drop_empty(
-                    {
-                        "name": src.get("name"),
-                        "id": hit.get("_id"),
-                        "description": src.get("description"),
-                        "indices": src.get("indices"),
-                        "detector_type": src.get("detector_type"),
-                        "category_fields": src.get("category_field"),
-                        "interval": _schedule(
-                            {"period": (src.get("detection_interval") or {}).get("period")}
-                        ),
-                        "features": [
-                            f.get("feature_name")
-                            for f in (src.get("feature_attributes") or [])
-                            if f.get("feature_name")
-                        ],
-                    }
-                )
-            )
-
-        result: dict[str, Any] = {
-            "total": _server_total(data, len(detectors)),
-            "showing": len(detectors),
-            "detectors": detectors,
-        }
-        try:
-            counted = await client.anomaly_result_count()
-            total = ((counted.get("hits") or {}).get("total") or {}).get("value", 0)
-            result["recorded_anomalies"] = total
-            if not total:
-                result["note"] = (
-                    "no anomalous results recorded. A detector that was never "
-                    "started produces exactly this too, so check that these "
-                    "detectors are running before reading it as a quiet network"
-                )
-        except Exception as exc:  # noqa: BLE001
-            result["recorded_anomalies_error"] = str(exc)
-
-        return result
+        row: dict[str, Any] = _drop_empty(
+            {
+                "type": obj.get("type"),
+                "id": obj.get("id"),
+                "title": attrs.get("title"),
+                "description": attrs.get("description"),
+                "updated_at": obj.get("updated_at"),
+                "query": _query_text(source.get("query")),
+                "language": source.get("language"),
+                "filters": source.get("filters"),
+                "index_pattern": source.get("index_pattern"),
+                "columns": attrs.get("columns"),
+                "sort": attrs.get("sort"),
+                "based_on_search": _referenced_search(obj),
+            }
+        )
+        if not row.get("query"):
+            row["note"] = _no_query_note(wanted, row.get("based_on_search", ""))
+        return row
 
 
-def _server_total(data: Any, fallback: int) -> int:
-    """The server's own hit total, so a truncated page cannot read as complete.
+def _no_query_note(object_type: str, based_on_search: str) -> str:
+    """Why a saved object came back with no query, which differs by type.
 
-    OpenSearch reports it as {"value": N, "relation": "eq"|"gte"}; the value is
-    what matters here and the relation only differs past 10,000 hits, which no
-    monitor or detector list reaches.
+    An absent query is not one fact. A visualization defers to a saved search;
+    an index-pattern is the thing queries point AT and never has one; a search
+    or dashboard without one really does select everything in its index. Saying
+    "no query" alone would let a model read all four as the last case.
     """
-    total = ((data.get("hits") or {}).get("total") or {}) if isinstance(data, dict) else {}
-    value = total.get("value") if isinstance(total, dict) else None
-    return value if isinstance(value, int) else fallback
+    if based_on_search:
+        return (
+            "this object has no query of its own; it inherits the saved search in "
+            f"based_on_search — call this tool again with object_id={based_on_search!r} "
+            "and object_type='search'"
+        )
+    if object_type == "index-pattern":
+        return (
+            "an index pattern holds no query: `title` is the pattern itself, and it is "
+            "what the index_pattern of a saved search resolves to. Its field list is "
+            "hundreds of KB and is not included; use malcolm_field_search for fields"
+        )
+    return (
+        "this object carries no query string, so it selects everything in index_pattern "
+        "— what makes it worth reading is its columns, its filters or what is built on "
+        "it, not a query"
+    )
 
 
-def _schedule(schedule: Any) -> Any:
-    """Render an OpenSearch schedule in words, whichever kind it is.
+def _query_text(query: Any) -> str:
+    """A saved object's query as the string the docstring promises.
 
-    Both kinds are real on the monitor type Malcolm ships: a period schedule
-    ({"period": {"interval": 10, "unit": "MINUTES"}}) and a cron one. Returning
-    None for cron dropped the key entirely, so a cron-scheduled monitor showed
-    no schedule at all while the docstring promised one.
+    Dashboards stores two shapes under searchSourceJSON.query.query and only
+    one of them is a string. Counted on one v26.07.1 install, 25 of its 141
+    saved searches -- about a sixth -- carry the pre-7.x
+    {"query_string": {"query": "event.dataset:x509", "analyze_wildcard": true}}
+    instead, and handing that dict back both breaks the declared type (the tool
+    raised "Input should be a valid string") and gives the caller something
+    malcolm_search cannot take. The inner string is the same lucene the newer
+    shape stores flat, so unwrapping it loses nothing.
+
+    Any other dict is serialised rather than dropped or raised on: an
+    unrecognised query shape is still evidence about the object, and this tool
+    degrading to JSON text beats it failing.
     """
-    if not isinstance(schedule, dict):
-        return None
-    period = schedule.get("period")
-    if isinstance(period, dict):
-        interval, unit = period.get("interval"), period.get("unit")
-        if interval and unit:
-            return f"every {interval} {unit}"
-    cron = schedule.get("cron")
-    if isinstance(cron, dict) and cron.get("expression"):
-        timezone = cron.get("timezone")
-        return f"cron {cron['expression']}" + (f" ({timezone})" if timezone else "")
-    return None
+    if isinstance(query, str):
+        return query
+    if not query:
+        return ""
+    inner = query.get("query_string") if isinstance(query, dict) else None
+    if isinstance(inner, dict) and isinstance(inner.get("query"), str):
+        return inner["query"]
+    return json.dumps(query, ensure_ascii=False, default=str)
 
 
-def _monitor_indices(inputs: Any) -> list[str]:
-    """The indices a monitor searches, across all of its inputs.
+def _referenced_search(obj: dict[str, Any]) -> str:
+    """The saved search a visualization inherits its query from, resolved to an id.
 
-    Every input shape other than a search input is skipped rather than assumed
-    away: OpenSearch also has document-level and remote-monitor inputs, and one
-    unexpected entry must not cost the caller the whole monitor list.
+    A visualization names it in attributes.savedSearchRefName, which is a
+    reference NAME ("search_0") and only becomes an id through references[] --
+    the same indirection the client resolves for the index pattern. Measured on
+    this Malcolm, 150 of 200 sampled visualizations have one and carry an empty
+    query of their own, so reporting that empty query alone would read as
+    "matches everything".
     """
-    found: list[str] = []
-    for item in inputs or []:
-        if not isinstance(item, dict):
-            continue
-        search = item.get("search")
-        if not isinstance(search, dict):
-            continue
-        for index in search.get("indices") or []:
-            if index not in found:
-                found.append(index)
-    return found
-
-
-def _trigger_names(triggers: Any) -> list[str]:
-    """Trigger names, whatever trigger flavour the monitor uses.
-
-    OpenSearch wraps each trigger in a key naming its type
-    (query_level_trigger, bucket_level_trigger, ...), so the name is one level
-    down and the key varies by monitor type.
-    """
-    names: list[str] = []
-    for trigger in triggers or []:
-        if not isinstance(trigger, dict):
-            continue
-        for value in trigger.values():
-            if isinstance(value, dict) and value.get("name"):
-                names.append(value["name"])
-    return names
+    name = (obj.get("attributes") or {}).get("savedSearchRefName")
+    if not isinstance(name, str) or not name:
+        return ""
+    for ref in obj.get("references") or []:
+        if isinstance(ref, dict) and ref.get("name") == name:
+            return ref.get("id") or ""
+    return ""
 
 
 def _drop_empty(row: dict[str, Any]) -> dict[str, Any]:

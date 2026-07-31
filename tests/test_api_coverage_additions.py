@@ -12,9 +12,19 @@ from mcp.server.mcpserver import MCPServer
 
 from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.errors import ToolInputError
-from mcp_server_malcolm.tools.arkime import register_arkime_tools
+from mcp_server_malcolm.tools.arkime import register_arkime_tools as _register_arkime_search
+from mcp_server_malcolm.tools.arkime_content import register_arkime_content_tools
 from mcp_server_malcolm.tools.netbox import register_netbox_tools
 from mcp_server_malcolm.tools.query import register_query_tools
+
+
+def register_arkime_tools(mcp, client) -> None:  # noqa: F811
+    """Both halves of the Arkime read surface, so these tests keep asking the
+    same questions after the module split: search/aggregation stayed in
+    arkime.py, per-session content moved to arkime_content.py. The split is a
+    module boundary, not a behaviour one."""
+    _register_arkime_search(mcp, client)
+    register_arkime_content_tools(mcp, client)
 
 
 def _mock_client(handler):

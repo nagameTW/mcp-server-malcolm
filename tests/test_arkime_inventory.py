@@ -54,7 +54,7 @@ _VIEW = {
     "expression": "event.provider == arkime",
     "roles": ["arkimeUser"],
     "users": "",
-    "user": "otex",
+    "user": "operator1",
     "id": "WMGExBjWoxcIuZRPyq4_",
 }
 
@@ -74,7 +74,7 @@ async def test_views_lists_saved_searches():
     assert out["views"][0] == {
         "name": "Arkime Sessions",
         "expression": "event.provider == arkime",
-        "owner": "otex",
+        "owner": "operator1",
         "roles": ["arkimeUser"],
         "id": "WMGExBjWoxcIuZRPyq4_",
     }
@@ -103,7 +103,7 @@ async def test_shortcuts_lists_value_lists_with_their_expression_reference():
                         "type": "ip",
                         "value": "192.0.2.1\n192.0.2.2",
                         "description": "known c2",
-                        "userId": "otex",
+                        "userId": "operator1",
                         "id": "abc",
                     }
                 ],
@@ -193,7 +193,7 @@ async def test_reverse_dns_accepts_ipv6():
 _FILE = {
     "num": 101,
     "name": "/data/pcap/processed/CAPTURE-001.pcap",
-    "node": "spark-0b7b-upload",
+    "node": "capture-4f2a-node",
     "filesize": 15772997,
     "packets": 82217,
     "packetsSize": 15772997,
@@ -225,7 +225,7 @@ async def test_pcap_files_lists_the_capture_inventory():
     assert row["bytes"] == 15772997
     assert row["packets"] == 82217
     assert row["sessions"] == 6280
-    assert row["node"] == "spark-0b7b-upload"
+    assert row["node"] == "capture-4f2a-node"
     # Timestamps are epoch MILLISECONDS here, unlike the epoch-seconds every
     # Arkime query parameter takes.
     assert row["first_packet"] == 1714049780727
@@ -244,7 +244,7 @@ async def test_pcap_files_drops_the_internal_bookkeeping_fields():
 # -- arkime_node_stats --------------------------------------------------
 
 _NODE = {
-    "nodeName": "spark-0b7b-upload",
+    "nodeName": "capture-4f2a-node",
     "hostname": "arkime",
     "ver": "6.6.0",
     "freeSpaceM": 1646362,
@@ -278,7 +278,7 @@ async def test_node_stats_surfaces_capture_health():
     node = out["nodes"][0]
 
     assert seen["path"] == "/arkime/api/stats"
-    assert node["node"] == "spark-0b7b-upload"
+    assert node["node"] == "capture-4f2a-node"
     assert node["arkime_version"] == "6.6.0"
     assert node["packets_dropped"] == 17
     assert node["disk_free_percent"] == 40.83
@@ -430,6 +430,8 @@ async def test_sessions_csv_reports_a_transport_failure():
         ("arkime_reverse_dns", {"ip": "8.8.8.8"}),
         ("arkime_pcap_files", {}),
         ("arkime_node_stats", {}),
+        ("arkime_crons", {}),
+        ("arkime_hunt_status", {}),
     ],
 )
 async def test_every_inventory_tool_reports_a_transport_failure(tool, args):
@@ -492,3 +494,169 @@ async def test_node_stats_tolerates_counters_arriving_as_strings():
     out = tool_text(await _tools(handler).call_tool("arkime_node_stats", {}))
 
     assert "dropping" in out.lower()
+
+
+# -- arkime_crons -------------------------------------------------------
+
+# Field names follow Arkime's cron-query document (queries index). The lab has
+# zero crons configured, so the EMPTY path below is the measured one and this
+# populated row is not: it is the documented shape, kept deliberately
+# defensive (see the tag-list and envelope tests).
+_CRON = {
+    "key": "cIfXsZ8Bao8axaN3ef1f",
+    "name": "ot-write-commands",
+    "query": "protocols == modbus",
+    "tags": "ot-write,review-me",
+    "enabled": True,
+    "action": "tag",
+    "creator": "operator1",
+    "description": "flag OT writes for review",
+    "lpValue": 1714089600,
+    "count": 42,
+}
+
+
+@pytest.mark.asyncio
+async def test_crons_lists_the_schedule_behind_a_tag():
+    seen = {}
+
+    def handler(req):
+        seen["path"] = req.url.path
+        # Measured live on Arkime 6.6.0: this route answers with a BARE JSON
+        # list, not the {"data": [...]} envelope /api/views uses.
+        return httpx.Response(200, json=[_CRON])
+
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_crons", {})))
+
+    assert seen["path"] == "/arkime/api/crons"
+    assert out == {
+        "count": 1,
+        "crons": [
+            {
+                "name": "ot-write-commands",
+                "expression": "protocols == modbus",
+                "tags": ["ot-write", "review-me"],
+                "enabled": True,
+                "action": "tag",
+                "owner": "operator1",
+                "description": "flag OT writes for review",
+                "last_run": 1714089600,
+                "matched_sessions": 42,
+                "id": "cIfXsZ8Bao8axaN3ef1f",
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_crons_keeps_a_query_that_is_switched_off():
+    """A disabled query still explains tags already sitting in the data, and
+    `enabled` is the only field that tells the two apart — dropping the False
+    as "empty" would read as still running."""
+
+    def handler(req):
+        return httpx.Response(200, json=[{**_CRON, "enabled": False}])
+
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_crons", {})))
+
+    assert out["crons"][0]["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_crons_answers_an_empty_deployment_in_prose():
+    """Measured against the live lab: 200 with a bare []. "Nothing is tagging on
+    a schedule" is an answer, so it must not raise."""
+
+    def handler(req):
+        return httpx.Response(200, json=[])
+
+    out = tool_text(await _tools(handler).call_tool("arkime_crons", {}))
+
+    assert "no cron queries" in out.lower()
+    assert "arkime_add_tags" in out
+
+
+@pytest.mark.asyncio
+async def test_crons_reads_the_enveloped_shape_as_well():
+    """Sibling Arkime routes wrap rows in {"data": [...]}. Reading a populated
+    envelope as empty would answer "nothing is tagging" while a cron is
+    stamping tags on sessions."""
+
+    def handler(req):
+        return httpx.Response(200, json={"data": [_CRON], "recordsTotal": 1})
+
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_crons", {})))
+
+    assert out["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_crons_takes_tags_as_a_list_too():
+    """Arkime stores them comma-separated; accepting the list form costs one
+    branch, and the populated shape could not be measured here."""
+
+    def handler(req):
+        return httpx.Response(200, json=[{**_CRON, "tags": ["ot-write", " review-me "]}])
+
+    out = json.loads(tool_text(await _tools(handler).call_tool("arkime_crons", {})))
+
+    assert out["crons"][0]["tags"] == ["ot-write", "review-me"]
+
+
+# -- arkime_hunt_status: moved out of the hunt-job write gate -----------
+
+
+@pytest.mark.asyncio
+async def test_hunt_status_lists_hunts_from_the_read_module():
+    def handler(req):
+        assert req.url.path == "/arkime/api/hunts"
+        return httpx.Response(200, json={"data": [{"id": "H1", "status": "running"}]})
+
+    out = tool_text(await _tools(handler).call_tool("arkime_hunt_status", {}))
+
+    assert "running" in out
+
+
+@pytest.mark.asyncio
+async def test_hunt_status_asks_for_the_history_list_when_not_active_only():
+    """The two halves are separate lists upstream: history=false hides every
+    finished job, so the flag has to reach Arkime."""
+    seen = {}
+
+    def handler(req):
+        seen.update(dict(req.url.params))
+        return httpx.Response(200, json={"data": [], "recordsTotal": 0})
+
+    await _tools(handler).call_tool("arkime_hunt_status", {"active_only": False, "limit": 5})
+
+    assert seen["history"] == "true"
+    assert seen["length"] == "5"
+
+
+_WRITE_FLAGS = ("ALERTING", "ARKIME_TAGS", "HUNT_JOBS", "PCAP_UPLOAD", "ARKIME_VIEWS")
+
+
+def _server_tool_names(monkeypatch, **flags) -> list[str]:
+    for flag in _WRITE_FLAGS:
+        monkeypatch.delenv(f"MALCOLM_MCP_ENABLE_{flag}", raising=False)
+    for flag, value in flags.items():
+        monkeypatch.setenv(f"MALCOLM_MCP_ENABLE_{flag}", value)
+    return [t.name for t in asyncio.run(create_server().list_tools())]
+
+
+def test_hunt_status_and_crons_are_there_with_every_write_class_off(monkeypatch):
+    """The whole point of the move: /arkime/api/hunts is a plain GET, so a
+    read-only deployment must still see the hunt jobs humans queued."""
+    names = _server_tool_names(monkeypatch)
+
+    assert "arkime_hunt_status" in names
+    assert "arkime_crons" in names
+    assert "arkime_create_hunt" not in names
+
+
+def test_hunt_status_stays_registered_once_when_the_hunt_class_is_on(monkeypatch):
+    """Enabling the write class must neither drop it nor register it twice."""
+    names = _server_tool_names(monkeypatch, HUNT_JOBS="true")
+
+    assert names.count("arkime_hunt_status") == 1
+    assert "arkime_create_hunt" in names
