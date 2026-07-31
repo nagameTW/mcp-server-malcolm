@@ -6,6 +6,106 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-07-31
+
+An audit against MCP revision 2026-07-28, a coverage audit against Malcolm's
+own API, and a pass over every tool definition. 41 tools become 51 read-only
+(58 with all five write classes on).
+
+### Security
+
+- **Caller-supplied strings could reach arbitrary endpoints on the Malcolm
+  host.** `/mapi/agg/{fields}` and `/mapi/dashboard-export/{id}` were built by
+  f-string, and httpx normalizes dot segments, so `fields="../../arkime/api/hunts"`
+  issued `POST /arkime/api/hunts` carrying the server's own credentials. That
+  defeated both the read-only guarantee and the write-class gate, which assumes
+  an unregistered tool cannot be called. All nine path-splice sites in
+  `MalcolmClient` are now guarded at the choke point, with a backstop on
+  `get`/`post`/`get_raw` so a method that forgets its guard still cannot climb
+  out. The allow-lists were derived from the live field catalogue, not guessed:
+  5,969 field names, 111 saved-object ids and 25 index names all still pass.
+- Upstream exception text is redacted before it reaches a caller — `MALCOLM_URL`
+  may legitimately embed credentials, and httpx puts the request URL in
+  `HTTPStatusError`.
+- Tool invocations are rate limited, configurable through
+  `MALCOLM_MAX_CONCURRENCY` and `MALCOLM_MAX_REQUESTS_PER_MINUTE`.
+
+### Changed
+
+- **BREAKING — a tool failure now arrives as `isError: true`.** Failures used to
+  `return` a string beginning `Error:`, which the SDK renders as a *successful*
+  result; meanwhile an exception escaping a tool body did set the flag, so
+  `isError` meant different things in different tools. Seventy-seven paths now
+  raise. A client that pattern-matched the `Error:` prefix needs updating; one
+  that reads `isError` needs no change. An empty result set is still a
+  successful answer and still comes back as prose.
+- **BREAKING — malformed arguments are refused instead of dropped.** A filter
+  that failed to parse used to be discarded, so the tool answered a *wider*
+  question than the one asked: the very common single-quoted Python-dict form
+  `{'event.dataset': 'conn'}` returned the entire index, presented as a filtered
+  result. Four such sites now raise.
+- `arkime_hunt_status` is registered unconditionally. It is a read tool and was
+  reachable only when the hunt-job *write* class was enabled.
+- Every tool description was rewritten against the Glama TDQS rubric: mean 4.50
+  to 4.87, minimum 3.2 to 4.6, overall 3.85 to 4.50.
+- Arkime's field vocabularies are documented per parameter, and passing the
+  wrong one now raises with the counterpart named. Measured: the `exp` routes
+  reject a db name, `arkime_connections` rejects an expression name, and
+  `arkime_spigraph`/`arkime_spiview` take a third spelling — the storage path —
+  that neither field-discovery tool reports.
+
+### Added
+
+- Packet payload is readable at last. `arkime_session_payload` returns decoded
+  session content; every drill-down previously stopped at metadata, so an
+  analyst could find a suspicious session and read nothing of what crossed the
+  wire. The server's own instructions had named this tool for months without it
+  existing.
+- `arkime_session_file_by_hash` fetches a transferred file from a *known*
+  session; `arkime_file_by_hash` resolves the most recent session carrying the
+  hash, which is the wrong one once a file has moved twice.
+- `arkime_sessions_summary` sizes a result set, including byte and packet
+  totals, in one call instead of two plus a dialect switch.
+- `arkime_build_query` compiles an Arkime expression into OpenSearch DSL.
+- `arkime_crons` lists the standing periodic queries whose tags appear in data
+  an agent sees.
+- `malcolm_alerting_alerts` and `malcolm_alerting_monitor_detail` read alerts in
+  any state and a monitor's actual query, so a monitor's silence can be judged.
+- `malcolm_anomaly_results` reports which entity was anomalous and when, where
+  the detector list could only report one global count.
+- `malcolm_saved_object_detail` resolves a saved search's query, filters and
+  index pattern.
+- `arkime_cancel_hunt` (hunt-job write class) stops a hunt scoped too widely.
+- The two field catalogues are exposed as MCP **resources**, so a client can
+  read the schema without spending a tool call.
+- Cache hints (`ttlMs`) are declared for the methods frozen at startup.
+- Both READMEs document every deployment path — standalone install, Claude Code,
+  a generic `mcpServers` config, Docker, and direct use as a Python library —
+  each proved in a clean environment first, including the real error text for a
+  wrong password, an unreachable host, and a self-signed certificate.
+
+### Fixed
+
+- Two tools were unusable from a spec-compliant client: a bare `TypedDict`
+  return put literal nulls on the wire against a schema typing those keys
+  `string`/`array`, and the official SDK client raised instead of returning the
+  answer.
+- `arkime_sessions_summary` answered 500 for the rest of the process after any
+  `arkime_sessions` call — Arkime switches to `checkCookieToken` once a cookie
+  is in the jar. Every Arkime POST now routes through one helper.
+- `malcolm_service_status` raised an empty-message error when both probes
+  *succeeded* but returned no data.
+- `redact()` never matched an underscore-prefixed key, so `access_token=`,
+  `refresh_token=` and `id_token=` leaked verbatim.
+- `str.isdigit()` is true for characters `int()` rejects, which crashed
+  `MalcolmClient.from_env()` on a typo in a deployment's env file.
+- `MalcolmClient(max_requests_per_minute=0)` raised `IndexError`;
+  `max_concurrency=0` hung until timeout. Both are validated at construction.
+- A saved search's query is stored in two shapes, and the narrower declaration
+  made the tool raise rather than degrade.
+- `dsl.py`'s index guard was stricter than the client's, making OpenSearch's
+  ordinary multi-index form `idx1,idx2` unreachable through four tools.
+
 ## [0.9.0] - 2026-07-30
 
 Closes the two things left open after 0.8.1.
@@ -564,7 +664,9 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.9.0...v1.0.0
+[0.9.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v0.5.0...v0.6.0
