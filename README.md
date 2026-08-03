@@ -344,7 +344,7 @@ With no write flags set, an `initialize` plus `tools/list` returns:
 protocol_version: 2025-11-25
 server_info:      name='mcp-server-malcolm' version='1.0.2'
 capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
-instructions:     3624 characters
+instructions:     3753 characters
 tools:            51
 prompts:          1  — hunt_workflow
 resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
