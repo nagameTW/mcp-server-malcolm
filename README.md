@@ -211,7 +211,7 @@ Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14,
 
 ### 1. Install
 
-**PyPI currently carries an older build than this repository.** The published `mcp-server-malcolm` 0.9.0 was cut from an earlier commit; this tree's `pyproject.toml` also says `0.9.0`, so the version number gives you no signal that the two differ. `pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the published release, not the code documented here. Until the next release, install from source to get this tree.
+`pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the latest published release. A version number alone cannot tell you whether a checkout matches it — a tree carrying unreleased changes still reports the version of the last release — so install from source when you specifically want the code documented in this tree.
 
 ```bash
 pip install mcp-server-malcolm      # published release
@@ -229,12 +229,12 @@ Or build a wheel and install it into a clean virtualenv, which is the path every
 
 ```bash
 $ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 
 $ python3 -m venv /tmp/mcp-malcolm-deploy/venv
 $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 ```
 
 That pulls 32 packages, most of them from `mcp>=2,<3` (resolved to `mcp 2.0.0`). The wheel itself is `py3-none-any`, pure Python; the compiled dependencies (`cryptography`, `pydantic-core`, `rpds-py`, `cffi`) all installed from prebuilt `manylinux_*_aarch64` wheels here, nothing compiled from source. PyPI publishes the same wheels for x86_64 and macOS, but no install was run on either, so treat those as unverified.

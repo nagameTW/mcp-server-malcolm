@@ -203,7 +203,7 @@ Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原
 
 ### 1. 安裝
 
-**PyPI 上的版本比這個 repository 舊。**已發布的 `mcp-server-malcolm` 0.9.0 是從更早的 commit 切出來的；這棵樹的 `pyproject.toml` 同樣寫著 `0.9.0`，所以光看版號完全看不出兩者有差。`pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是已發布的 release，不是這份文件寫的這份程式碼。下次發版之前，要拿到這棵樹就得從原始碼裝。
+`pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是最新的已發布 release。光看版號沒辦法判斷手上的 checkout 跟它是不是同一份——帶著未發布變更的樹，回報的仍然是上一次發版的版號——所以要拿到這份文件寫的這棵樹，就從原始碼裝。
 
 ```bash
 pip install mcp-server-malcolm      # published release
@@ -221,12 +221,12 @@ pip install -e .
 
 ```bash
 $ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 
 $ python3 -m venv /tmp/mcp-malcolm-deploy/venv
 $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 ```
 
 這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel，但這兩個平台都沒有實際裝過，請當作未驗證。
