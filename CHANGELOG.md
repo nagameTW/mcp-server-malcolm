@@ -30,7 +30,12 @@ All notable changes to this project are recorded here. The format follows
   claim.** It said `GET /arkime/api/session/<id>` serves the SPA HTML shell
   rather than JSON. On Arkime 6.6.0 that route answers 200 `application/json`
   in 10,794 bytes with 36 top-level keys. The detour through the sessions
-  search is equivalent and is kept; only the reasoning is corrected.
+  search is kept, but it is not equivalent: measured on the same session it
+  answers 14 top-level keys, a strict subset missing 22 of the route's — among
+  them `@timestamp`, `event`, `tags`, `tcpflags`, `protocol`, `srcOui`/`dstOui`
+  and `srcTTL`/`dstTTL`. Swapping the URL would widen every answer this tool
+  has returned, so it stays a behavior change for another PR; the docstring now
+  records the gap and how to close it.
 - **The install chapter opened with a warning that had stopped being true.**
   It told readers PyPI carried an older build than this repository and that
   both reported `0.9.0`, so the number gave no signal. PyPI serves 1.0.2 and

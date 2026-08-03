@@ -395,7 +395,12 @@ async def main() -> None:
         )
 
         t = await jcall("arkime_views", {})
-        r = (await api.get("/arkime/api/views", params={"length": 100})).json()
+        # all=true on the raw side too, or the two halves ask different
+        # questions: the tool sends it (client.py) and Arkime scopes the
+        # listing to owner+roles without it, so omitting it here would compare
+        # an every-owner answer against an own-only one and pass by accident on
+        # any single-account deployment.
+        r = (await api.get("/arkime/api/views", params={"length": 100, "all": "true"})).json()
         check(
             "arkime_views",
             t["count"] == len(r["data"])
@@ -404,7 +409,7 @@ async def main() -> None:
         )
 
         t = await call("arkime_shortcuts", {})
-        r = (await api.get("/arkime/api/shortcuts", params={"length": 100})).json()
+        r = (await api.get("/arkime/api/shortcuts", params={"length": 100, "all": "true"})).json()
         check(
             "arkime_shortcuts",
             (len(r["data"]) == 0) == ("No shortcuts" in t),
@@ -613,7 +618,7 @@ async def main() -> None:
         )
 
         t = await call("arkime_crons", {})
-        r = (await api.get("/arkime/api/crons")).json()
+        r = (await api.get("/arkime/api/crons", params={"all": "true"})).json()
         # Written against the empty answer on purpose: the first cron anyone adds
         # fails this check, which is the signal to rewrite it against values.
         check(

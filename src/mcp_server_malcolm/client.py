@@ -1149,12 +1149,19 @@ class MalcolmClient:
         That is false on Arkime 6.6.0: measured here it answers 200
         application/json in 10,794 bytes with 36 top-level keys, for both the
         bare and the node-prefixed id, and 500 {"text":"Session not found"} for
-        an unknown one. The detour is kept because it is equivalent, not because
-        the direct route is unusable -- the search answers the same 34 fields,
-        the two the route adds being `id` (the argument passed in) and
-        `nodehost`. A swap would widen the answer with tags, tcpflags,
-        network.community_id, srcOui and srcTTL, which is a behavior change this
-        docstring is not the place to make.
+        an unknown one.
+
+        The detour is not equivalent to it. Measured on the same session, the
+        search answers 14 top-level keys against the route's 36 -- a strict
+        subset, adding nothing of its own and missing 22: @timestamp, event,
+        tags, tagsCnt, tcpflags, protocol, protocolCnt, length, ethertype,
+        segmentCnt, packetPos, packetRange, srcOui, srcOuiCnt, dstOui,
+        dstOuiCnt, srcTTL, srcTTLCnt, dstTTL, dstTTLCnt, srcRIR and dstRIR.
+        (`id` and `nodehost` are in both.) It is kept only because swapping the
+        URL widens every answer this tool has ever returned, which is a
+        behavior change rather than a docstring correction. Swap it when that
+        widening is wanted: both id forms work and the route needs no time
+        window.
 
         The id is reduced to its bare form first. arkime_sessions hands out the
         node-prefixed id ("3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw") but Arkime's

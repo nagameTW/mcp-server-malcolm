@@ -775,21 +775,6 @@ async def test_tagging_shares_the_one_cookie_replay_path():
 # -- the arkimeAdmin `all` gate on the three inventory listings ---------------
 
 
-def _param_capturing_client() -> tuple[MalcolmClient, dict[str, dict[str, str]]]:
-    seen: dict[str, dict[str, str]] = {}
-
-    def handler(req: httpx.Request) -> httpx.Response:
-        seen[req.url.path] = dict(req.url.params)
-        return httpx.Response(200, json={"data": [], "recordsTotal": 0})
-
-    c = MalcolmClient(base_url="https://malcolm.example")
-    c._http = httpx.AsyncClient(
-        base_url="https://malcolm.example",
-        transport=httpx.MockTransport(handler),
-    )
-    return c, seen
-
-
 @pytest.mark.parametrize(
     "call,path",
     [
@@ -807,8 +792,9 @@ async def test_inventory_listings_ask_for_every_owner_not_just_this_account(call
     parameter an arkimeAdmin account still sees only its own, so an empty list
     could never be trusted to mean the deployment has none.
     """
-    c, seen = _param_capturing_client()
+    c, seen = _recorded()
 
     await getattr(c, call)()
 
-    assert seen[path].get("all") == "true"
+    assert seen[-1].url.path == path
+    assert seen[-1].url.params.get("all") == "true"
