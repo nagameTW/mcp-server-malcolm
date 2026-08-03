@@ -770,3 +770,31 @@ async def test_tagging_shares_the_one_cookie_replay_path():
     await c.arkime_sessions(expression="protocols == modbus")
     await c._write_arkime_tags(ids="a", tags="b")
     assert seen[-1].headers["x-arkime-cookie"] == "t0ken"
+
+
+# -- the arkimeAdmin `all` gate on the three inventory listings ---------------
+
+
+@pytest.mark.parametrize(
+    "call,path",
+    [
+        ("arkime_views", "/arkime/api/views"),
+        ("arkime_shortcuts", "/arkime/api/shortcuts"),
+        ("arkime_crons", "/arkime/api/crons"),
+    ],
+)
+async def test_inventory_listings_ask_for_every_owner_not_just_this_account(call, path):
+    """Arkime filters these three to owner+roles unless the request says all=true.
+
+    Measured in the shipped viewer at Arkime 6.6.0: apiViews.js:31 and
+    apiShortcuts.js:137 both read `all: req.query.all && roles.includes(
+    'arkimeAdmin')`, and apiCrons.js:150 gates on the same pair. Without the
+    parameter an arkimeAdmin account still sees only its own, so an empty list
+    could never be trusted to mean the deployment has none.
+    """
+    c, seen = _recorded()
+
+    await getattr(c, call)()
+
+    assert seen[-1].url.path == path
+    assert seen[-1].url.params.get("all") == "true"

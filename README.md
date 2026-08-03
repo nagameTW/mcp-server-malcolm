@@ -211,7 +211,7 @@ Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14,
 
 ### 1. Install
 
-**PyPI currently carries an older build than this repository.** The published `mcp-server-malcolm` 0.9.0 was cut from an earlier commit; this tree's `pyproject.toml` also says `0.9.0`, so the version number gives you no signal that the two differ. `pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the published release, not the code documented here. Until the next release, install from source to get this tree.
+`pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the latest published release. A version number alone cannot tell you whether a checkout matches it — a tree carrying unreleased changes still reports the version of the last release — so install from source when you specifically want the code documented in this tree.
 
 ```bash
 pip install mcp-server-malcolm      # published release
@@ -229,12 +229,12 @@ Or build a wheel and install it into a clean virtualenv, which is the path every
 
 ```bash
 $ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 
 $ python3 -m venv /tmp/mcp-malcolm-deploy/venv
 $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 ```
 
 That pulls 32 packages, most of them from `mcp>=2,<3` (resolved to `mcp 2.0.0`). The wheel itself is `py3-none-any`, pure Python; the compiled dependencies (`cryptography`, `pydantic-core`, `rpds-py`, `cffi`) all installed from prebuilt `manylinux_*_aarch64` wheels here, nothing compiled from source. PyPI publishes the same wheels for x86_64 and macOS, but no install was run on either, so treat those as unverified.
@@ -336,17 +336,30 @@ That exact block was verified by driving its `command` and `env` fields through 
 
 If `mcp-server-malcolm` isn't on the `PATH` your client sees (common with a virtualenv), give the absolute path to the executable instead: `/path/to/.venv/bin/mcp-server-malcolm`.
 
-**What the client sees on connection.** With no write flags set, an `initialize` plus `tools/list` returns:
+**What the client sees on connection.** This server answers both protocol eras, and which one you get is decided by your first request, not by any setting here. A client that opens with `initialize` gets the handshake era; a client whose first request carries the `io.modelcontextprotocol/protocolVersion` key in `_meta` gets the stateless 2026-07-28 era, with no handshake at all. The SDK routes this in `serve_dual_era_loop`; nothing in this project configures it.
+
+With no write flags set, an `initialize` plus `tools/list` returns:
 
 ```
 protocol_version: 2025-11-25
-server_info:      name='mcp-server-malcolm' version='0.9.0'
+server_info:      name='mcp-server-malcolm' version='1.0.2'
 capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
-instructions:     3624 characters
+instructions:     3753 characters
 tools:            51
 prompts:          1  — hunt_workflow
 resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
 ```
+
+2025-11-25 is the ceiling of the handshake era, not this server's ceiling: `initialize` does not exist at 2026-07-28, so measuring through it can only ever report the older number. A 2026-07-28 client sends no handshake and calls `server/discover` instead:
+
+```
+server/discover  capabilities: prompts, resources (subscribe=true), tools — all listChanged=true
+                 cacheScope=private  ttlMs=0  resultType=complete
+tools/list       51 tools, cacheScope=public ttlMs=3600000 resultType=complete
+_meta on results io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.0.2}
+```
+
+The two eras disagree about `listChanged`, and the modern side is the one that overstates: the SDK advertises `listChanged=true` there, while this server registers everything once in `create_server()` and never emits a change notification. Harmless, because a list that cannot change cannot go unannounced, but do not build on the promise.
 
 The Arkime resource served 724,261 characters covering 4,051 expression fields on this deployment. One caveat for anyone scripting against the SDK: `mcp` 2.x uses snake_case attributes (`protocol_version`, `server_info`, `is_error`), not the camelCase of the wire protocol and the 1.x SDK. A script written against `serverInfo`/`isError` raises `AttributeError`.
 

@@ -6,6 +6,54 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`arkime_views`, `arkime_shortcuts` and `arkime_crons` only ever listed this
+  account's own.** Arkime scopes those three per request rather than per role:
+  the shipped 6.6.0 viewer gates on `req.query.all && roles.includes(
+  'arkimeAdmin')` at `apiViews.js:31`, `apiShortcuts.js:137` and
+  `apiCrons.js:150`. The client never sent `all`, so however privileged the
+  configured account was, the answer stayed filtered to owner plus shared roles
+  and an empty list could not be told apart from a deployment that genuinely
+  has none. All three now send it. A non-admin account is unaffected — the role
+  half of that condition still fails — so the server instructions keep the
+  caveat, now scoped to below-arkimeAdmin accounts rather than stated flatly.
+- **Both READMEs reported a protocol version this server is not limited to.**
+  The "what the client sees on connection" block showed a 2025-11-25 handshake
+  measurement and a server version two releases stale (0.9.0). `initialize`
+  does not exist at 2026-07-28, so measuring through it can only report the
+  older number; the SDK's `serve_dual_era_loop` picks the era from the client's
+  first request and this server answers both. Re-measured against a live
+  deployment rather than edited: the legacy block was accurate apart from the
+  version, and a modern block covering `server/discover` is new.
+- **`arkime_session_detail`'s docstring justified its detour with a false
+  claim.** It said `GET /arkime/api/session/<id>` serves the SPA HTML shell
+  rather than JSON. On Arkime 6.6.0 that route answers 200 `application/json`
+  in 10,794 bytes with 36 top-level keys. The detour through the sessions
+  search is kept, but it is not equivalent: measured on the same session it
+  answers 14 top-level keys, a strict subset missing 22 of the route's — among
+  them `@timestamp`, `event`, `tags`, `tcpflags`, `protocol`, `srcOui`/`dstOui`
+  and `srcTTL`/`dstTTL`. Swapping the URL would widen every answer this tool
+  has returned, so it stays a behavior change for another PR; the docstring now
+  records the gap and how to close it.
+- **The install chapter opened with a warning that had stopped being true.**
+  It told readers PyPI carried an older build than this repository and that
+  both reported `0.9.0`, so the number gave no signal. PyPI serves 1.0.2 and
+  so does this tree. Replaced with the part that holds wherever the release
+  pointer sits — a version number cannot tell you whether a checkout matches
+  the published build, since a tree with unreleased changes still reports the
+  last release. The build transcript in that chapter is re-run rather than
+  hand-edited, as the chapter promises: same 32 packages, `mcp` still resolving
+  to 2.0.0, only the wheel filenames moved. The connection block's measured
+  instruction length is re-measured too (3624 -> 3753), which the caveat
+  rewrite above changed.
+
+### Removed
+
+- `MalcolmClient.invalidate_field_cache`, which had no caller in `src`, `tests`
+  or the docs — dead code on the one long-lived mutable structure in the
+  process.
+
 ## [1.0.2] - 2026-07-31
 
 ### Fixed

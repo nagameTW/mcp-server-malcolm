@@ -203,7 +203,7 @@ Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原
 
 ### 1. 安裝
 
-**PyPI 上的版本比這個 repository 舊。**已發布的 `mcp-server-malcolm` 0.9.0 是從更早的 commit 切出來的；這棵樹的 `pyproject.toml` 同樣寫著 `0.9.0`，所以光看版號完全看不出兩者有差。`pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是已發布的 release，不是這份文件寫的這份程式碼。下次發版之前，要拿到這棵樹就得從原始碼裝。
+`pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是最新的已發布 release。光看版號沒辦法判斷手上的 checkout 跟它是不是同一份——帶著未發布變更的樹，回報的仍然是上一次發版的版號——所以要拿到這份文件寫的這棵樹，就從原始碼裝。
 
 ```bash
 pip install mcp-server-malcolm      # published release
@@ -221,12 +221,12 @@ pip install -e .
 
 ```bash
 $ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 
 $ python3 -m venv /tmp/mcp-malcolm-deploy/venv
 $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-0.9.0-py3-none-any.whl
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 ```
 
 這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel，但這兩個平台都沒有實際裝過，請當作未驗證。
@@ -328,17 +328,30 @@ Removed MCP server malcolm-deploy-test from local config
 
 如果 `mcp-server-malcolm` 不在客戶端看得到的 `PATH` 上（用 virtualenv 時很常見），改填執行檔的絕對路徑：`/path/to/.venv/bin/mcp-server-malcolm`。
 
-**客戶端連上時看到什麼。**write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
+**客戶端連上時看到什麼。**這個 server 兩個協定世代都服務，拿到哪一個由客戶端的第一個請求決定，不是這裡的任何設定。以 `initialize` 開場的客戶端走交握世代；第一個請求在 `_meta` 裡帶 `io.modelcontextprotocol/protocolVersion` 的客戶端走 2026-07-28 無狀態世代，完全沒有交握。這條分流在 SDK 的 `serve_dual_era_loop` 裡，這個專案沒有設定它。
+
+write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
 
 ```
 protocol_version: 2025-11-25
-server_info:      name='mcp-server-malcolm' version='0.9.0'
+server_info:      name='mcp-server-malcolm' version='1.0.2'
 capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
-instructions:     3624 characters
+instructions:     3753 characters
 tools:            51
 prompts:          1  — hunt_workflow
 resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
 ```
+
+2025-11-25 是交握世代的天花板，不是這個 server 的天花板：`initialize` 在 2026-07-28 根本不存在，所以透過它量測只可能量到比較舊的那個數字。2026-07-28 的客戶端不送交握，改呼叫 `server/discover`：
+
+```
+server/discover  capabilities: prompts, resources (subscribe=true), tools — all listChanged=true
+                 cacheScope=private  ttlMs=0  resultType=complete
+tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=complete
+結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.0.2}
+```
+
+兩個世代對 `listChanged` 的說法不一致，而說多了的是新世代那邊：SDK 在那裡宣告 `listChanged=true`，但這個 server 在 `create_server()` 裡一次註冊完所有東西，從不送變更通知。這不會出事，因為不會變的清單也就無所謂沒有通知，但別把程式建立在那個承諾上。
 
 在這套部署上，Arkime 那個 resource 送出 724,261 個字元，涵蓋 4,051 個 expression 欄位。要拿 SDK 寫腳本的人有一個地方要留意：`mcp` 2.x 用的是 snake_case 屬性（`protocol_version`、`server_info`、`is_error`），不是 wire protocol 和 1.x SDK 的 camelCase。照 `serverInfo`/`isError` 寫的腳本會拋 `AttributeError`。
 
