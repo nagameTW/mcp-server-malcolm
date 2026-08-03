@@ -1060,15 +1060,20 @@ class MalcolmClient:
 
     async def arkime_views(self, length: int = 100) -> dict[str, Any]:
         """Saved search views via GET /arkime/api/views (the plural route is
-        GET-only; the singular /api/view is the create route)."""
-        return await self.get("/arkime/api/views", params={"length": length})
+        GET-only; the singular /api/view is the create route).
+
+        `all=true` for the reason spelled out on arkime_crons: without it even
+        an arkimeAdmin account is served only its own.
+        """
+        return await self.get("/arkime/api/views", params={"length": length, "all": "true"})
 
     async def arkime_shortcuts(self, length: int = 100) -> dict[str, Any]:
         """Named value lists via GET /arkime/api/shortcuts.
 
-        A shortcut is referenced inside an expression as $<name>.
+        A shortcut is referenced inside an expression as $<name>. `all=true`
+        for the reason spelled out on arkime_crons.
         """
-        return await self.get("/arkime/api/shortcuts", params={"length": length})
+        return await self.get("/arkime/api/shortcuts", params={"length": length, "all": "true"})
 
     @_upstream
     async def arkime_reverse_dns(self, ip: str) -> str:
@@ -1135,10 +1140,21 @@ class MalcolmClient:
     async def arkime_session_detail(self, session_id: str) -> dict[str, Any]:
         """Full SPI document for one session, via the sessions search.
 
-        GET /arkime/api/session/<id> serves the Arkime SPA HTML shell, not JSON,
-        so a single session is fetched through /arkime/api/sessions with an
-        `id ==` expression and date=-1 (all time). The id is indexed, so this
-        stays a point lookup rather than a scan.
+        Fetched through /arkime/api/sessions with an `id ==` expression and
+        date=-1 (all time). The id is indexed, so this stays a point lookup
+        rather than a scan.
+
+        This docstring used to justify that detour by claiming GET
+        /arkime/api/session/<id> serves the SPA HTML shell rather than JSON.
+        That is false on Arkime 6.6.0: measured here it answers 200
+        application/json in 10,794 bytes with 36 top-level keys, for both the
+        bare and the node-prefixed id, and 500 {"text":"Session not found"} for
+        an unknown one. The detour is kept because it is equivalent, not because
+        the direct route is unusable -- the search answers the same 34 fields,
+        the two the route adds being `id` (the argument passed in) and
+        `nodehost`. A swap would widen the answer with tags, tcpflags,
+        network.community_id, srcOui and srcTTL, which is a behavior change this
+        docstring is not the place to make.
 
         The id is reduced to its bare form first. arkime_sessions hands out the
         node-prefixed id ("3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw") but Arkime's
@@ -1550,8 +1566,16 @@ class MalcolmClient:
         matches, so this is where a tag nobody recognises comes from. Returns a
         list, empty when a deployment has none configured -- measured [] here,
         which is a fact about this deployment and not a route fault.
+
+        `all=true` because Arkime scopes this listing per request rather than
+        per role: apiCrons.js:150 in the shipped 6.6.0 viewer gates on
+        `req.query.all && roles.includes('arkimeAdmin')`, with the same pair at
+        apiViews.js:31 and apiShortcuts.js:137. Omitting it filters the answer
+        to this account's own no matter how privileged the account is, which
+        made an empty list unfalsifiable. A non-admin account sending it is
+        unchanged -- the role half of that condition still fails.
         """
-        return await self.get("/arkime/api/crons")
+        return await self.get("/arkime/api/crons", params={"all": "true"})
 
     # -- Write primitives (gated) ---------------------------------------
     # Every method here issues a mutating request. By convention they are

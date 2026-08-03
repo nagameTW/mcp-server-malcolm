@@ -73,8 +73,10 @@ malcolm_* and DSL tools, arkime_field_search for anything you put in an \
 arkime_* `expression`. They are not interchangeable.
 - Every tool authenticates as the one account this server was configured with, \
 so a list shows what that account can see: an Arkime view carries its owner and \
-the roles it is shared with, and an empty arkime_views / arkime_shortcuts / \
-arkime_crons list is not proof there are none.
+the roles it is shared with. The three inventory listings do ask for every \
+owner, but Arkime grants that only to an arkimeAdmin account, so below that role \
+an empty arkime_views / arkime_shortcuts / arkime_crons list is still not proof \
+there are none.
 
 THREE QUERY DIALECTS — pick deliberately:
 1. malcolm_search / malcolm_aggregate / malcolm_alerts — Malcolm's simple filter \
