@@ -31,6 +31,17 @@ All notable changes to this project are recorded here. The format follows
   rather than JSON. On Arkime 6.6.0 that route answers 200 `application/json`
   in 10,794 bytes with 36 top-level keys. The detour through the sessions
   search is equivalent and is kept; only the reasoning is corrected.
+- **The install chapter opened with a warning that had stopped being true.**
+  It told readers PyPI carried an older build than this repository and that
+  both reported `0.9.0`, so the number gave no signal. PyPI serves 1.0.2 and
+  so does this tree. Replaced with the part that holds wherever the release
+  pointer sits — a version number cannot tell you whether a checkout matches
+  the published build, since a tree with unreleased changes still reports the
+  last release. The build transcript in that chapter is re-run rather than
+  hand-edited, as the chapter promises: same 32 packages, `mcp` still resolving
+  to 2.0.0, only the wheel filenames moved. The connection block's measured
+  instruction length is re-measured too (3624 -> 3753), which the caveat
+  rewrite above changed.
 
 ### Removed
 
