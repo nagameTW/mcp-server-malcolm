@@ -328,17 +328,30 @@ Removed MCP server malcolm-deploy-test from local config
 
 如果 `mcp-server-malcolm` 不在客戶端看得到的 `PATH` 上（用 virtualenv 時很常見），改填執行檔的絕對路徑：`/path/to/.venv/bin/mcp-server-malcolm`。
 
-**客戶端連上時看到什麼。**write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
+**客戶端連上時看到什麼。**這個 server 兩個協定世代都服務，拿到哪一個由客戶端的第一個請求決定，不是這裡的任何設定。以 `initialize` 開場的客戶端走交握世代；第一個請求在 `_meta` 裡帶 `io.modelcontextprotocol/protocolVersion` 的客戶端走 2026-07-28 無狀態世代，完全沒有交握。這條分流在 SDK 的 `serve_dual_era_loop` 裡，這個專案沒有設定它。
+
+write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
 
 ```
 protocol_version: 2025-11-25
-server_info:      name='mcp-server-malcolm' version='0.9.0'
+server_info:      name='mcp-server-malcolm' version='1.0.2'
 capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
 instructions:     3624 characters
 tools:            51
 prompts:          1  — hunt_workflow
 resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
 ```
+
+2025-11-25 是交握世代的天花板，不是這個 server 的天花板：`initialize` 在 2026-07-28 根本不存在，所以透過它量測只可能量到比較舊的那個數字。2026-07-28 的客戶端不送交握，改呼叫 `server/discover`：
+
+```
+server/discover  capabilities: prompts, resources (subscribe=true), tools — all listChanged=true
+                 cacheScope=private  ttlMs=0  resultType=complete
+tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=complete
+結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.0.2}
+```
+
+兩個世代對 `listChanged` 的說法不一致，而說多了的是新世代那邊：SDK 在那裡宣告 `listChanged=true`，但這個 server 在 `create_server()` 裡一次註冊完所有東西，從不送變更通知。這不會出事，因為不會變的清單也就無所謂沒有通知，但別把程式建立在那個承諾上。
 
 在這套部署上，Arkime 那個 resource 送出 724,261 個字元，涵蓋 4,051 個 expression 欄位。要拿 SDK 寫腳本的人有一個地方要留意：`mcp` 2.x 用的是 snake_case 屬性（`protocol_version`、`server_info`、`is_error`），不是 wire protocol 和 1.x SDK 的 camelCase。照 `serverInfo`/`isError` 寫的腳本會拋 `AttributeError`。
 

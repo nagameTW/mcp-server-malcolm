@@ -19,10 +19,13 @@ logger = logging.getLogger(__name__)
 
 # One hour, everywhere below. The three list methods are frozen the moment
 # create_server() returns and this server never sends a listChanged
-# notification, so their results cannot change while a connection lives -- an
-# hour outlasts a typical session while still bounding how long a cache that
-# outlives the connection may advertise a tool set an operator has since
-# restarted the server without.
+# notification, so only a process restart can change them -- which is the one
+# event this TTL exists to bound. Deliberately not reasoned in terms of a
+# session: at 2026-07-28 requests are self-contained and no session exists, so
+# the hour caps how long a cache may still advertise the tool set of a process
+# since restarted with different MALCOLM_MCP_ENABLE_* flags. Both directions of
+# that staleness fail safe -- a withdrawn tool is refused as unregistered, and a
+# newly enabled one is merely invisible until the entry expires.
 _FROZEN_AT_STARTUP_MS = 3_600_000
 
 # scope="public" for the three list methods: they are derived from this

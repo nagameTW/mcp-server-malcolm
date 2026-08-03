@@ -510,11 +510,6 @@ class MalcolmClient:
         logger.info("[malcolm] Cached %d fields", len(self._field_cache))
         return self._field_cache
 
-    def invalidate_field_cache(self) -> None:
-        """Force re-fetch of both field lists on next call."""
-        self._field_cache = None
-        self._arkime_field_cache = None
-
     async def arkime_fields(self) -> list[dict[str, str]]:
         """Return Arkime's field table (cached), expression name paired with db name.
 
