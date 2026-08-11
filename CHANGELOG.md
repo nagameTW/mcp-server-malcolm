@@ -6,6 +6,18 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`server.json` advertised 0.9.0 to the MCP Registry while PyPI served
+  1.0.3.** Both version fields — the top-level one and the PyPI package entry
+  the registry resolves separately — had sat at 0.9.0 since that release, so
+  the registry pointed at a version four releases stale. Nothing in the release
+  workflow writes either field, which is why four version bumps went past it;
+  a test now asserts both match `pyproject.toml`, the same guard `__version__`
+  has had since 1.0.1.
+- `CONTRIBUTING.md` described `tools/write/` as four write classes. It has held
+  five since `arkime-view` landed in 1.0.0.
+
 ## [1.0.3] - 2026-08-03
 
 ### Fixed
