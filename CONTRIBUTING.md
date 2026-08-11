@@ -33,7 +33,7 @@ If `ruff format --check` complains, `ruff format src tests` fixes it in place.
 
 - `src/mcp_server_malcolm/server.py` registers tools and wires up the write gate.
 - `src/mcp_server_malcolm/tools/` holds the read tools, one file per area (query, fields, arkime, netbox, and so on).
-- `src/mcp_server_malcolm/tools/write/` holds the write tools, split into the four write classes.
+- `src/mcp_server_malcolm/tools/write/` holds the write tools, split into the five write classes.
 - `src/mcp_server_malcolm/config.py` owns the write-class flags. `audit.py` owns the audit sink.
 - `tests/` mirrors that structure. Read tests and write tests are separate files.
 
