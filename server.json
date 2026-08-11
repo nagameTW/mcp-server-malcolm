@@ -6,12 +6,12 @@
     "url": "https://github.com/nagameTW/mcp-server-malcolm",
     "source": "github"
   },
-  "version": "1.0.3",
+  "version": "1.1.0",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "mcp-server-malcolm",
-      "version": "1.0.3",
+      "version": "1.1.0",
       "transport": {
         "type": "stdio"
       }
