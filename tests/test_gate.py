@@ -69,6 +69,10 @@ _WRITE = {
 def _names(monkeypatch, **flags):
     for k in ("ALERTING", "ARKIME_TAGS", "HUNT_JOBS", "PCAP_UPLOAD", "ARKIME_VIEWS"):
         monkeypatch.delenv(f"MALCOLM_MCP_ENABLE_{k}", raising=False)
+    # This file asserts the read set exactly; a leaked read-group disable list
+    # would make that comparison fail for a reason that has nothing to do with
+    # the write gate under test.
+    monkeypatch.delenv("MALCOLM_MCP_DISABLE_READ_GROUPS", raising=False)
     for k, v in flags.items():
         monkeypatch.setenv(f"MALCOLM_MCP_ENABLE_{k}", v)
     mcp = create_server()

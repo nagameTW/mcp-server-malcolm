@@ -28,6 +28,46 @@ The server splits write access into five classes, each behind its own environmen
 
 Every write but one is additive: the exception is `arkime_cancel_hunt`, which stops a hunt job in progress rather than adding to it. None of them deletes data, removes a tag, or touches a user account — those stay out on purpose (see [Non-goals](#non-goals)).
 
+## Trimming the read surface
+
+All 51 read tools are on by default, and their schemas are about 34,000 tokens that every session pays before the model has asked anything. That is affordable on a large frontier model and expensive on a small local one. It is also partly wasted: a Malcolm without NetBox will never answer a `malcolm_netbox_*` call, and plenty of deployments have no interest in handing an agent the OpenSearch alerting configuration.
+
+`MALCOLM_MCP_DISABLE_READ_GROUPS` takes a comma-separated list of groups to leave unregistered. A disabled group is not hidden — its tools are absent from `tools/list`, exactly as a disabled write class is.
+
+| Group | Tools | Schema tokens | Covers |
+| --- | --- | --- | --- |
+| `dsl` | 5 | ~2,300 | Raw OpenSearch: `search_dsl`, `count`, index and cluster metadata |
+| `query` | 3 | ~2,350 | `malcolm_search`, `malcolm_aggregate`, `malcolm_alerts` |
+| `fields` | 3 | ~1,780 | Field discovery — the anti-hallucination layer |
+| `health` | 4 | ~1,730 | Service status, data coverage, ping, dashboard export |
+| `netbox` | 3 | ~1,370 | NetBox asset lookup |
+| `arkime` | 11 | ~8,450 | Arkime session search and the SPI analysis endpoints |
+| `arkime-content` | 5 | ~3,270 | PCAP, payload and file-by-hash extraction |
+| `correlation` | 1 | ~630 | `malcolm_related_sessions` |
+| `files` | 2 | ~2,160 | Zeek file scans and extracted-file fetch |
+| `arkime-inventory` | 7 | ~4,330 | Saved views, shortcuts, crons, capture-node stats, hunt status |
+| `dashboards` | 2 | ~1,890 | OpenSearch Dashboards saved objects |
+| `detections` | 5 | ~4,210 | Alerting monitors and anomaly detectors |
+| **Total** | **51** | **~34,470** | |
+
+Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~34,470 tokens to ~22,690:
+
+```bash
+-e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
+```
+
+```
+[mcp-server-malcolm] read groups disabled: arkime-inventory, dashboards, detections, netbox
+```
+
+The banner line appears only when something is disabled, so a tool that has gone missing is traceable to the flag that removed it. A name matching no group aborts startup rather than being ignored — a typo that silently left the group registered is the failure this check exists to prevent:
+
+```
+ValueError: MALCOLM_MCP_DISABLE_READ_GROUPS: unknown read group(s) netboxx. Valid names: arkime, arkime-content, ...
+```
+
+Two groups deserve a warning before you drop them. `fields` is what stops the model inventing field names, and the server's own instructions tell it to look every unfamiliar field up before querying; without that group the instructions describe tools that are not there. `arkime` carries `arkime_sessions`, the only search that returns a session ID, so disabling it also strips the input every `arkime-content` tool needs.
+
 ## Why an MCP layer
 
 Malcolm keeps all network metadata in one OpenSearch index (`arkime_sessions3-*`) with non-standard field names and its own filter syntax. An LLM asked to write raw OpenSearch DSL against that index gets it wrong more often than not. This server takes that job off the model:
@@ -51,7 +91,7 @@ The write side follows the same idea. Rather than hand an agent the raw OpenSear
 
 ## Read tools
 
-These are always registered.
+All of these are registered by default — none of them needs a flag turned on. They can be dropped a group at a time; see [Trimming the read surface](#trimming-the-read-surface) for which tools each group holds.
 
 ### DSL core (backend-agnostic)
 
@@ -131,7 +171,7 @@ These three `malcolm_*` tools cover the ECS names used by `malcolm_search`, `mal
 | `arkime_reverse_dns` | Reverse-resolve one IP to its PTR hostname |
 | `arkime_pcap_files` | List the PCAP files Arkime has indexed, with each file's size, packet/session counts and time span |
 | `arkime_node_stats` | Capture-node health: dropped packets, disk, memory, queues — warns when a node is losing packets, since that turns a gap into what looks like an absence |
-| `arkime_hunt_status` | List Arkime hunt jobs and their progress — queued, running or finished. Registered unconditionally: it only reads job status, so it stays available with every write class off |
+| `arkime_hunt_status` | List Arkime hunt jobs and their progress — queued, running or finished. Not gated by a write class: it only reads job status, so it stays available with every write class off (it is part of the `arkime-inventory` read group) |
 
 Arkime's `connections.csv` is deliberately not wrapped: on Arkime 6.6.0 it emits a nine-column header over seven-column rows, so every column after the second is mislabeled. `arkime_connections` answers the same question correctly.
 
@@ -723,6 +763,7 @@ arkime_create_hunt(
 | `MALCOLM_TIMEOUT` | `30` | HTTP request timeout (seconds) |
 | `MALCOLM_MAX_CONCURRENCY` | `8` | Simultaneous upstream requests |
 | `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | Upstream requests allowed per rolling 60s window; past the cap a request is held, not rejected |
+| `MALCOLM_MCP_DISABLE_READ_GROUPS` | unset | Comma-separated read groups to leave unregistered; an unknown name aborts startup. See [Trimming the read surface](#trimming-the-read-surface) |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | Enable the alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | Enable additive session tagging |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | Enable Arkime hunt create + status |
