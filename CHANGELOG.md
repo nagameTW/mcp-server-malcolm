@@ -6,6 +6,31 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`MALCOLM_MCP_DISABLE_READ_GROUPS`, so a deployment can stop paying for read
+  tools it will never call.** All 51 read tools were registered
+  unconditionally, and their schemas cost roughly 34,000 tokens per session
+  before the model has asked anything — affordable on a frontier model, and a
+  real constraint on the small local ones this server's field-discovery design
+  is aimed at. Part of that spend was never recoverable: a Malcolm without
+  NetBox cannot answer a `malcolm_netbox_*` call, and not every operator wants
+  an agent reading the OpenSearch alerting configuration at all. The twelve
+  read modules are now named groups (`dsl`, `query`, `fields`, `health`,
+  `netbox`, `arkime`, `arkime-content`, `correlation`, `files`,
+  `arkime-inventory`, `dashboards`, `detections`), and any of them can be left
+  unregistered. Dropping `netbox,dashboards,detections,arkime-inventory` takes
+  a session from 51 tools and ~34,470 tokens to 34 and ~22,690. Nothing changes
+  unless the variable is set, and the registration order is unchanged, so a
+  default deployment's `tools/list` is identical to 1.0.3's.
+- A disabled group is absent from `tools/list` rather than hidden, matching how
+  the write classes already behave, and the startup banner names what was
+  dropped — but only when something was, so the default deployment gains no
+  extra line. A name matching no group aborts startup with the valid names in
+  the message: silently leaving a mistyped group registered is the one outcome
+  an operator would not notice until the token bill or an unwanted tool call
+  arrived.
+
 ### Fixed
 
 - **`server.json` advertised 0.9.0 to the MCP Registry while PyPI served

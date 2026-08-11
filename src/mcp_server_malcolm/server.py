@@ -140,7 +140,7 @@ def create_server() -> MCPServer:
     client = MalcolmClient.from_env()
     cfg = WriteConfig.from_env()
 
-    register_all_tools(mcp, client)
+    disabled_read = register_all_tools(mcp, client)
     register_write_tools(mcp, client, cfg)
     register_resources(mcp, client)
     register_prompts(mcp)
@@ -149,4 +149,13 @@ def create_server() -> MCPServer:
     print(
         f"[mcp-server-malcolm] write classes: {cfg.enabled_summary()}", file=sys.stderr, flush=True
     )
+    # Silent when nothing is disabled: the default deployment should not have
+    # to read a line saying so, but a missing tool must be traceable to the
+    # flag that removed it rather than looking like a broken build.
+    if disabled_read:
+        print(
+            f"[mcp-server-malcolm] read groups disabled: {', '.join(sorted(disabled_read))}",
+            file=sys.stderr,
+            flush=True,
+        )
     return mcp

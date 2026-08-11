@@ -26,6 +26,46 @@ write 存取分成五個 class，各自有一個環境變數開關，預設全�
 
 除了一個例外，每個 write 都是「新增」性質：例外是 `arkime_cancel_hunt`，它停掉的是進行中的 hunt 工作，不是新增內容。沒有任何工具會刪資料、移除 tag、或動到使用者帳號——這些是刻意不做的（見 [不做的事](#不做的事)）。
 
+## 精簡讀取工具
+
+51 個讀取工具預設全開，光是它們的 schema 就約 34,000 個 token，每個 session 在模型還沒問任何問題之前就先付掉。這個成本在大型前沿模型上還好，換成本地小模型就很痛。而且有一部分是白付的：沒裝 NetBox 的 Malcolm 永遠不會回應 `malcolm_netbox_*`，也有不少環境根本不想讓 agent 碰到 OpenSearch 的 alerting 設定。
+
+`MALCOLM_MCP_DISABLE_READ_GROUPS` 接一串以逗號分隔的 group 名稱，列到的就不註冊。被關掉的 group 不是隱藏起來——它的工具不會出現在 `tools/list`，跟關掉的 write class 一樣。
+
+| Group | 工具數 | Schema tokens | 內容 |
+| --- | --- | --- | --- |
+| `dsl` | 5 | ~2,300 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
+| `query` | 3 | ~2,350 | `malcolm_search`、`malcolm_aggregate`、`malcolm_alerts` |
+| `fields` | 3 | ~1,780 | 欄位探索——防幻覺那一層 |
+| `health` | 4 | ~1,730 | 服務狀態、資料涵蓋範圍、ping、dashboard 匯出 |
+| `netbox` | 3 | ~1,370 | NetBox 資產查詢 |
+| `arkime` | 11 | ~8,450 | Arkime session 搜尋與各個 SPI 分析 endpoint |
+| `arkime-content` | 5 | ~3,270 | PCAP、payload、依 hash 取檔 |
+| `correlation` | 1 | ~630 | `malcolm_related_sessions` |
+| `files` | 2 | ~2,160 | Zeek 檔案掃描結果與已擷取檔案下載 |
+| `arkime-inventory` | 7 | ~4,330 | 儲存的 view、shortcut、cron、擷取節點狀態、hunt 狀態 |
+| `dashboards` | 2 | ~1,890 | OpenSearch Dashboards 的 saved object |
+| `detections` | 5 | ~4,210 | Alerting monitor 與異常偵測器 |
+| **合計** | **51** | **~34,470** | |
+
+以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,470 token 降到約 22,690：
+
+```bash
+-e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
+```
+
+```
+[mcp-server-malcolm] read groups disabled: arkime-inventory, dashboards, detections, netbox
+```
+
+只有真的關掉東西時才會印這行，所以少了哪個工具，都能回推到是哪個開關拿掉的。名稱對不上任何 group 會直接讓啟動失敗，而不是被忽略——打錯字卻讓那個 group 靜靜留著，正是這個檢查要擋的狀況：
+
+```
+ValueError: MALCOLM_MCP_DISABLE_READ_GROUPS: unknown read group(s) netboxx. Valid names: arkime, arkime-content, ...
+```
+
+有兩個 group 關掉之前要想清楚。`fields` 是擋住模型亂編欄位名稱的那一層，而 server 給模型的指示裡明寫了「查詢陌生欄位前先查名稱」；少了這個 group，指示講的工具就不存在了。`arkime` 裡有 `arkime_sessions`，那是唯一會回傳 session ID 的搜尋，關掉它等於同時抽掉每個 `arkime-content` 工具的輸入來源。
+
 ## 為什麼要有 MCP 這一層
 
 Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_sessions3-*`），欄位名稱非標準，還有自己一套 filter 語法。要 LLM 直接對這個 index 寫 OpenSearch DSL，多半會寫錯。這個 server 把這件事從模型身上接過來：
@@ -43,7 +83,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 
 ## 讀取工具
 
-這些一律註冊。
+以下全部預設註冊，不需要開任何 flag。要拿掉的話是以 group 為單位，每個 group 包含哪些工具見[精簡讀取工具](#精簡讀取工具)。
 
 ### DSL 核心（與後端無關）
 
@@ -123,7 +163,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 | `arkime_reverse_dns` | 把單一 IP 反解成 PTR 主機名 |
 | `arkime_pcap_files` | 列出 Arkime 已索引的 PCAP 檔，含大小、封包/session 數與時間範圍 |
 | `arkime_node_stats` | 擷取節點健康度：丟包、磁碟、記憶體、佇列——節點正在丟包時會特別警告，因為那會讓「資料缺口」看起來像「沒有這種流量」 |
-| `arkime_hunt_status` | 列出 Arkime hunt 作業與其進度——排隊中、執行中或已完成。一律註冊：只讀作業狀態，所以就算 write class 全關也拿得到 |
+| `arkime_hunt_status` | 列出 Arkime hunt 作業與其進度——排隊中、執行中或已完成。不受 write class 管制：只讀作業狀態，所以就算 write class 全關也拿得到（它屬於 `arkime-inventory` 讀取 group） |
 
 Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表頭有 9 欄、資料列只有 7 欄，所以第二欄之後全部對錯位置。同樣的問題用 `arkime_connections` 問，答案是對的。
 
@@ -712,6 +752,7 @@ arkime_create_hunt(
 | `MALCOLM_TIMEOUT` | `30` | HTTP 請求逾時（秒） |
 | `MALCOLM_MAX_CONCURRENCY` | `8` | 同時對上游發出的請求數 |
 | `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | 每個滾動 60 秒窗內允許的上游請求數；超過上限的請求是被壓著等，不是被拒絕 |
+| `MALCOLM_MCP_DISABLE_READ_GROUPS` | 未設定 | 以逗號分隔、不要註冊的讀取 group；名稱不存在會讓啟動失敗。見[精簡讀取工具](#精簡讀取工具) |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | 開啟 alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | 開啟 session 加 tag（只加不減） |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | 開啟 Arkime hunt 建立 + 狀態查詢 |

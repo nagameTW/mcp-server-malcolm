@@ -2,17 +2,27 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from mcp.server.mcpserver import MCPServer
 
     from mcp_server_malcolm.client import MalcolmClient
     from mcp_server_malcolm.config import WriteConfig
 
+# Comma-separated read groups to leave unregistered. Every group ships on;
+# this exists because the full read surface costs ~34k tokens of tool schema
+# before a model has asked anything, which a small-context deployment may not
+# be able to spend on subsystems it does not run (no NetBox, no OpenSearch
+# alerting) or does not want the agent touching.
+DISABLE_READ_GROUPS_ENV = "MALCOLM_MCP_DISABLE_READ_GROUPS"
 
-def register_all_tools(mcp: MCPServer, client: MalcolmClient) -> None:
-    """Register every tool module with the MCP server."""
+
+def _read_groups() -> dict[str, Callable[[MCPServer, MalcolmClient], None]]:
+    """Map each read group name to its registrar, in registration order."""
     from mcp_server_malcolm.tools.arkime import register_arkime_tools
     from mcp_server_malcolm.tools.arkime_content import register_arkime_content_tools
     from mcp_server_malcolm.tools.arkime_inventory import register_arkime_inventory_tools
@@ -26,18 +36,55 @@ def register_all_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     from mcp_server_malcolm.tools.netbox import register_netbox_tools
     from mcp_server_malcolm.tools.query import register_query_tools
 
-    register_dsl_tools(mcp, client)
-    register_query_tools(mcp, client)
-    register_field_tools(mcp, client)
-    register_health_tools(mcp, client)
-    register_netbox_tools(mcp, client)
-    register_arkime_tools(mcp, client)
-    register_arkime_content_tools(mcp, client)
-    register_correlation_tools(mcp, client)
-    register_file_tools(mcp, client)
-    register_arkime_inventory_tools(mcp, client)
-    register_dashboard_tools(mcp, client)
-    register_detection_tools(mcp, client)
+    # Insertion order is the registration order, so with nothing disabled the
+    # tool list is byte-identical to what it was before groups existed.
+    return {
+        "dsl": register_dsl_tools,
+        "query": register_query_tools,
+        "fields": register_field_tools,
+        "health": register_health_tools,
+        "netbox": register_netbox_tools,
+        "arkime": register_arkime_tools,
+        "arkime-content": register_arkime_content_tools,
+        "correlation": register_correlation_tools,
+        "files": register_file_tools,
+        "arkime-inventory": register_arkime_inventory_tools,
+        "dashboards": register_dashboard_tools,
+        "detections": register_detection_tools,
+    }
+
+
+def _disabled_read_groups(valid: frozenset[str]) -> frozenset[str]:
+    """Parse the disable list, rejecting names that match no group.
+
+    A typo has to fail loudly: silently keeping a group the operator meant to
+    drop is the one outcome nobody would notice until the schema bill or an
+    unwanted tool call showed up.
+    """
+    raw = os.environ.get(DISABLE_READ_GROUPS_ENV, "")
+    names = frozenset(part.strip() for part in raw.split(",") if part.strip())
+    unknown = names - valid
+    if unknown:
+        raise ValueError(
+            f"{DISABLE_READ_GROUPS_ENV}: unknown read group(s) "
+            f"{', '.join(sorted(unknown))}. Valid names: {', '.join(sorted(valid))}."
+        )
+    return names
+
+
+def register_all_tools(mcp: MCPServer, client: MalcolmClient) -> frozenset[str]:
+    """Register every read group except those named in the disable list.
+
+    Returns the disabled group names so the caller can report the posture. A
+    disabled group is not registered rather than hidden, so its tools are
+    absent from tools/list and calling one fails as unregistered.
+    """
+    groups = _read_groups()
+    disabled = _disabled_read_groups(frozenset(groups))
+    for name, register in groups.items():
+        if name not in disabled:
+            register(mcp, client)
+    return disabled
 
 
 def register_write_tools(mcp: MCPServer, client: MalcolmClient, cfg: WriteConfig) -> None:
