@@ -18,11 +18,13 @@ It gives any MCP-compatible AI agent structured access to Malcolm: search and ag
 
 ## Contents
 
+- [Why an MCP layer](#why-an-mcp-layer)
 - [Quick start](#quick-start)
   - [1. Install](#1-install)
   - [2. Register it with your client](#2-register-it-with-your-client)
   - [3. Connection settings](#3-connection-settings)
   - [4. Enabling write tools (optional)](#4-enabling-write-tools-optional)
+  - [Other ways to install](#other-ways-to-install)
 - [Read-only until you opt in](#read-only-until-you-opt-in)
 - [Read tools](#read-tools)
 - [Write tools (opt-in)](#write-tools-opt-in)
@@ -32,13 +34,33 @@ It gives any MCP-compatible AI agent structured access to Malcolm: search and ag
 - [Python (direct import)](#python-direct-import)
 - [Malcolm filter syntax](#malcolm-filter-syntax)
 - [Examples](#examples)
-- [Why an MCP layer](#why-an-mcp-layer)
 - [Protocol notes](#protocol-notes)
 - [Configuration reference](#configuration-reference)
 - [Verifying against your own Malcolm](#verifying-against-your-own-malcolm)
 - [Malcolm API endpoints used](#malcolm-api-endpoints-used)
 - [Non-goals](#non-goals)
 - [License](#license)
+
+## Why an MCP layer
+
+Malcolm keeps all network metadata in one OpenSearch index (`arkime_sessions3-*`) with non-standard field names and its own filter syntax. An LLM asked to write raw OpenSearch DSL against that index gets it wrong more often than not. This server takes that job off the model:
+
+- It exposes Malcolm's filter syntax instead of raw DSL.
+- It provides field discovery so the model checks field names before it queries.
+- It provides value enumeration so the model sees what values a field actually holds.
+- It covers both field vocabularies. Arkime expressions take Arkime's own names (`ip.src`), the rest of Malcolm takes ECS names (`source.ip`), and Malcolm's own field list carries only the second set. `arkime_field_search` supplies the first.
+- It wraps Suricata alert queries and handles the field mapping (`suricata.alert.*` vs `rule.*`).
+- It adds NetBox asset context (IP-to-device, network segments).
+
+The failure mode this is built against is a quiet one. Malcolm answers a query
+against a field it does not index with an empty result rather than an error, so
+a model that guesses a plausible-but-wrong name reads "no such traffic" and
+moves on. When a search comes back empty, this server checks the fields the
+query named and reports the name Malcolm actually stores the value under. That
+lookup runs only after a result set is already empty, so nothing is added to
+the model's context on queries that worked.
+
+The write side follows the same idea. Rather than hand an agent the raw OpenSearch and NetBox passthroughs that Malcolm already leaves open to any authenticated user, this server exposes a small, named, audited set of write actions. More on that under [Security model](#security-model).
 
 ## Quick start
 
@@ -50,39 +72,8 @@ Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14,
 
 You need Python 3.11 or newer, a Malcolm instance with API access, and an HTTPS route to it.
 
-`pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the latest published release. A version number alone cannot tell you whether a checkout matches it — a tree carrying unreleased changes still reports the version of the last release — so install from source when you specifically want the code documented in this tree.
-
 ```bash
 pip install mcp-server-malcolm      # published release
-```
-
-From a checkout:
-
-```bash
-git clone https://github.com/nagameTW/mcp-server-malcolm.git
-cd mcp-server-malcolm
-pip install -e .
-```
-
-Or build a wheel and install it into a clean virtualenv, which is the path everything below was verified through:
-
-```bash
-$ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
-
-$ python3 -m venv /tmp/mcp-malcolm-deploy/venv
-$ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
-```
-
-That pulls 32 packages, most of them from `mcp>=2,<3` (resolved to `mcp 2.0.0`). The wheel itself is `py3-none-any`, pure Python; the compiled dependencies (`cryptography`, `pydantic-core`, `rpds-py`, `cffi`) all installed from prebuilt `manylinux_*_aarch64` wheels here, nothing compiled from source. PyPI publishes the same wheels for x86_64 and macOS. The macOS side has since been installed: 32 packages again, every compiled dependency from a prebuilt `macosx_11_0_arm64` wheel, nothing built from source, on Python 3.14.6. No install was run on x86_64, so treat that one as unverified.
-
-To run this branch without installing it anywhere permanent, point `uvx` or `pipx` at the checkout:
-
-```bash
-uvx --from /path/to/mcp-server-malcolm mcp-server-malcolm
-pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
 ```
 
 Check the install by starting the server with stdin closed. It prints its write-class banner, reaches EOF, and exits 0:
@@ -256,6 +247,39 @@ Only `arkime_tags` was toggled and counted this way. The other four classes rout
 A flag counts as on only for the exact string `true`, case-insensitive (`config.py:15`); anything else, including `1` and `yes`, leaves the class off. The startup banner is the check.
 
 The full flag list is in [Configuration reference](#configuration-reference).
+
+### Other ways to install
+
+`pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the latest published release. A version number alone cannot tell you whether a checkout matches it — a tree carrying unreleased changes still reports the version of the last release — so install from source when you specifically want the code documented in this tree.
+
+From a checkout:
+
+```bash
+git clone https://github.com/nagameTW/mcp-server-malcolm.git
+cd mcp-server-malcolm
+pip install -e .
+```
+
+Or build a wheel and install it into a clean virtualenv, which is the path the commands in this chapter were verified through:
+
+```bash
+$ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
+
+$ python3 -m venv /tmp/mcp-malcolm-deploy/venv
+$ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
+```
+
+That pulls 32 packages, most of them from `mcp>=2,<3` (resolved to `mcp 2.0.0`). The wheel itself is `py3-none-any`, pure Python; the compiled dependencies (`cryptography`, `pydantic-core`, `rpds-py`, `cffi`) all installed from prebuilt `manylinux_*_aarch64` wheels here, nothing compiled from source. PyPI publishes the same wheels for x86_64 and macOS. The macOS side has since been installed: 32 packages again, every compiled dependency from a prebuilt `macosx_11_0_arm64` wheel, nothing built from source, on Python 3.14.6. No install was run on x86_64, so treat that one as unverified.
+
+To run this branch without installing it anywhere permanent, point `uvx` or `pipx` at the checkout:
+
+```bash
+uvx --from /path/to/mcp-server-malcolm mcp-server-malcolm
+pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
+```
 
 ### Running it by hand
 
@@ -740,27 +764,6 @@ arkime_create_hunt(
   expression="ip==192.0.2.77"
 )
 ```
-
-## Why an MCP layer
-
-Malcolm keeps all network metadata in one OpenSearch index (`arkime_sessions3-*`) with non-standard field names and its own filter syntax. An LLM asked to write raw OpenSearch DSL against that index gets it wrong more often than not. This server takes that job off the model:
-
-- It exposes Malcolm's filter syntax instead of raw DSL.
-- It provides field discovery so the model checks field names before it queries.
-- It provides value enumeration so the model sees what values a field actually holds.
-- It covers both field vocabularies. Arkime expressions take Arkime's own names (`ip.src`), the rest of Malcolm takes ECS names (`source.ip`), and Malcolm's own field list carries only the second set. `arkime_field_search` supplies the first.
-- It wraps Suricata alert queries and handles the field mapping (`suricata.alert.*` vs `rule.*`).
-- It adds NetBox asset context (IP-to-device, network segments).
-
-The failure mode this is built against is a quiet one. Malcolm answers a query
-against a field it does not index with an empty result rather than an error, so
-a model that guesses a plausible-but-wrong name reads "no such traffic" and
-moves on. When a search comes back empty, this server checks the fields the
-query named and reports the name Malcolm actually stores the value under. That
-lookup runs only after a result set is already empty, so nothing is added to
-the model's context on queries that worked.
-
-The write side follows the same idea. Rather than hand an agent the raw OpenSearch and NetBox passthroughs that Malcolm already leaves open to any authenticated user, this server exposes a small, named, audited set of write actions. More on that under [Security model](#security-model).
 
 ## Protocol notes
 
