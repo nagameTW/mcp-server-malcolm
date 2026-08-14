@@ -339,6 +339,19 @@ Pick where the entry is stored with `-s`:
 | `user` | your own settings, every project | a Malcolm you use everywhere |
 | `project` | `.mcp.json` at the repo root, **committed to git** | sharing with a team — never put a password here |
 
+The password in that command is a literal, so it goes into your shell history, and for as long as `claude mcp add` runs it sits in `ps` where every other process on the host can read it. Read it in first and pass the variable:
+
+```bash
+read -rs MALCOLM_PASSWORD && export MALCOLM_PASSWORD
+claude mcp add malcolm \
+  -e MALCOLM_URL=https://malcolm.example \
+  -e MALCOLM_USERNAME=analyst \
+  -e MALCOLM_PASSWORD="$MALCOLM_PASSWORD" \
+  -- mcp-server-malcolm
+```
+
+`read -rs` keeps the typing off the screen, and the shell records the unexpanded `"$MALCOLM_PASSWORD"`, so history holds the variable name instead of the secret. The `ps` window during the `add` itself stays open, the same way `docker inspect` keeps a container's copy readable. Either route ends with the password in cleartext in `~/.claude.json`, mode 0600 on the machine this was checked on, so file permissions are the only thing protecting it there.
+
 `claude mcp get malcolm` prints the registered command and environment. Note that it prints `MALCOLM_PASSWORD` in cleartext, unmasked, so don't run it where the terminal is being recorded or shared.
 
 For a `project`-scope entry, keep the secret in each person's shell rather than in the file:
