@@ -6,6 +6,56 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-08-14
+
+Documentation and packaging. No tool, flag or wire behaviour changes, and a
+session sees the same 51 tools it did in 1.1.0.
+
+### Fixed
+
+- **Both READMEs still printed 1.0.2 after 1.1.0 shipped.** The build
+  transcript, the `pip install` line and both handshake blocks quoted the
+  previous release, so a reader comparing the version they had just installed
+  against the one the README shows could not tell which of the two was wrong.
+  This was the third copy of the version to drift, after `__version__` at 1.0.0
+  and `server.json` at 1.0.3, and it was the last one with no guard.
+  `test_version.py` now fails when a README quotes any version other than the
+  declared one, and also fails if its patterns stop matching anything, since a
+  guard that quietly finds nothing reads as a pass.
+- **The install check called `timeout`, which macOS does not ship.** `timeout 3
+  mcp-server-malcolm < /dev/null` answers `command not found` on a stock Mac,
+  on the one command whose job is to confirm the install worked. Stdin is
+  already at EOF, so nothing was holding the process open and the timeout was
+  doing no work; the check is now the bare command.
+
+### Changed
+
+- **The READMEs lead with Quick start, and carry a table of contents.** Quick
+  start used to begin 28% of the way down, behind the full 51-tool catalogue,
+  and step 1 offered five install routes before the reader reached the
+  registration command. Step 1 is now the published install and the check that
+  the server starts; the checkout, wheel, `uvx` and `pipx` routes moved to
+  Other ways to install, below the numbered steps. Trimming the read surface
+  now follows the tool catalogue rather than preceding it, since it names
+  groups a reader has not met yet. PyPI renders this README on the project page
+  with no outline control of its own, which is what the table of contents is
+  for.
+- **Registration says where the Malcolm password ends up.** A literal password
+  on the `claude mcp add` line lands in shell history and, while the command
+  runs, in `ps`; the value then sits in `~/.claude.json` in cleartext. That
+  section now shows the `read -rs` form and is explicit about what it does not
+  fix, matching how the container section already treats `docker inspect`.
+- macOS is no longer listed as an unverified install target. It was installed
+  from PyPI on macOS 26/arm64 under Python 3.14.6, 32 packages with every
+  compiled dependency arriving as a prebuilt wheel, then registered with a
+  client and exercised against a live Malcolm. x86_64 is still untested and
+  still says so.
+
+### Added
+
+- Python 3.14 in the CI matrix and in the package classifiers. It was the
+  current release, and the only supported version nothing ran against.
+
 ## [1.1.0] - 2026-08-11
 
 ### Added
@@ -780,7 +830,8 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.1.1...HEAD
+[1.1.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.1...v1.0.2
