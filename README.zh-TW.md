@@ -331,6 +331,19 @@ Removed MCP server malcolm-deploy-test from local config
 | `user` | 你個人的設定，所有專案都看得到 | 到哪都會用到的 Malcolm |
 | `project` | 專案根目錄的 `.mcp.json`，**會進 git** | 團隊共用，密碼絕對不要放這裡 |
 
+那行指令裡的密碼是字面值，所以它會進 shell history；而 `claude mcp add` 執行的那幾秒，主機上其他行程都能從 `ps` 讀到它。先把密碼讀進環境變數，改傳變數進去：
+
+```bash
+read -rs MALCOLM_PASSWORD && export MALCOLM_PASSWORD
+claude mcp add malcolm \
+  -e MALCOLM_URL=https://malcolm.example \
+  -e MALCOLM_USERNAME=analyst \
+  -e MALCOLM_PASSWORD="$MALCOLM_PASSWORD" \
+  -- mcp-server-malcolm
+```
+
+`read -rs` 讓輸入不顯示在畫面上，history 存下來的是還沒展開的 `"$MALCOLM_PASSWORD"`，不是密碼本身。`add` 執行當下的那個 `ps` 窗口關不掉，就像 `docker inspect` 讀得到容器裡那份一樣。不管走哪一條路，密碼最後都會以明文寫進 `~/.claude.json`（在檢查的這台機器上權限是 0600），在那裡保護它的就只有檔案權限。
+
 `claude mcp get malcolm` 會印出註冊的指令和環境變數。要注意它是把 `MALCOLM_PASSWORD` 以明文、未遮蔽地印出來，所以終端機正在錄影或分享時不要跑它。
 
 若要用 `project` scope 給團隊共用，把密碼留在各人的 shell 裡：
