@@ -239,7 +239,7 @@ Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原
 
 你不需要寫任何程式碼。MCP 客戶端（Claude Code、Claude Desktop、Cursor 等）會把這個 server 當子行程啟動，用 stdio 跟它溝通；你要做的只是告訴客戶端怎麼啟動它、以及要注入哪些憑證。
 
-這一章的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 與 macOS 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
+這一章的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。第 1 節的安裝和它的檢查指令，以及第 2 節的 Claude Code 註冊，另外在 macOS 26/arm64（Python 3.14.6）上對一台跑著的 Malcolm 25.12.1 再跑過一次。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
 
 ### 1. 安裝
 
@@ -261,15 +261,15 @@ pip install -e .
 
 ```bash
 $ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
 
 $ python3 -m venv /tmp/mcp-malcolm-deploy/venv
 $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
 ```
 
-這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel，但這兩個平台都沒有實際裝過，請當作未驗證。
+這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel。macOS 這邊後來裝過了：一樣 32 個套件，需要編譯的那幾個相依套件全部裝預先建好的 `macosx_11_0_arm64` wheel，沒有任何東西是從原始碼編的，跑在 Python 3.14.6。x86_64 沒有實際裝過，請當作未驗證。
 
 不想把這個 branch 永久裝到哪裡去，就把 `uvx` 或 `pipx` 指到 checkout：
 
@@ -281,7 +281,7 @@ pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
 把 stdin 關掉直接啟動 server，就能確認裝好了。它會印出 write class 橫幅、讀到 EOF、以 0 結束：
 
 ```bash
-$ timeout 3 mcp-server-malcolm < /dev/null
+$ mcp-server-malcolm < /dev/null
 [mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 $ echo $?
 0
@@ -331,6 +331,19 @@ Removed MCP server malcolm-deploy-test from local config
 | `user` | 你個人的設定，所有專案都看得到 | 到哪都會用到的 Malcolm |
 | `project` | 專案根目錄的 `.mcp.json`，**會進 git** | 團隊共用，密碼絕對不要放這裡 |
 
+那行指令裡的密碼是字面值，所以它會進 shell history；而 `claude mcp add` 執行的那幾秒，主機上其他行程都能從 `ps` 讀到它。先把密碼讀進環境變數，改傳變數進去：
+
+```bash
+read -rs MALCOLM_PASSWORD && export MALCOLM_PASSWORD
+claude mcp add malcolm \
+  -e MALCOLM_URL=https://malcolm.example \
+  -e MALCOLM_USERNAME=analyst \
+  -e MALCOLM_PASSWORD="$MALCOLM_PASSWORD" \
+  -- mcp-server-malcolm
+```
+
+`read -rs` 讓輸入不顯示在畫面上，history 存下來的是還沒展開的 `"$MALCOLM_PASSWORD"`，不是密碼本身。`add` 執行當下的那個 `ps` 窗口關不掉，就像 `docker inspect` 讀得到容器裡那份一樣。不管走哪一條路，密碼最後都會以明文寫進 `~/.claude.json`（在檢查的這台機器上權限是 0600），在那裡保護它的就只有檔案權限。
+
 `claude mcp get malcolm` 會印出註冊的指令和環境變數。要注意它是把 `MALCOLM_PASSWORD` 以明文、未遮蔽地印出來，所以終端機正在錄影或分享時不要跑它。
 
 若要用 `project` scope 給團隊共用，把密碼留在各人的 shell 裡：
@@ -374,7 +387,7 @@ write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
 
 ```
 protocol_version: 2025-11-25
-server_info:      name='mcp-server-malcolm' version='1.0.2'
+server_info:      name='mcp-server-malcolm' version='1.1.0'
 capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
 instructions:     3753 characters
 tools:            51
@@ -388,7 +401,7 @@ resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
 server/discover  capabilities: prompts, resources (subscribe=true), tools — all listChanged=true
                  cacheScope=private  ttlMs=0  resultType=complete
 tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=complete
-結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.0.2}
+結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.1.0}
 ```
 
 兩個世代對 `listChanged` 的說法不一致，而說多了的是新世代那邊：SDK 在那裡宣告 `listChanged=true`，但這個 server 在 `create_server()` 裡一次註冊完所有東西，從不送變更通知。這不會出事，因為不會變的清單也就無所謂沒有通知，但別把程式建立在那個承諾上。
