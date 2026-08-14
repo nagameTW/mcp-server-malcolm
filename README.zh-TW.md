@@ -12,228 +12,31 @@
 
 第一個給 [Malcolm](https://malcolm.fyi) 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。
 
-它讓任何支援 MCP 協定的 AI agent 都能用結構化工具存取 Malcolm：搜尋與聚合網路流量、探索欄位名稱、查詢 Suricata 告警、瀏覽 Arkime session、查詢 NetBox 資產、檢查系統健康。開啟 write class 之後，它還能建立告警、標記 session、發動 hunt、上傳 PCAP。
+它讓任何支援 MCP 協定的 AI agent 都能用結構化工具存取 Malcolm：搜尋與聚合網路流量、探索欄位名稱、查詢 Suricata 告警、瀏覽 Arkime session、查詢 NetBox 資產、檢查系統健康。開啟 write class 之後，它還能建立告警、標記 session、發動 hunt、上傳 PCAP。沒開之前，它就是唯讀的。
 
-## 預設唯讀，需要時再開
+## 目錄
 
-不做任何設定時，這個 server 只提供讀取工具。它就是個唯讀客戶端，做的任何事都不會動到 Malcolm 裡的資料。
-
-write 存取分成五個 class，各自有一個環境變數開關，預設全關。沒開的 class 不會被註冊，所以它的工具不會出現在 `list_tools()`，也叫不到。啟動時 server 會印出哪些 class 是開的：
-
-```
-[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
-```
-
-除了一個例外，每個 write 都是「新增」性質：例外是 `arkime_cancel_hunt`，它停掉的是進行中的 hunt 工作，不是新增內容。沒有任何工具會刪資料、移除 tag、或動到使用者帳號——這些是刻意不做的（見 [不做的事](#不做的事)）。
-
-## 精簡讀取工具
-
-51 個讀取工具預設全開，光是它們的 schema 就約 34,000 個 token，每個 session 在模型還沒問任何問題之前就先付掉。這個成本在大型前沿模型上還好，換成本地小模型就很痛。而且有一部分是白付的：沒裝 NetBox 的 Malcolm 永遠不會回應 `malcolm_netbox_*`，也有不少環境根本不想讓 agent 碰到 OpenSearch 的 alerting 設定。
-
-`MALCOLM_MCP_DISABLE_READ_GROUPS` 接一串以逗號分隔的 group 名稱，列到的就不註冊。被關掉的 group 不是隱藏起來——它的工具不會出現在 `tools/list`，跟關掉的 write class 一樣。
-
-| Group | 工具數 | Schema tokens | 內容 |
-| --- | --- | --- | --- |
-| `dsl` | 5 | ~2,300 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
-| `query` | 3 | ~2,350 | `malcolm_search`、`malcolm_aggregate`、`malcolm_alerts` |
-| `fields` | 3 | ~1,780 | 欄位探索——防幻覺那一層 |
-| `health` | 4 | ~1,730 | 服務狀態、資料涵蓋範圍、ping、dashboard 匯出 |
-| `netbox` | 3 | ~1,370 | NetBox 資產查詢 |
-| `arkime` | 11 | ~8,450 | Arkime session 搜尋與各個 SPI 分析 endpoint |
-| `arkime-content` | 5 | ~3,270 | PCAP、payload、依 hash 取檔 |
-| `correlation` | 1 | ~630 | `malcolm_related_sessions` |
-| `files` | 2 | ~2,160 | Zeek 檔案掃描結果與已擷取檔案下載 |
-| `arkime-inventory` | 7 | ~4,330 | 儲存的 view、shortcut、cron、擷取節點狀態、hunt 狀態 |
-| `dashboards` | 2 | ~1,890 | OpenSearch Dashboards 的 saved object |
-| `detections` | 5 | ~4,210 | Alerting monitor 與異常偵測器 |
-| **合計** | **51** | **~34,470** | |
-
-以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,470 token 降到約 22,690：
-
-```bash
--e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
-```
-
-```
-[mcp-server-malcolm] read groups disabled: arkime-inventory, dashboards, detections, netbox
-```
-
-只有真的關掉東西時才會印這行，所以少了哪個工具，都能回推到是哪個開關拿掉的。名稱對不上任何 group 會直接讓啟動失敗，而不是被忽略——打錯字卻讓那個 group 靜靜留著，正是這個檢查要擋的狀況：
-
-```
-ValueError: MALCOLM_MCP_DISABLE_READ_GROUPS: unknown read group(s) netboxx. Valid names: arkime, arkime-content, ...
-```
-
-有兩個 group 關掉之前要想清楚。`fields` 是擋住模型亂編欄位名稱的那一層，而 server 給模型的指示裡明寫了「查詢陌生欄位前先查名稱」；少了這個 group，指示講的工具就不存在了。`arkime` 裡有 `arkime_sessions`，那是唯一會回傳 session ID 的搜尋，關掉它等於同時抽掉每個 `arkime-content` 工具的輸入來源。
-
-## 為什麼要有 MCP 這一層
-
-Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_sessions3-*`），欄位名稱非標準，還有自己一套 filter 語法。要 LLM 直接對這個 index 寫 OpenSearch DSL，多半會寫錯。這個 server 把這件事從模型身上接過來：
-
-- 對外用 Malcolm 的 filter 語法，不是原生 DSL。
-- 提供欄位探索，讓模型查詢前先確認欄位名稱。
-- 提供欄位值列舉，讓模型看到欄位裡實際有哪些值。
-- 兩套欄位字彙都涵蓋。Arkime expression 吃 Arkime 自己的名稱（`ip.src`），Malcolm 其他地方吃 ECS 名稱（`source.ip`），而 Malcolm 自己的欄位清單只有後者。前者由 `arkime_field_search` 補上。
-- 封裝 Suricata 告警查詢，替它處理欄位映射（`suricata.alert.*` 對 `rule.*`）。
-- 補上 NetBox 資產上下文（IP 對應裝置、網段）。
-
-這一層真正要擋的失敗是無聲的那種。查一個 Malcolm 沒有索引的欄位，它不會報錯，只會回空結果；模型猜了個看似合理但錯誤的名稱，讀到的是「這種流量不存在」，然後就走掉了。所以當搜尋回空的時候，這個 server 會去比對查詢用到的欄位，把 Malcolm 實際存放該值的名稱回報出來。這個比對只在結果已經是空的之後才跑，查得到東西的時候不會多佔模型任何 context。
-
-write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開著的 OpenSearch、NetBox 原始 passthrough 直接交給 agent，不如只開一組具名、有稽核的 write 動作。細節見 [安全模型](#安全模型)。
-
-## 讀取工具
-
-以下全部預設註冊，不需要開任何 flag。要拿掉的話是以 group 為單位，每個 group 包含哪些工具見[精簡讀取工具](#精簡讀取工具)。
-
-### DSL 核心（與後端無關）
-
-對設定好的端點（Malcolm 的 `/mapi/opensearch` proxy）送純 OpenSearch DSL。不綁 Malcolm 專屬的查詢格式：把 base URL 改指到任何相容 OpenSearch 的後端，它們照樣能用。
-
-| 工具 | 說明 |
-|------|------|
-| `search_dsl` | 執行原生 OpenSearch DSL 查詢（hits + aggregations，無隱藏時間窗） |
-| `count` | 計算符合 DSL query 子句的文件數 |
-| `list_indices` | 列出 index（名稱/健康/狀態/文件數） |
-| `index_mapping` | 取得 index 的欄位 mapping/schema |
-| `cluster_health` | OpenSearch cluster 健康狀態 |
-
-### 核心查詢
-
-| 工具 | 說明 |
-|------|------|
-| `malcolm_search` | 用 Malcolm filter 語法搜尋網路流量文件 |
-| `malcolm_aggregate` | 依一個或多個欄位聚合流量（Top-N 計數） |
-| `malcolm_alerts` | 依 signature、severity、IP 搜尋 Suricata 告警 |
-
-### 欄位探索（防幻覺）
-
-| 工具 | 說明 |
-|------|------|
-| `malcolm_field_search` | 依關鍵字、前綴、型別搜尋可用欄位名稱 |
-| `malcolm_field_values` | 列出欄位的所有不同值 |
-| `malcolm_field_profile` | 顯示某欄位存在於哪些 `event.dataset` 類型 |
-| `arkime_field_search` | 搜尋 Arkime **expression** 能用的欄位名稱（[Arkime](#arkime) 一節也有列） |
-
-上面三個 `malcolm_*` 涵蓋的是 ECS 名稱，給 `malcolm_search`、`malcolm_aggregate` 和 DSL 工具用。凡是要放進 `expression` 參數的，得改用 `arkime_field_search`：Arkime 的 parser 只認 `ip.src`，會拒絕 `source.ip`，而 Malcolm 的 `/mapi/fields` 根本沒有列出 expression 名稱。
-
-### 系統健康
-
-| 工具 | 說明 |
-|------|------|
-| `malcolm_service_status` | 所有 Malcolm 服務的就緒狀態，加版本資訊 |
-| `malcolm_data_coverage` | 各 sensor 資料新鮮度、各 dataset 文件數、index 資訊 |
-| `malcolm_ping` | Malcolm API 的快速存活檢查 |
-
-### 資產上下文（NetBox）
-
-| 工具 | 說明 |
-|------|------|
-| `malcolm_netbox_lookup` | 查詢 IP、裝置或網段在 NetBox 的資料 |
-| `malcolm_netbox_sites` | 列出 NetBox 站點目錄（id、名稱、metadata） |
-| `malcolm_netbox_query` | 讀取其他 NetBox 端點（服務、VLAN、介面、VM、聯絡人） |
-
-### Arkime
-
-| 工具 | 說明 |
-|------|------|
-| `arkime_field_search` | 查詢 Arkime expression 能用的欄位名稱（`ip.src`、`port.dst`）——跟 `malcolm_field_search` 回傳的 ECS 名稱是兩套字彙 |
-| `arkime_sessions` | 用 Arkime expression 語法搜尋 session |
-| `arkime_sessions_summary` | 統計某個 expression 命中的 session、bytes、packets 總量，並依欄位列出細分——在跑貴的動作（例如 hunt）之前先估算範圍 |
-| `arkime_session_detail` | 抓單一 session 的全部欄位（完整 SPI 文件） |
-| `arkime_session_pcap` | 抓某 session 的 PCAP，回報大小與 magic 驗證結果（只回 metadata，不落地） |
-| `arkime_session_payload` | 讀出某個 session 解碼後的 payload——線路上實際傳輸的位元組，不是解析後的欄位（純文字，不是 JSON） |
-| `arkime_session_file_by_hash` | 依 md5/sha256 抓「這一個」session 帶的檔案（只回 metadata，不落地）——答案釘死在這個 session 上，跟會回傳最近一次相符 session 的 `arkime_file_by_hash` 不同 |
-| `arkime_unique` | 列出某欄位的不重複值，可帶計數 |
-| `arkime_multiunique` | 跨多個欄位的不重複值組合（例如 src.ip + dst.port 配對） |
-| `arkime_spigraph` | 某欄位的 top 值加時序圖 |
-| `arkime_spiview` | 一次看多個欄位的值分布 |
-| `arkime_spigraphhierarchy` | 跨欄位的階層式 top-N 分解（巢狀 drill-down） |
-| `arkime_connections` | 來源/目的連線圖（nodes 與 links） |
-| `arkime_file_by_hash` | 依 md5/sha256 萃取傳輸過的檔案（只回 metadata，不落地） |
-| `arkime_sessions_csv` | 把 session 匯出成精簡 CSV 表（同樣的資料，token 大約是 JSON 的一半） |
-| `arkime_build_query` | 把 Arkime expression 編譯成它對應的 OpenSearch DSL，但不執行——把結果交給 `search_dsl`，處理 Arkime 語法表達不出來的子句 |
-
-### Arkime 儲存物件與擷取健康度
-
-| 工具 | 說明 |
-|------|------|
-| `arkime_views` | 列出團隊存下來的搜尋 view，附各自的 expression |
-| `arkime_shortcuts` | 列出具名值清單（IOC 集合）與內容，並給出在 expression 裡引用的 `$name` |
-| `arkime_crons` | 列出 Arkime 的 cron query——排程重跑的搜尋，用來解釋 session 上莫名其妙的 tag 是哪來的 |
-| `arkime_reverse_dns` | 把單一 IP 反解成 PTR 主機名 |
-| `arkime_pcap_files` | 列出 Arkime 已索引的 PCAP 檔，含大小、封包/session 數與時間範圍 |
-| `arkime_node_stats` | 擷取節點健康度：丟包、磁碟、記憶體、佇列——節點正在丟包時會特別警告，因為那會讓「資料缺口」看起來像「沒有這種流量」 |
-| `arkime_hunt_status` | 列出 Arkime hunt 作業與其進度——排隊中、執行中或已完成。不受 write class 管制：只讀作業狀態，所以就算 write class 全關也拿得到（它屬於 `arkime-inventory` 讀取 group） |
-
-Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表頭有 9 欄、資料列只有 7 欄，所以第二欄之後全部對錯位置。同樣的問題用 `arkime_connections` 問，答案是對的。
-
-### 檔案分析
-
-| 工具 | 說明 |
-|------|------|
-| `malcolm_file_scans` | 列出 Zeek 從流量裡切出來的檔案——檔名、MIME type、大小、md5/sha256、來源與目的、Malcolm 的 severity，以及 Strelka/YARA/ClamAV 的掃描命中 |
-| `malcolm_extract_file` | 從 Malcolm 的 extracted-files server 抓一個切出來的檔案，回報大小、sha256、file-magic（只回 metadata，不落地） |
-
-`malcolm_file_scans` 讀的是 Zeek 對每次檔案傳輸的記錄，不需要開檔案萃取。要拿到檔案本身才需要：`malcolm_extract_file` 需要 `ZEEK_EXTRACTOR_MODE` 有設、extracted-files HTTP server 開著（`FILESCAN_HTTP_SERVER_ENABLE`），而掃描結果那幾個欄位只有跑 Strelka 才會有。切出來的檔案可能就是活的惡意程式，所以檔案內容不會進到 MCP 回應裡。
-
-### 關聯與匯出
-
-| 工具 | 說明 |
-|------|------|
-| `malcolm_related_sessions` | 找出與某個 Zeek UID 相關的所有 session |
-| `malcolm_saved_objects` | 找出這套 Malcolm 內建的 dashboard、visualization 與 saved search（111 個 dashboard，不含各自好幾 KB 的版面配置 JSON） |
-| `malcolm_saved_object_detail` | 讀出單一 saved object 已經解析好的 query、filter 與 index pattern——把 saved search 或 visualization 背後的 KQL/Lucene 字串挖出來 |
-| `malcolm_dashboard_export` | 把 OpenSearch Dashboards 的 saved object 匯出成 JSON |
-| `malcolm_alerting_monitors` | 列出 OpenSearch alerting monitor、各自在監看什麼、以及有沒有觸發過——全部都停用時會特別標明 |
-| `malcolm_alerting_alerts` | 列出 OpenSearch alerting monitor 實際觸發過的告警，涵蓋所有生命週期狀態（ACTIVE、ACKNOWLEDGED、COMPLETED、ERROR、DELETED） |
-| `malcolm_alerting_monitor_detail` | 讀出單一 alerting monitor 完整的 query 與觸發條件——分辨一個 monitor 是「在看但沒事」還是「條件根本打不到」 |
-| `malcolm_anomaly_detectors` | 列出 anomaly detector、各自在建模什麼、以及累積了多少異常——從來沒有記錄過異常時會特別標明 |
-| `malcolm_anomaly_results` | 讀出某個 anomaly detector 在一段時間窗內判定為異常的實體，按嚴重度排序——時間窗是 epoch MILLISECONDS，跟其他 `arkime_*` 工具不同 |
-
-其中 15 個會自行組出回傳內容的工具（檔案、Arkime inventory、Dashboards 那幾組）有宣告 typed return，所以客戶端除了文字之外還會拿到 `structuredContent`。其餘的工具是把上游回應原樣透傳，沒有形狀可以宣告。
-
-## Write 工具（需自行開啟）
-
-每個 class 把它的開關設成 `true` 才會啟用。你不開，這裡什麼都不會跑。
-
-| Class | 開關 | 工具 | 端點 |
-|-------|------|------|------|
-| alerting | `MALCOLM_MCP_ENABLE_ALERTING` | `malcolm_create_alert` | `POST /mapi/event` |
-| arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
-| hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`、`arkime_cancel_hunt` | `POST /arkime/api/hunt`、`PUT /arkime/api/hunt/<id>/cancel` |
-| pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /server/php/submit.php` |
-| arkime-view | `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `arkime_create_view`、`arkime_create_shortcut` | `POST /arkime/api/view`、`POST /arkime/api/shortcut` |
-
-- **alerting**：`malcolm_create_alert` 把分析師或 agent 產出的發現，寫成一筆能在 Malcolm dashboard 看到的告警文件。它走 `/mapi/event`，這是 Malcolm 自己設計的 write 端點，也是其他 class 效法的範本。
-- **arkime-tag**：`arkime_add_tags` 幫 session 加 tag，只加不減。移除 tag 需要更高的 Arkime 角色和另一套安全設計，所以延後。
-- **hunt-job**：`arkime_create_hunt` 發動一個跨 PCAP 的封包搜尋（很吃資源，所以先把查詢範圍縮小）。`arkime_cancel_hunt` 停掉一個排隊中或執行中的 hunt——不是新增性質，被取消的掃描沒辦法續跑。作業進度用 `arkime_hunt_status` 讀，它現在是讀取工具，這個 class 關著也拿得到（見 [Arkime 儲存物件與擷取健康度](#arkime-儲存物件與擷取健康度)）。
-- **pcap-upload**：`malcolm_upload_pcap` 把本機的封包檔送進 Malcolm 做 ingestion，並在客戶端擋一道大小上限。檔案必須位於 `MALCOLM_MCP_UPLOAD_DIR` 內；若這個 staging 目錄未設定，一律拒絕上傳，讓這個工具不可能被誘導去讀主機上的任意檔案。
-- **arkime-view**：`arkime_create_view` 存一個具名的搜尋 expression，`arkime_create_shortcut` 存一個具名的值清單（IOC 集合），在 expression 裡用 `$name` 引用。兩者都是 additive — 讓 agent 把 hunting 知識留給人類團隊，不刪除也不覆寫。
-
-每個 write 工具都帶著 MCP annotation `readOnlyHint: false`，讓 MCP 客戶端能在呼叫前套自己的確認步驟。`destructiveHint` 在每個新增性質的 write 上是 `false`，唯一的例外是 `arkime_cancel_hunt`——它停掉的是進行中的工作，不是新增內容，所以標成 `true`。
-
-## 安全模型
-
-Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原始 OpenSearch（`/mapi/opensearch/*`）和整套 NetBox CRUD（`/mapi/netbox/*`）。這兩條都是不做 HTTP 動詞過濾的裸 reverse-proxy；Malcolm 自己的唯讀模式是把它們整條拿掉，而不是去過濾。在常見的驗證模式下，「登入了」就等於拿到 admin 等級權限。
-
-在這裡開一個 write class，並不是打開一扇原本關著的門。那扇門在平台層早就開著。這個 server 給你一條規劃過的路走進去：
-
-- 一組具名的 write 動作，而不是裸 passthrough。
-- 預設全關，一次開一個 class。
-- 每次 write 嘗試都有一行稽核。
-- 帶 MCP annotation，讓客戶端能要求確認。
-
-原始 OpenSearch 和 NetBox 的 write passthrough，這個 server 一律不開，開關後面也沒有。把這個介面收斂好，就是這個 server 要做的事。
-
-## 稽核
-
-每次 write 嘗試都吐一行 JSON，成功失敗都吐：
-
-```json
-{"ts": "2026-07-06T09:12:44Z", "tool": "arkime_add_tags", "class": "arkime-tag", "target": "ids=240601-abc", "params": {"tags": "suspicious"}, "outcome": "ok"}
-```
-
-`outcome` 是 `ok`、`http_4xx`、`http_5xx`、或 `error:<type>` 其中之一。過長的參數值會被截斷，PCAP bytes 永遠不進 log。sink 預設是 stderr；設 `MALCOLM_MCP_AUDIT_FILE` 就改成 append 到檔案。讀取工具不稽核。
+- [快速開始](#快速開始)
+  - [1. 安裝](#1-安裝)
+  - [2. 註冊到你的客戶端](#2-註冊到你的客戶端)
+  - [3. 連線設定](#3-連線設定)
+  - [4. 開啟 write 工具（選用）](#4-開啟-write-工具選用)
+- [預設唯讀，需要時再開](#預設唯讀需要時再開)
+- [讀取工具](#讀取工具)
+- [Write 工具（需自行開啟）](#write-工具需自行開啟)
+- [精簡讀取工具](#精簡讀取工具)
+- [安全模型](#安全模型)
+- [稽核](#稽核)
+- [Python（直接 import）](#python直接-import)
+- [Malcolm Filter 語法](#malcolm-filter-語法)
+- [範例](#範例)
+- [為什麼要有 MCP 這一層](#為什麼要有-mcp-這一層)
+- [協定細節](#協定細節)
+- [設定參考](#設定參考)
+- [對你自己的 Malcolm 做驗證](#對你自己的-malcolm-做驗證)
+- [用到的 Malcolm API 端點](#用到的-malcolm-api-端點)
+- [不做的事](#不做的事)
+- [授權](#授權)
 
 ## 快速開始
 
@@ -242,6 +45,8 @@ Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原
 這一章的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。第 1 節的安裝和它的檢查指令，以及第 2 節的 Claude Code 註冊，另外在 macOS 26/arm64（Python 3.14.6）上對一台跑著的 Malcolm 25.12.1 再跑過一次。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
 
 ### 1. 安裝
+
+你需要 Python 3.11 以上、一台開了 API 的 Malcolm，以及連得到它的 HTTPS 網路。
 
 `pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是最新的已發布 release。光看版號沒辦法判斷手上的 checkout 跟它是不是同一份——帶著未發布變更的樹，回報的仍然是上一次發版的版號——所以要拿到這份文件寫的這棵樹，就從原始碼裝。
 
@@ -381,33 +186,6 @@ claude mcp add malcolm \
 
 如果 `mcp-server-malcolm` 不在客戶端看得到的 `PATH` 上（用 virtualenv 時很常見），改填執行檔的絕對路徑：`/path/to/.venv/bin/mcp-server-malcolm`。
 
-**客戶端連上時看到什麼。**這個 server 兩個協定世代都服務，拿到哪一個由客戶端的第一個請求決定，不是這裡的任何設定。以 `initialize` 開場的客戶端走交握世代；第一個請求在 `_meta` 裡帶 `io.modelcontextprotocol/protocolVersion` 的客戶端走 2026-07-28 無狀態世代，完全沒有交握。這條分流在 SDK 的 `serve_dual_era_loop` 裡，這個專案沒有設定它。
-
-write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
-
-```
-protocol_version: 2025-11-25
-server_info:      name='mcp-server-malcolm' version='1.1.0'
-capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
-instructions:     3753 characters
-tools:            51
-prompts:          1  — hunt_workflow
-resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
-```
-
-2025-11-25 是交握世代的天花板，不是這個 server 的天花板：`initialize` 在 2026-07-28 根本不存在，所以透過它量測只可能量到比較舊的那個數字。2026-07-28 的客戶端不送交握，改呼叫 `server/discover`：
-
-```
-server/discover  capabilities: prompts, resources (subscribe=true), tools — all listChanged=true
-                 cacheScope=private  ttlMs=0  resultType=complete
-tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=complete
-結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.1.0}
-```
-
-兩個世代對 `listChanged` 的說法不一致，而說多了的是新世代那邊：SDK 在那裡宣告 `listChanged=true`，但這個 server 在 `create_server()` 裡一次註冊完所有東西，從不送變更通知。這不會出事，因為不會變的清單也就無所謂沒有通知，但別把程式建立在那個承諾上。
-
-在這套部署上，Arkime 那個 resource 送出 724,261 個字元，涵蓋 4,051 個 expression 欄位。要拿 SDK 寫腳本的人有一個地方要留意：`mcp` 2.x 用的是 snake_case 屬性（`protocol_version`、`server_info`、`is_error`），不是 wire protocol 和 1.x SDK 的 camelCase。照 `serverInfo`/`isError` 寫的腳本會拋 `AttributeError`。
-
 ### 3. 連線設定
 
 底下的預設值就是 `MalcolmClient.from_env` 讀到的（`client.py:294-304`）。
@@ -525,9 +303,213 @@ docker run -i --rm --network host \
 
 `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` 是唯一需要 bind mount 的功能，因為 `malcolm_upload_pcap` 要讀的檔案必須已經位於 `MALCOLM_MCP_UPLOAD_DIR` 內。掛到那裡的主機目錄，得讓容器內的 uid 10001 讀得到。這一條是從 `tools/write/pcap_upload.py` 讀出來的，沒有實測——整個測試過程 write class 都是關著的。
 
-## 使用方式
+## 預設唯讀，需要時再開
 
-### Python（直接 import）
+不做任何設定時，這個 server 只提供讀取工具。它就是個唯讀客戶端，做的任何事都不會動到 Malcolm 裡的資料。
+
+write 存取分成五個 class，各自有一個環境變數開關，預設全關。沒開的 class 不會被註冊，所以它的工具不會出現在 `list_tools()`，也叫不到。啟動時 server 會印出哪些 class 是開的：
+
+```
+[mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
+```
+
+除了一個例外，每個 write 都是「新增」性質：例外是 `arkime_cancel_hunt`，它停掉的是進行中的 hunt 工作，不是新增內容。沒有任何工具會刪資料、移除 tag、或動到使用者帳號——這些是刻意不做的（見 [不做的事](#不做的事)）。
+
+## 讀取工具
+
+以下全部預設註冊，不需要開任何 flag。要拿掉的話是以 group 為單位，每個 group 包含哪些工具見[精簡讀取工具](#精簡讀取工具)。
+
+### DSL 核心（與後端無關）
+
+對設定好的端點（Malcolm 的 `/mapi/opensearch` proxy）送純 OpenSearch DSL。不綁 Malcolm 專屬的查詢格式：把 base URL 改指到任何相容 OpenSearch 的後端，它們照樣能用。
+
+| 工具 | 說明 |
+|------|------|
+| `search_dsl` | 執行原生 OpenSearch DSL 查詢（hits + aggregations，無隱藏時間窗） |
+| `count` | 計算符合 DSL query 子句的文件數 |
+| `list_indices` | 列出 index（名稱/健康/狀態/文件數） |
+| `index_mapping` | 取得 index 的欄位 mapping/schema |
+| `cluster_health` | OpenSearch cluster 健康狀態 |
+
+### 核心查詢
+
+| 工具 | 說明 |
+|------|------|
+| `malcolm_search` | 用 Malcolm filter 語法搜尋網路流量文件 |
+| `malcolm_aggregate` | 依一個或多個欄位聚合流量（Top-N 計數） |
+| `malcolm_alerts` | 依 signature、severity、IP 搜尋 Suricata 告警 |
+
+### 欄位探索（防幻覺）
+
+| 工具 | 說明 |
+|------|------|
+| `malcolm_field_search` | 依關鍵字、前綴、型別搜尋可用欄位名稱 |
+| `malcolm_field_values` | 列出欄位的所有不同值 |
+| `malcolm_field_profile` | 顯示某欄位存在於哪些 `event.dataset` 類型 |
+| `arkime_field_search` | 搜尋 Arkime **expression** 能用的欄位名稱（[Arkime](#arkime) 一節也有列） |
+
+上面三個 `malcolm_*` 涵蓋的是 ECS 名稱，給 `malcolm_search`、`malcolm_aggregate` 和 DSL 工具用。凡是要放進 `expression` 參數的，得改用 `arkime_field_search`：Arkime 的 parser 只認 `ip.src`，會拒絕 `source.ip`，而 Malcolm 的 `/mapi/fields` 根本沒有列出 expression 名稱。
+
+### 系統健康
+
+| 工具 | 說明 |
+|------|------|
+| `malcolm_service_status` | 所有 Malcolm 服務的就緒狀態，加版本資訊 |
+| `malcolm_data_coverage` | 各 sensor 資料新鮮度、各 dataset 文件數、index 資訊 |
+| `malcolm_ping` | Malcolm API 的快速存活檢查 |
+
+### 資產上下文（NetBox）
+
+| 工具 | 說明 |
+|------|------|
+| `malcolm_netbox_lookup` | 查詢 IP、裝置或網段在 NetBox 的資料 |
+| `malcolm_netbox_sites` | 列出 NetBox 站點目錄（id、名稱、metadata） |
+| `malcolm_netbox_query` | 讀取其他 NetBox 端點（服務、VLAN、介面、VM、聯絡人） |
+
+### Arkime
+
+| 工具 | 說明 |
+|------|------|
+| `arkime_field_search` | 查詢 Arkime expression 能用的欄位名稱（`ip.src`、`port.dst`）——跟 `malcolm_field_search` 回傳的 ECS 名稱是兩套字彙 |
+| `arkime_sessions` | 用 Arkime expression 語法搜尋 session |
+| `arkime_sessions_summary` | 統計某個 expression 命中的 session、bytes、packets 總量，並依欄位列出細分——在跑貴的動作（例如 hunt）之前先估算範圍 |
+| `arkime_session_detail` | 抓單一 session 的全部欄位（完整 SPI 文件） |
+| `arkime_session_pcap` | 抓某 session 的 PCAP，回報大小與 magic 驗證結果（只回 metadata，不落地） |
+| `arkime_session_payload` | 讀出某個 session 解碼後的 payload——線路上實際傳輸的位元組，不是解析後的欄位（純文字，不是 JSON） |
+| `arkime_session_file_by_hash` | 依 md5/sha256 抓「這一個」session 帶的檔案（只回 metadata，不落地）——答案釘死在這個 session 上，跟會回傳最近一次相符 session 的 `arkime_file_by_hash` 不同 |
+| `arkime_unique` | 列出某欄位的不重複值，可帶計數 |
+| `arkime_multiunique` | 跨多個欄位的不重複值組合（例如 src.ip + dst.port 配對） |
+| `arkime_spigraph` | 某欄位的 top 值加時序圖 |
+| `arkime_spiview` | 一次看多個欄位的值分布 |
+| `arkime_spigraphhierarchy` | 跨欄位的階層式 top-N 分解（巢狀 drill-down） |
+| `arkime_connections` | 來源/目的連線圖（nodes 與 links） |
+| `arkime_file_by_hash` | 依 md5/sha256 萃取傳輸過的檔案（只回 metadata，不落地） |
+| `arkime_sessions_csv` | 把 session 匯出成精簡 CSV 表（同樣的資料，token 大約是 JSON 的一半） |
+| `arkime_build_query` | 把 Arkime expression 編譯成它對應的 OpenSearch DSL，但不執行——把結果交給 `search_dsl`，處理 Arkime 語法表達不出來的子句 |
+
+### Arkime 儲存物件與擷取健康度
+
+| 工具 | 說明 |
+|------|------|
+| `arkime_views` | 列出團隊存下來的搜尋 view，附各自的 expression |
+| `arkime_shortcuts` | 列出具名值清單（IOC 集合）與內容，並給出在 expression 裡引用的 `$name` |
+| `arkime_crons` | 列出 Arkime 的 cron query——排程重跑的搜尋，用來解釋 session 上莫名其妙的 tag 是哪來的 |
+| `arkime_reverse_dns` | 把單一 IP 反解成 PTR 主機名 |
+| `arkime_pcap_files` | 列出 Arkime 已索引的 PCAP 檔，含大小、封包/session 數與時間範圍 |
+| `arkime_node_stats` | 擷取節點健康度：丟包、磁碟、記憶體、佇列——節點正在丟包時會特別警告，因為那會讓「資料缺口」看起來像「沒有這種流量」 |
+| `arkime_hunt_status` | 列出 Arkime hunt 作業與其進度——排隊中、執行中或已完成。不受 write class 管制：只讀作業狀態，所以就算 write class 全關也拿得到（它屬於 `arkime-inventory` 讀取 group） |
+
+Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表頭有 9 欄、資料列只有 7 欄，所以第二欄之後全部對錯位置。同樣的問題用 `arkime_connections` 問，答案是對的。
+
+### 檔案分析
+
+| 工具 | 說明 |
+|------|------|
+| `malcolm_file_scans` | 列出 Zeek 從流量裡切出來的檔案——檔名、MIME type、大小、md5/sha256、來源與目的、Malcolm 的 severity，以及 Strelka/YARA/ClamAV 的掃描命中 |
+| `malcolm_extract_file` | 從 Malcolm 的 extracted-files server 抓一個切出來的檔案，回報大小、sha256、file-magic（只回 metadata，不落地） |
+
+`malcolm_file_scans` 讀的是 Zeek 對每次檔案傳輸的記錄，不需要開檔案萃取。要拿到檔案本身才需要：`malcolm_extract_file` 需要 `ZEEK_EXTRACTOR_MODE` 有設、extracted-files HTTP server 開著（`FILESCAN_HTTP_SERVER_ENABLE`），而掃描結果那幾個欄位只有跑 Strelka 才會有。切出來的檔案可能就是活的惡意程式，所以檔案內容不會進到 MCP 回應裡。
+
+### 關聯與匯出
+
+| 工具 | 說明 |
+|------|------|
+| `malcolm_related_sessions` | 找出與某個 Zeek UID 相關的所有 session |
+| `malcolm_saved_objects` | 找出這套 Malcolm 內建的 dashboard、visualization 與 saved search（111 個 dashboard，不含各自好幾 KB 的版面配置 JSON） |
+| `malcolm_saved_object_detail` | 讀出單一 saved object 已經解析好的 query、filter 與 index pattern——把 saved search 或 visualization 背後的 KQL/Lucene 字串挖出來 |
+| `malcolm_dashboard_export` | 把 OpenSearch Dashboards 的 saved object 匯出成 JSON |
+| `malcolm_alerting_monitors` | 列出 OpenSearch alerting monitor、各自在監看什麼、以及有沒有觸發過——全部都停用時會特別標明 |
+| `malcolm_alerting_alerts` | 列出 OpenSearch alerting monitor 實際觸發過的告警，涵蓋所有生命週期狀態（ACTIVE、ACKNOWLEDGED、COMPLETED、ERROR、DELETED） |
+| `malcolm_alerting_monitor_detail` | 讀出單一 alerting monitor 完整的 query 與觸發條件——分辨一個 monitor 是「在看但沒事」還是「條件根本打不到」 |
+| `malcolm_anomaly_detectors` | 列出 anomaly detector、各自在建模什麼、以及累積了多少異常——從來沒有記錄過異常時會特別標明 |
+| `malcolm_anomaly_results` | 讀出某個 anomaly detector 在一段時間窗內判定為異常的實體，按嚴重度排序——時間窗是 epoch MILLISECONDS，跟其他 `arkime_*` 工具不同 |
+
+其中 15 個會自行組出回傳內容的工具（檔案、Arkime inventory、Dashboards 那幾組）有宣告 typed return，所以客戶端除了文字之外還會拿到 `structuredContent`。其餘的工具是把上游回應原樣透傳，沒有形狀可以宣告。
+
+## Write 工具（需自行開啟）
+
+每個 class 把它的開關設成 `true` 才會啟用。你不開，這裡什麼都不會跑。
+
+| Class | 開關 | 工具 | 端點 |
+|-------|------|------|------|
+| alerting | `MALCOLM_MCP_ENABLE_ALERTING` | `malcolm_create_alert` | `POST /mapi/event` |
+| arkime-tag | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `arkime_add_tags` | `POST /arkime/api/sessions/addtags` |
+| hunt-job | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `arkime_create_hunt`、`arkime_cancel_hunt` | `POST /arkime/api/hunt`、`PUT /arkime/api/hunt/<id>/cancel` |
+| pcap-upload | `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` | `malcolm_upload_pcap` | `POST /server/php/submit.php` |
+| arkime-view | `MALCOLM_MCP_ENABLE_ARKIME_VIEWS` | `arkime_create_view`、`arkime_create_shortcut` | `POST /arkime/api/view`、`POST /arkime/api/shortcut` |
+
+- **alerting**：`malcolm_create_alert` 把分析師或 agent 產出的發現，寫成一筆能在 Malcolm dashboard 看到的告警文件。它走 `/mapi/event`，這是 Malcolm 自己設計的 write 端點，也是其他 class 效法的範本。
+- **arkime-tag**：`arkime_add_tags` 幫 session 加 tag，只加不減。移除 tag 需要更高的 Arkime 角色和另一套安全設計，所以延後。
+- **hunt-job**：`arkime_create_hunt` 發動一個跨 PCAP 的封包搜尋（很吃資源，所以先把查詢範圍縮小）。`arkime_cancel_hunt` 停掉一個排隊中或執行中的 hunt——不是新增性質，被取消的掃描沒辦法續跑。作業進度用 `arkime_hunt_status` 讀，它現在是讀取工具，這個 class 關著也拿得到（見 [Arkime 儲存物件與擷取健康度](#arkime-儲存物件與擷取健康度)）。
+- **pcap-upload**：`malcolm_upload_pcap` 把本機的封包檔送進 Malcolm 做 ingestion，並在客戶端擋一道大小上限。檔案必須位於 `MALCOLM_MCP_UPLOAD_DIR` 內；若這個 staging 目錄未設定，一律拒絕上傳，讓這個工具不可能被誘導去讀主機上的任意檔案。
+- **arkime-view**：`arkime_create_view` 存一個具名的搜尋 expression，`arkime_create_shortcut` 存一個具名的值清單（IOC 集合），在 expression 裡用 `$name` 引用。兩者都是 additive — 讓 agent 把 hunting 知識留給人類團隊，不刪除也不覆寫。
+
+每個 write 工具都帶著 MCP annotation `readOnlyHint: false`，讓 MCP 客戶端能在呼叫前套自己的確認步驟。`destructiveHint` 在每個新增性質的 write 上是 `false`，唯一的例外是 `arkime_cancel_hunt`——它停掉的是進行中的工作，不是新增內容，所以標成 `true`。
+
+## 精簡讀取工具
+
+51 個讀取工具預設全開，光是它們的 schema 就約 34,000 個 token，每個 session 在模型還沒問任何問題之前就先付掉。這個成本在大型前沿模型上還好，換成本地小模型就很痛。而且有一部分是白付的：沒裝 NetBox 的 Malcolm 永遠不會回應 `malcolm_netbox_*`，也有不少環境根本不想讓 agent 碰到 OpenSearch 的 alerting 設定。
+
+`MALCOLM_MCP_DISABLE_READ_GROUPS` 接一串以逗號分隔的 group 名稱，列到的就不註冊。被關掉的 group 不是隱藏起來——它的工具不會出現在 `tools/list`，跟關掉的 write class 一樣。
+
+| Group | 工具數 | Schema tokens | 內容 |
+| --- | --- | --- | --- |
+| `dsl` | 5 | ~2,300 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
+| `query` | 3 | ~2,350 | `malcolm_search`、`malcolm_aggregate`、`malcolm_alerts` |
+| `fields` | 3 | ~1,780 | 欄位探索——防幻覺那一層 |
+| `health` | 4 | ~1,730 | 服務狀態、資料涵蓋範圍、ping、dashboard 匯出 |
+| `netbox` | 3 | ~1,370 | NetBox 資產查詢 |
+| `arkime` | 11 | ~8,450 | Arkime session 搜尋與各個 SPI 分析 endpoint |
+| `arkime-content` | 5 | ~3,270 | PCAP、payload、依 hash 取檔 |
+| `correlation` | 1 | ~630 | `malcolm_related_sessions` |
+| `files` | 2 | ~2,160 | Zeek 檔案掃描結果與已擷取檔案下載 |
+| `arkime-inventory` | 7 | ~4,330 | 儲存的 view、shortcut、cron、擷取節點狀態、hunt 狀態 |
+| `dashboards` | 2 | ~1,890 | OpenSearch Dashboards 的 saved object |
+| `detections` | 5 | ~4,210 | Alerting monitor 與異常偵測器 |
+| **合計** | **51** | **~34,470** | |
+
+以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,470 token 降到約 22,690：
+
+```bash
+-e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
+```
+
+```
+[mcp-server-malcolm] read groups disabled: arkime-inventory, dashboards, detections, netbox
+```
+
+只有真的關掉東西時才會印這行，所以少了哪個工具，都能回推到是哪個開關拿掉的。名稱對不上任何 group 會直接讓啟動失敗，而不是被忽略——打錯字卻讓那個 group 靜靜留著，正是這個檢查要擋的狀況：
+
+```
+ValueError: MALCOLM_MCP_DISABLE_READ_GROUPS: unknown read group(s) netboxx. Valid names: arkime, arkime-content, ...
+```
+
+有兩個 group 關掉之前要想清楚。`fields` 是擋住模型亂編欄位名稱的那一層，而 server 給模型的指示裡明寫了「查詢陌生欄位前先查名稱」；少了這個 group，指示講的工具就不存在了。`arkime` 裡有 `arkime_sessions`，那是唯一會回傳 session ID 的搜尋，關掉它等於同時抽掉每個 `arkime-content` 工具的輸入來源。
+
+## 安全模型
+
+Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原始 OpenSearch（`/mapi/opensearch/*`）和整套 NetBox CRUD（`/mapi/netbox/*`）。這兩條都是不做 HTTP 動詞過濾的裸 reverse-proxy；Malcolm 自己的唯讀模式是把它們整條拿掉，而不是去過濾。在常見的驗證模式下，「登入了」就等於拿到 admin 等級權限。
+
+在這裡開一個 write class，並不是打開一扇原本關著的門。那扇門在平台層早就開著。這個 server 給你一條規劃過的路走進去：
+
+- 一組具名的 write 動作，而不是裸 passthrough。
+- 預設全關，一次開一個 class。
+- 每次 write 嘗試都有一行稽核。
+- 帶 MCP annotation，讓客戶端能要求確認。
+
+原始 OpenSearch 和 NetBox 的 write passthrough，這個 server 一律不開，開關後面也沒有。把這個介面收斂好，就是這個 server 要做的事。
+
+## 稽核
+
+每次 write 嘗試都吐一行 JSON，成功失敗都吐：
+
+```json
+{"ts": "2026-07-06T09:12:44Z", "tool": "arkime_add_tags", "class": "arkime-tag", "target": "ids=240601-abc", "params": {"tags": "suspicious"}, "outcome": "ok"}
+```
+
+`outcome` 是 `ok`、`http_4xx`、`http_5xx`、或 `error:<type>` 其中之一。過長的參數值會被截斷，PCAP bytes 永遠不進 log。sink 預設是 stderr；設 `MALCOLM_MCP_AUDIT_FILE` 就改成 append 到檔案。讀取工具不稽核。
+
+## Python（直接 import）
 
 `MalcolmClient` 可以單獨拿來用：不需要 MCP 客戶端、不需要 server 行程，迴圈裡也沒有 `mcp` 那一層傳輸。`mcp_server_malcolm` 的 `__all__` 是 `["MalcolmClient", "__version__"]`，而這一個 class 帶著 62 個 public method，涵蓋整個讀取面。這一節的每樣東西都是用這棵樹建出來的 wheel、對著跑著的 Malcolm v26.07.1 實際跑出來的。
 
@@ -754,6 +736,52 @@ arkime_create_hunt(
 )
 ```
 
+## 為什麼要有 MCP 這一層
+
+Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_sessions3-*`），欄位名稱非標準，還有自己一套 filter 語法。要 LLM 直接對這個 index 寫 OpenSearch DSL，多半會寫錯。這個 server 把這件事從模型身上接過來：
+
+- 對外用 Malcolm 的 filter 語法，不是原生 DSL。
+- 提供欄位探索，讓模型查詢前先確認欄位名稱。
+- 提供欄位值列舉，讓模型看到欄位裡實際有哪些值。
+- 兩套欄位字彙都涵蓋。Arkime expression 吃 Arkime 自己的名稱（`ip.src`），Malcolm 其他地方吃 ECS 名稱（`source.ip`），而 Malcolm 自己的欄位清單只有後者。前者由 `arkime_field_search` 補上。
+- 封裝 Suricata 告警查詢，替它處理欄位映射（`suricata.alert.*` 對 `rule.*`）。
+- 補上 NetBox 資產上下文（IP 對應裝置、網段）。
+
+這一層真正要擋的失敗是無聲的那種。查一個 Malcolm 沒有索引的欄位，它不會報錯，只會回空結果；模型猜了個看似合理但錯誤的名稱，讀到的是「這種流量不存在」，然後就走掉了。所以當搜尋回空的時候，這個 server 會去比對查詢用到的欄位，把 Malcolm 實際存放該值的名稱回報出來。這個比對只在結果已經是空的之後才跑，查得到東西的時候不會多佔模型任何 context。
+
+write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開著的 OpenSearch、NetBox 原始 passthrough 直接交給 agent，不如只開一組具名、有稽核的 write 動作。細節見 [安全模型](#安全模型)。
+
+## 協定細節
+
+客戶端連上來會看到什麼，以及這個 server 同時服務的兩個協定世代。這一段不需要你做任何決定，是寫給直接用 SDK 驅動這個 server 的人看的。
+
+**客戶端連上時看到什麼。**這個 server 兩個協定世代都服務，拿到哪一個由客戶端的第一個請求決定，不是這裡的任何設定。以 `initialize` 開場的客戶端走交握世代；第一個請求在 `_meta` 裡帶 `io.modelcontextprotocol/protocolVersion` 的客戶端走 2026-07-28 無狀態世代，完全沒有交握。這條分流在 SDK 的 `serve_dual_era_loop` 裡，這個專案沒有設定它。
+
+write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
+
+```
+protocol_version: 2025-11-25
+server_info:      name='mcp-server-malcolm' version='1.1.0'
+capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
+instructions:     3753 characters
+tools:            51
+prompts:          1  — hunt_workflow
+resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
+```
+
+2025-11-25 是交握世代的天花板，不是這個 server 的天花板：`initialize` 在 2026-07-28 根本不存在，所以透過它量測只可能量到比較舊的那個數字。2026-07-28 的客戶端不送交握，改呼叫 `server/discover`：
+
+```
+server/discover  capabilities: prompts, resources (subscribe=true), tools — all listChanged=true
+                 cacheScope=private  ttlMs=0  resultType=complete
+tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=complete
+結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.1.0}
+```
+
+兩個世代對 `listChanged` 的說法不一致，而說多了的是新世代那邊：SDK 在那裡宣告 `listChanged=true`，但這個 server 在 `create_server()` 裡一次註冊完所有東西，從不送變更通知。這不會出事，因為不會變的清單也就無所謂沒有通知，但別把程式建立在那個承諾上。
+
+在這套部署上，Arkime 那個 resource 送出 724,261 個字元，涵蓋 4,051 個 expression 欄位。要拿 SDK 寫腳本的人有一個地方要留意：`mcp` 2.x 用的是 snake_case 屬性（`protocol_version`、`server_info`、`is_error`），不是 wire protocol 和 1.x SDK 的 camelCase。照 `serverInfo`/`isError` 寫的腳本會拋 `AttributeError`。
+
 ## 設定參考
 
 | 環境變數 | 預設值 | 說明 |
@@ -850,12 +878,6 @@ v1 刻意不做：
 - 破壞性寫入（Arkime session 刪除、tag 移除、使用者管理）。
 - 原始 OpenSearch write 或原始 NetBox CRUD passthrough，開關後面也不放。
 - `streamable-http` 傳輸（只做 stdio）。
-
-## 系統需求
-
-- Python 3.11+
-- 已開放 API 存取的 Malcolm 實例
-- 與 Malcolm 的網路連線（HTTPS）
 
 ## 授權
 
