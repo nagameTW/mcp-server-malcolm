@@ -261,12 +261,12 @@ pip install -e .
 
 ```bash
 $ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
 
 $ python3 -m venv /tmp/mcp-malcolm-deploy/venv
 $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
 ```
 
 這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel。macOS 這邊後來裝過了：一樣 32 個套件，需要編譯的那幾個相依套件全部裝預先建好的 `macosx_11_0_arm64` wheel，沒有任何東西是從原始碼編的，跑在 Python 3.14.6。x86_64 沒有實際裝過，請當作未驗證。
@@ -374,7 +374,7 @@ write 開關全都不設時，一次 `initialize` 加 `tools/list` 回的是：
 
 ```
 protocol_version: 2025-11-25
-server_info:      name='mcp-server-malcolm' version='1.0.2'
+server_info:      name='mcp-server-malcolm' version='1.1.0'
 capabilities:     prompts, resources (subscribe=false), tools — all list_changed=false
 instructions:     3753 characters
 tools:            51
@@ -388,7 +388,7 @@ resources:        2  — malcolm://fields/malcolm, malcolm://fields/arkime
 server/discover  capabilities: prompts, resources (subscribe=true), tools — all listChanged=true
                  cacheScope=private  ttlMs=0  resultType=complete
 tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=complete
-結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.0.2}
+結果的 _meta     io.modelcontextprotocol/serverInfo = {name: mcp-server-malcolm, version: 1.1.0}
 ```
 
 兩個世代對 `listChanged` 的說法不一致，而說多了的是新世代那邊：SDK 在那裡宣告 `listChanged=true`，但這個 server 在 `create_server()` 裡一次註冊完所有東西，從不送變更通知。這不會出事，因為不會變的清單也就無所謂沒有通知，但別把程式建立在那個承諾上。
