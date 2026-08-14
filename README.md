@@ -247,7 +247,7 @@ Every write attempt emits one line of JSON, on success and on failure:
 
 You don't write any code to use this. An MCP client (Claude Code, Claude Desktop, Cursor, …) launches the server as a subprocess and talks to it over stdio; your job is to tell the client how to launch it and which credentials to inject.
 
-Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14, Python 3.11.14 and 3.14.6) against a live Malcolm v26.07.1, and the error text is verbatim. Where something was reasoned from source rather than executed, or was left untested (x86_64 and macOS hosts, GUI MCP clients, four of the five write classes), it says so at that point.
+Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14, Python 3.11.14 and 3.14.6) against a live Malcolm v26.07.1, and the error text is verbatim. The install in §1, its check, and the Claude Code registration in §2 were run a second time on macOS 26/arm64 with Python 3.14.6, against a live Malcolm 25.12.1. Where something was reasoned from source rather than executed, or was left untested (x86_64 hosts, GUI MCP clients, four of the five write classes), it says so at that point.
 
 ### 1. Install
 
@@ -277,7 +277,7 @@ $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
     /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.0.2-py3-none-any.whl
 ```
 
-That pulls 32 packages, most of them from `mcp>=2,<3` (resolved to `mcp 2.0.0`). The wheel itself is `py3-none-any`, pure Python; the compiled dependencies (`cryptography`, `pydantic-core`, `rpds-py`, `cffi`) all installed from prebuilt `manylinux_*_aarch64` wheels here, nothing compiled from source. PyPI publishes the same wheels for x86_64 and macOS, but no install was run on either, so treat those as unverified.
+That pulls 32 packages, most of them from `mcp>=2,<3` (resolved to `mcp 2.0.0`). The wheel itself is `py3-none-any`, pure Python; the compiled dependencies (`cryptography`, `pydantic-core`, `rpds-py`, `cffi`) all installed from prebuilt `manylinux_*_aarch64` wheels here, nothing compiled from source. PyPI publishes the same wheels for x86_64 and macOS. The macOS side has since been installed: 32 packages again, every compiled dependency from a prebuilt `macosx_11_0_arm64` wheel, nothing built from source, on Python 3.14.6. No install was run on x86_64, so treat that one as unverified.
 
 To run this branch without installing it anywhere permanent, point `uvx` or `pipx` at the checkout:
 
@@ -289,7 +289,7 @@ pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
 Check the install by starting the server with stdin closed. It prints its write-class banner, reaches EOF, and exits 0:
 
 ```bash
-$ timeout 3 mcp-server-malcolm < /dev/null
+$ mcp-server-malcolm < /dev/null
 [mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 $ echo $?
 0
