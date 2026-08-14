@@ -48,7 +48,7 @@ Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14,
 
 ### 1. Install
 
-You need Python 3.11 or newer, a Malcolm instance with API access, and network access to it over HTTPS.
+You need Python 3.11 or newer, a Malcolm instance with API access, and an HTTPS route to it.
 
 `pip install mcp-server-malcolm` and bare `uvx mcp-server-malcolm` install the latest published release. A version number alone cannot tell you whether a checkout matches it — a tree carrying unreleased changes still reports the version of the last release — so install from source when you specifically want the code documented in this tree.
 
@@ -764,7 +764,7 @@ The write side follows the same idea. Rather than hand an agent the raw OpenSear
 
 ## Protocol notes
 
-What a client sees when it connects, and the two protocol eras this server answers. None of it needs a decision from you; it is here for anyone driving the server from an SDK.
+This is what a client sees when it connects, and where the two protocol eras differ. None of it needs a decision from you; it is here for anyone driving the server from an SDK.
 
 **What the client sees on connection.** This server answers both protocol eras, and which one you get is decided by your first request, not by any setting here. A client that opens with `initialize` gets the handshake era; a client whose first request carries the `io.modelcontextprotocol/protocolVersion` key in `_meta` gets the stateless 2026-07-28 era, with no handshake at all. The SDK routes this in `serve_dual_era_loop`; nothing in this project configures it.
 

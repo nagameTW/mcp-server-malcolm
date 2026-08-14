@@ -46,7 +46,7 @@
 
 ### 1. 安裝
 
-你需要 Python 3.11 以上、一台開了 API 的 Malcolm，以及連得到它的 HTTPS 網路。
+你需要 Python 3.11 以上、一台開放 API 存取的 Malcolm，以及一條連得到它的 HTTPS 網路。
 
 `pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是最新的已發布 release。光看版號沒辦法判斷手上的 checkout 跟它是不是同一份——帶著未發布變更的樹，回報的仍然是上一次發版的版號——所以要拿到這份文件寫的這棵樹，就從原始碼裝。
 
@@ -753,7 +753,7 @@ write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開�
 
 ## 協定細節
 
-客戶端連上來會看到什麼，以及這個 server 同時服務的兩個協定世代。這一段不需要你做任何決定，是寫給直接用 SDK 驅動這個 server 的人看的。
+客戶端連上來會看到什麼，以及兩個協定世代差在哪裡，都寫在這一節。這裡不需要你做任何決定，是給直接用 SDK 驅動這個 server 的人看的。
 
 **客戶端連上時看到什麼。**這個 server 兩個協定世代都服務，拿到哪一個由客戶端的第一個請求決定，不是這裡的任何設定。以 `initialize` 開場的客戶端走交握世代；第一個請求在 `_meta` 裡帶 `io.modelcontextprotocol/protocolVersion` 的客戶端走 2026-07-28 無狀態世代，完全沒有交握。這條分流在 SDK 的 `serve_dual_era_loop` 裡，這個專案沒有設定它。
 
