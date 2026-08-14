@@ -16,11 +16,13 @@
 
 ## 目錄
 
+- [為什麼要有 MCP 這一層](#為什麼要有-mcp-這一層)
 - [快速開始](#快速開始)
   - [1. 安裝](#1-安裝)
   - [2. 註冊到你的客戶端](#2-註冊到你的客戶端)
   - [3. 連線設定](#3-連線設定)
   - [4. 開啟 write 工具（選用）](#4-開啟-write-工具選用)
+  - [其他安裝方式](#其他安裝方式)
 - [預設唯讀，需要時再開](#預設唯讀需要時再開)
 - [讀取工具](#讀取工具)
 - [Write 工具（需自行開啟）](#write-工具需自行開啟)
@@ -30,13 +32,27 @@
 - [Python（直接 import）](#python直接-import)
 - [Malcolm Filter 語法](#malcolm-filter-語法)
 - [範例](#範例)
-- [為什麼要有 MCP 這一層](#為什麼要有-mcp-這一層)
 - [協定細節](#協定細節)
 - [設定參考](#設定參考)
 - [對你自己的 Malcolm 做驗證](#對你自己的-malcolm-做驗證)
 - [用到的 Malcolm API 端點](#用到的-malcolm-api-端點)
 - [不做的事](#不做的事)
 - [授權](#授權)
+
+## 為什麼要有 MCP 這一層
+
+Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_sessions3-*`），欄位名稱非標準，還有自己一套 filter 語法。要 LLM 直接對這個 index 寫 OpenSearch DSL，多半會寫錯。這個 server 把這件事從模型身上接過來：
+
+- 對外用 Malcolm 的 filter 語法，不是原生 DSL。
+- 提供欄位探索，讓模型查詢前先確認欄位名稱。
+- 提供欄位值列舉，讓模型看到欄位裡實際有哪些值。
+- 兩套欄位字彙都涵蓋。Arkime expression 吃 Arkime 自己的名稱（`ip.src`），Malcolm 其他地方吃 ECS 名稱（`source.ip`），而 Malcolm 自己的欄位清單只有後者。前者由 `arkime_field_search` 補上。
+- 封裝 Suricata 告警查詢，替它處理欄位映射（`suricata.alert.*` 對 `rule.*`）。
+- 補上 NetBox 資產上下文（IP 對應裝置、網段）。
+
+這一層真正要擋的失敗是無聲的那種。查一個 Malcolm 沒有索引的欄位，它不會報錯，只會回空結果；模型猜了個看似合理但錯誤的名稱，讀到的是「這種流量不存在」，然後就走掉了。所以當搜尋回空的時候，這個 server 會去比對查詢用到的欄位，把 Malcolm 實際存放該值的名稱回報出來。這個比對只在結果已經是空的之後才跑，查得到東西的時候不會多佔模型任何 context。
+
+write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開著的 OpenSearch、NetBox 原始 passthrough 直接交給 agent，不如只開一組具名、有稽核的 write 動作。細節見 [安全模型](#安全模型)。
 
 ## 快速開始
 
@@ -48,39 +64,8 @@
 
 你需要 Python 3.11 以上、一台開放 API 存取的 Malcolm，以及一條連得到它的 HTTPS 網路。
 
-`pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是最新的已發布 release。光看版號沒辦法判斷手上的 checkout 跟它是不是同一份——帶著未發布變更的樹，回報的仍然是上一次發版的版號——所以要拿到這份文件寫的這棵樹，就從原始碼裝。
-
 ```bash
 pip install mcp-server-malcolm      # published release
-```
-
-從 checkout 裝：
-
-```bash
-git clone https://github.com/nagameTW/mcp-server-malcolm.git
-cd mcp-server-malcolm
-pip install -e .
-```
-
-或者建一個 wheel、裝進乾淨的 virtualenv——底下所有東西都是走這條路驗證的：
-
-```bash
-$ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0.tar.gz
-Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
-
-$ python3 -m venv /tmp/mcp-malcolm-deploy/venv
-$ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
-    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
-```
-
-這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel。macOS 這邊後來裝過了：一樣 32 個套件，需要編譯的那幾個相依套件全部裝預先建好的 `macosx_11_0_arm64` wheel，沒有任何東西是從原始碼編的，跑在 Python 3.14.6。x86_64 沒有實際裝過，請當作未驗證。
-
-不想把這個 branch 永久裝到哪裡去，就把 `uvx` 或 `pipx` 指到 checkout：
-
-```bash
-uvx --from /path/to/mcp-server-malcolm mcp-server-malcolm
-pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
 ```
 
 把 stdin 關掉直接啟動 server，就能確認裝好了。它會印出 write class 橫幅、讀到 EOF、以 0 結束：
@@ -254,6 +239,39 @@ MALCOLM_MCP_ENABLE_ARKIME_TAGS=true     tool count: 52   (new: arkime_add_tags)
 一個開關只有在值剛好是 `true`（不分大小寫）時才算開（`config.py:15`）；其他任何值，包括 `1` 和 `yes`，都會讓那個 class 維持關閉。啟動橫幅就是確認的地方。
 
 完整開關列表見 [設定參考](#設定參考)。
+
+### 其他安裝方式
+
+`pip install mcp-server-malcolm` 和不帶參數的 `uvx mcp-server-malcolm` 裝到的是最新的已發布 release。光看版號沒辦法判斷手上的 checkout 跟它是不是同一份——帶著未發布變更的樹，回報的仍然是上一次發版的版號——所以要拿到這份文件寫的這棵樹，就從原始碼裝。
+
+從 checkout 裝：
+
+```bash
+git clone https://github.com/nagameTW/mcp-server-malcolm.git
+cd mcp-server-malcolm
+pip install -e .
+```
+
+或者建一個 wheel、裝進乾淨的 virtualenv，這一章的指令都是走這條路驗證的：
+
+```bash
+$ uv build --out-dir /tmp/mcp-malcolm-deploy/dist
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0.tar.gz
+Successfully built /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
+
+$ python3 -m venv /tmp/mcp-malcolm-deploy/venv
+$ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
+    /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
+```
+
+這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel。macOS 這邊後來裝過了：一樣 32 個套件，需要編譯的那幾個相依套件全部裝預先建好的 `macosx_11_0_arm64` wheel，沒有任何東西是從原始碼編的，跑在 Python 3.14.6。x86_64 沒有實際裝過，請當作未驗證。
+
+不想把這個 branch 永久裝到哪裡去，就把 `uvx` 或 `pipx` 指到 checkout：
+
+```bash
+uvx --from /path/to/mcp-server-malcolm mcp-server-malcolm
+pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
+```
 
 ### 手動執行
 
@@ -735,21 +753,6 @@ arkime_create_hunt(
   expression="ip==192.0.2.77"
 )
 ```
-
-## 為什麼要有 MCP 這一層
-
-Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_sessions3-*`），欄位名稱非標準，還有自己一套 filter 語法。要 LLM 直接對這個 index 寫 OpenSearch DSL，多半會寫錯。這個 server 把這件事從模型身上接過來：
-
-- 對外用 Malcolm 的 filter 語法，不是原生 DSL。
-- 提供欄位探索，讓模型查詢前先確認欄位名稱。
-- 提供欄位值列舉，讓模型看到欄位裡實際有哪些值。
-- 兩套欄位字彙都涵蓋。Arkime expression 吃 Arkime 自己的名稱（`ip.src`），Malcolm 其他地方吃 ECS 名稱（`source.ip`），而 Malcolm 自己的欄位清單只有後者。前者由 `arkime_field_search` 補上。
-- 封裝 Suricata 告警查詢，替它處理欄位映射（`suricata.alert.*` 對 `rule.*`）。
-- 補上 NetBox 資產上下文（IP 對應裝置、網段）。
-
-這一層真正要擋的失敗是無聲的那種。查一個 Malcolm 沒有索引的欄位，它不會報錯，只會回空結果；模型猜了個看似合理但錯誤的名稱，讀到的是「這種流量不存在」，然後就走掉了。所以當搜尋回空的時候，這個 server 會去比對查詢用到的欄位，把 Malcolm 實際存放該值的名稱回報出來。這個比對只在結果已經是空的之後才跑，查得到東西的時候不會多佔模型任何 context。
-
-write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開著的 OpenSearch、NetBox 原始 passthrough 直接交給 agent，不如只開一組具名、有稽核的 write 動作。細節見 [安全模型](#安全模型)。
 
 ## 協定細節
 
