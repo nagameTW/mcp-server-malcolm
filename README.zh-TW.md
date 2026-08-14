@@ -239,7 +239,7 @@ Malcolm 的預設部署，本來就讓任何登入者都能不受限地寫入原
 
 你不需要寫任何程式碼。MCP 客戶端（Claude Code、Claude Desktop、Cursor 等）會把這個 server 當子行程啟動，用 stdio 跟它溝通；你要做的只是告訴客戶端怎麼啟動它、以及要注入哪些憑證。
 
-這一章的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 與 macOS 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
+這一章的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。第 1 節的安裝和它的檢查指令，以及第 2 節的 Claude Code 註冊，另外在 macOS 26/arm64（Python 3.14.6）上對一台跑著的 Malcolm 25.12.1 再跑過一次。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
 
 ### 1. 安裝
 
@@ -269,7 +269,7 @@ $ /tmp/mcp-malcolm-deploy/venv/bin/pip install \
     /tmp/mcp-malcolm-deploy/dist/mcp_server_malcolm-1.1.0-py3-none-any.whl
 ```
 
-這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel，但這兩個平台都沒有實際裝過，請當作未驗證。
+這會拉進 32 個套件，多數來自 `mcp>=2,<3`（解析到 `mcp 2.0.0`）。wheel 本身是 `py3-none-any`，純 Python；需要編譯的那幾個相依套件（`cryptography`、`pydantic-core`、`rpds-py`、`cffi`）在這裡全部是裝預先建好的 `manylinux_*_aarch64` wheel，沒有任何東西是從原始碼編的。PyPI 對 x86_64 和 macOS 發的是同一批 wheel。macOS 這邊後來裝過了：一樣 32 個套件，需要編譯的那幾個相依套件全部裝預先建好的 `macosx_11_0_arm64` wheel，沒有任何東西是從原始碼編的，跑在 Python 3.14.6。x86_64 沒有實際裝過，請當作未驗證。
 
 不想把這個 branch 永久裝到哪裡去，就把 `uvx` 或 `pipx` 指到 checkout：
 
@@ -281,7 +281,7 @@ pipx run --spec /path/to/mcp-server-malcolm mcp-server-malcolm
 把 stdin 關掉直接啟動 server，就能確認裝好了。它會印出 write class 橫幅、讀到 EOF、以 0 結束：
 
 ```bash
-$ timeout 3 mcp-server-malcolm < /dev/null
+$ mcp-server-malcolm < /dev/null
 [mcp-server-malcolm] write classes: alerting=off arkime-tag=off hunt-job=off pcap-upload=off arkime-view=off
 $ echo $?
 0
