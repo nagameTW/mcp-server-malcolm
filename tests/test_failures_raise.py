@@ -116,6 +116,46 @@ async def test_an_upstream_failure_reaches_the_client_as_is_error():
     assert result.is_error is True
 
 
+@pytest.mark.asyncio
+async def test_a_bad_arguments_message_reaches_the_client_not_just_the_flag():
+    """``isError`` alone does not tell the caller WHICH argument was wrong.
+
+    A model that gets only "Error executing tool search_dsl" cannot correct
+    itself: it does not know whether the index pattern was rejected or the JSON
+    was malformed, so its next attempt is a guess. The text is the whole reason
+    :class:`ToolInputError` says what it says.
+
+    This is the half the flag tests above cannot see. It became load-bearing in
+    mcp 2.1.0 (python-sdk #3314): ``MCPServer.call_tool`` now re-raises
+    ``ToolError`` and ``ResourceError`` with their message intact and collapses
+    every OTHER exception into ``UnexpectedToolError("Error executing tool
+    <name>")``, leaving the original only in the server's own log. A
+    ``MalcolmToolError`` that does not descend from ``ToolError`` therefore
+    loses its message at the boundary — silently, with no test failing and no
+    exception escaping.
+    """
+    async with Client(_every_tool(_refuse)) as client:
+        result = await client.call_tool("search_dsl", {"index": "../_bulk", "query_dsl": "{}"})
+
+    assert result.is_error is True
+    assert "invalid index pattern" in tool_text(result)
+
+
+@pytest.mark.asyncio
+async def test_an_upstream_failure_message_reaches_the_client_not_just_the_flag():
+    """Same contract on the upstream half: the host that could not be reached
+    is what makes the failure actionable, and :func:`redact` already guarantees
+    the text carries no credentials."""
+    async with Client(_every_tool(_unreachable)) as client:
+        result = await client.call_tool(
+            "search_dsl", {"index": "arkime_sessions3-*", "query_dsl": "{}"}
+        )
+
+    assert result.is_error is True
+    text = tool_text(result)
+    assert "connection refused" in text or "malcolm.example" in text
+
+
 # -- bad arguments ------------------------------------------------------------
 
 _BAD_ARGUMENTS = [
