@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -114,3 +115,81 @@ async def test_path_metachars_are_still_rejected_on_every_dsl_tool(
     raised = await raised_by(mcp, tool, {index_arg: bad, **extra_args})
     assert isinstance(raised, ToolInputError), f"{tool} let {bad!r} through"
     assert seen == []
+
+
+# -- aggregation bucket sizes are capped like malcolm_aggregate's limit --
+#
+# The top-level size was always clamped; a size inside aggs went to OpenSearch
+# as written, so one terms agg could return tens of thousands of buckets into
+# the caller's context. Refused rather than clamped: 500 silently-truncated
+# buckets would read as the complete answer.
+
+
+def _refusing_server():
+    def _refuse(_req: httpx.Request) -> httpx.Response:  # pragma: no cover
+        raise AssertionError("the bucket-size guard let a request through")
+
+    return _dsl_server(_refuse)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "path"),
+    [
+        (
+            {"aggs": {"by_src": {"terms": {"field": "source.ip", "size": 50000}}}},
+            "aggs.by_src.terms.size",
+        ),
+        (
+            {"aggregations": {"x": {"composite": {"size": 501, "sources": []}}}},
+            "aggregations.x.composite.size",
+        ),
+        (
+            {
+                "aggs": {
+                    "outer": {
+                        "terms": {"field": "a", "size": 10},
+                        "aggs": {"inner": {"multi_terms": {"terms": [], "size": 9999}}},
+                    }
+                }
+            },
+            "aggs.outer.aggs.inner.multi_terms.size",
+        ),
+        (
+            {"aggs": {"s": {"significant_terms": {"field": "a", "size": "600"}}}},
+            "aggs.s.significant_terms.size",
+        ),
+    ],
+)
+async def test_search_dsl_refuses_oversized_bucket_aggregations(body, path):
+    mcp, seen = _refusing_server()
+    body = {"query": {"match_all": {}}, **body}
+    raised = await raised_by(
+        mcp, "search_dsl", {"index": "arkime_sessions3-*", "query_dsl": json.dumps(body)}
+    )
+    assert isinstance(raised, ToolInputError)
+    assert path in str(raised)
+    assert "500" in str(raised)
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_search_dsl_passes_bucket_aggregations_at_the_limit():
+    mcp, seen = _dsl_server(lambda _req: httpx.Response(200, json={}))
+    body = {
+        "query": {"match_all": {}},
+        "aggs": {
+            "t": {
+                "terms": {"field": "a", "size": 500},
+                "aggs": {
+                    "h": {"date_histogram": {"field": "@timestamp", "fixed_interval": "1m"}},
+                    "top": {"top_hits": {"size": 3}},
+                },
+            }
+        },
+    }
+    result = await mcp.call_tool(
+        "search_dsl", {"index": "arkime_sessions3-*", "query_dsl": json.dumps(body), "size": 0}
+    )
+    assert result.is_error is False
+    assert len(seen) == 1

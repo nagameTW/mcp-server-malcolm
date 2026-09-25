@@ -28,6 +28,16 @@ if TYPE_CHECKING:
 # would make that form unreachable through these four tools alone.
 _INDEX_RE = re.compile(r"^[A-Za-z0-9_.*,-]+$")
 
+# Per-level bucket ceiling, the same one malcolm_aggregate's limit enforces.
+# Only aggregations that size their bucket list with a "size" key are checked;
+# (date_)histogram buckets come from an interval and are left to OpenSearch's
+# search.max_buckets. Nesting still multiplies, as it does in malcolm_aggregate.
+_MAX_BUCKETS = 500
+_SIZED_BUCKET_AGGS = frozenset(
+    {"terms", "multi_terms", "significant_terms", "significant_text", "composite"}
+)
+_AGG_KEYS = ("aggs", "aggregations")
+
 # Shared: every DSL tool here reads from the OpenSearch backend, never mutates.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
@@ -49,6 +59,40 @@ def _load_dsl(query_dsl: str, what: str) -> Any:
         raise ToolInputError(
             f"invalid JSON in query_dsl ({exc}); received {query_dsl!r}. Expected {what}."
         ) from exc
+
+
+def _check_bucket_sizes(node: Any, path: str = "") -> None:
+    """Refuse any bucket aggregation, nested ones included, above _MAX_BUCKETS."""
+    if not isinstance(node, dict):
+        return
+    for key in _AGG_KEYS:
+        aggs = node.get(key)
+        if not isinstance(aggs, dict):
+            continue
+        for name, agg in aggs.items():
+            if not isinstance(agg, dict):
+                continue
+            here = f"{path}{key}.{name}"
+            for agg_type, params in agg.items():
+                if agg_type in _SIZED_BUCKET_AGGS and isinstance(params, dict):
+                    _check_size(params.get("size"), f"{here}.{agg_type}.size")
+            _check_bucket_sizes(agg, f"{here}.")
+
+
+def _check_size(size: Any, path: str) -> None:
+    """Refuse one aggregation's size when it asks for more than _MAX_BUCKETS."""
+    try:
+        too_big = int(size) > _MAX_BUCKETS
+    except OverflowError:  # json.loads accepts Infinity
+        too_big = True
+    except (TypeError, ValueError):
+        return  # absent or garbage: OpenSearch applies its default or rejects it
+    if too_big:
+        raise ToolInputError(
+            f"{path}={size} exceeds the {_MAX_BUCKETS}-bucket limit per aggregation. "
+            "Narrow the query, read sum_other_doc_count for the remainder, or page "
+            "with a composite aggregation."
+        )
 
 
 def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
@@ -88,9 +132,13 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Aggregations honor the time filter inside the DSL body, so there is no hidden
         default time window. Returns the raw OpenSearch _search response.
 
-        Both input guards run before any request leaves this server: malformed
-        query_dsl, and an index containing /, ? or .., are refused as input
-        errors rather than costing an upstream scan. When the query is easier to
+        Every input guard runs before any request leaves this server: malformed
+        query_dsl, an index containing /, ? or .., and a terms, multi_terms,
+        significant_terms, significant_text or composite aggregation (nested
+        ones included) whose size is above 500 are refused as input errors
+        rather than costing an upstream scan. That is the same per-level bucket
+        limit malcolm_aggregate has; for more values than that, page with a
+        composite aggregation's after_key. When the query is easier to
         say as an Arkime expression, compile it with arkime_build_query and hand
         the index and query_dsl it returns straight to this tool — serialise its
         query_dsl object to a JSON string first, which is what this parameter
@@ -100,6 +148,7 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         body = _load_dsl(query_dsl, 'a full DSL body such as {"query": {"match_all": {}}}')
         if "query" not in body:
             body = {"query": body}
+        _check_bucket_sizes(body)
         body["size"] = min(max(0, size), 500)
         data = await client.opensearch_dsl(index, body)
         return json.dumps(data, ensure_ascii=False, default=str)
