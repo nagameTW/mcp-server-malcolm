@@ -11,7 +11,7 @@ import asyncio
 import pytest
 
 from mcp_server_malcolm.server import create_server
-from mcp_server_malcolm.tools import DISABLE_READ_GROUPS_ENV, _read_groups
+from mcp_server_malcolm.tools import DISABLE_READ_GROUPS_ENV, DISABLE_TOOLS_ENV, _read_groups
 
 # Every group's exact membership. Written out rather than derived so that
 # moving a tool between modules has to be a deliberate edit here: the group
@@ -70,13 +70,14 @@ _MEMBERSHIP = {
 }
 
 
-def _names(monkeypatch, disable=None):
+def _names(monkeypatch, disable=None, disable_tools=None):
     for k in ("ALERTING", "ARKIME_TAGS", "HUNT_JOBS", "PCAP_UPLOAD", "ARKIME_VIEWS"):
         monkeypatch.delenv(f"MALCOLM_MCP_ENABLE_{k}", raising=False)
-    if disable is None:
-        monkeypatch.delenv(DISABLE_READ_GROUPS_ENV, raising=False)
-    else:
-        monkeypatch.setenv(DISABLE_READ_GROUPS_ENV, disable)
+    for env, value in ((DISABLE_READ_GROUPS_ENV, disable), (DISABLE_TOOLS_ENV, disable_tools)):
+        if value is None:
+            monkeypatch.delenv(env, raising=False)
+        else:
+            monkeypatch.setenv(env, value)
     return {t.name for t in asyncio.run(create_server().list_tools())}
 
 
@@ -142,3 +143,53 @@ def test_startup_banner_names_the_disabled_groups(monkeypatch, capsys):
 def test_banner_stays_quiet_when_nothing_is_disabled(monkeypatch, capsys):
     _names(monkeypatch)
     assert "read groups disabled" not in capsys.readouterr().err
+
+
+# -- MALCOLM_MCP_DISABLE_TOOLS: the per-tool knob layered on the groups --
+#
+# arkime is the largest group and the one nobody can drop, because
+# arkime_sessions is the only search that returns a session ID. The per-tool
+# list trims what is left inside a group that has to stay.
+
+_SPI = "arkime_spiview,arkime_spigraphhierarchy,arkime_multiunique"
+
+
+def test_disabling_tools_removes_exactly_those_tools(monkeypatch):
+    baseline = _names(monkeypatch)
+    names = _names(monkeypatch, disable_tools=_SPI)
+    assert baseline - names == set(_SPI.split(","))
+    assert {"arkime_sessions", "arkime_sessions_summary"} <= names
+
+
+def test_tool_list_layers_on_the_group_list(monkeypatch):
+    names = _names(monkeypatch, disable="netbox,dashboards", disable_tools=f" {_SPI} ,")
+    gone = _MEMBERSHIP["netbox"] | _MEMBERSHIP["dashboards"] | set(_SPI.split(","))
+    assert not (gone & names)
+    assert len(names) == 51 - len(gone)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "arkime_spivew",  # typo
+        "malcolm_netbox_sites",  # already removed with its group
+        "arkime_create_view",  # a write tool: the write classes govern those
+    ],
+)
+def test_unknown_tool_name_fails_loudly(monkeypatch, bad):
+    with pytest.raises(ValueError) as exc:
+        _names(monkeypatch, disable="netbox", disable_tools=f"arkime_spiview,{bad}")
+    message = str(exc.value)
+    assert DISABLE_TOOLS_ENV in message and bad in message
+    assert "arkime_spiview" not in message.split(":", 1)[1].split(".")[0]
+
+
+def test_startup_banner_names_the_disabled_tools(monkeypatch, capsys):
+    _names(monkeypatch, disable_tools="arkime_spiview,arkime_multiunique")
+    err = capsys.readouterr().err
+    assert "read tools disabled: arkime_multiunique, arkime_spiview" in err
+
+
+def test_banner_stays_quiet_when_no_tool_is_disabled(monkeypatch, capsys):
+    _names(monkeypatch, disable_tools="")
+    assert "read tools disabled" not in capsys.readouterr().err

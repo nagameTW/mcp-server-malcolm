@@ -13,7 +13,11 @@ from mcp_server_malcolm.client import MalcolmClient
 from mcp_server_malcolm.config import WriteConfig
 from mcp_server_malcolm.prompts import register_prompts
 from mcp_server_malcolm.resources import register_resources
-from mcp_server_malcolm.tools import register_all_tools, register_write_tools
+from mcp_server_malcolm.tools import (
+    register_all_tools,
+    register_write_tools,
+    remove_disabled_tools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +145,7 @@ def create_server() -> MCPServer:
     cfg = WriteConfig.from_env()
 
     disabled_read = register_all_tools(mcp, client)
+    disabled_tools = remove_disabled_tools(mcp)
     register_write_tools(mcp, client, cfg)
     register_resources(mcp, client)
     register_prompts(mcp)
@@ -155,6 +160,12 @@ def create_server() -> MCPServer:
     if disabled_read:
         print(
             f"[mcp-server-malcolm] read groups disabled: {', '.join(sorted(disabled_read))}",
+            file=sys.stderr,
+            flush=True,
+        )
+    if disabled_tools:
+        print(
+            f"[mcp-server-malcolm] read tools disabled: {', '.join(sorted(disabled_tools))}",
             file=sys.stderr,
             flush=True,
         )
