@@ -45,6 +45,15 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **`search_dsl` sent an aggregation-only body as a query.** Any `query_dsl`
+  without a `query` key was wrapped as `{"query": ...}`, including a full body
+  such as `{"size": 0, "aggs": {...}}`. OpenSearch rejects that as an unknown
+  query, and the aggregations sat where the new bucket-size check could not see
+  them. Only a bare query clause such as `{"term": {...}}` is wrapped now. A
+  body carrying `aggs`, `size`, `sort` or another top-level search key goes
+  upstream as written and matches every document. A `query_dsl` that is not a
+  JSON object (an array, a string, a number) is refused as an input error
+  rather than failing further in.
 - **Tool failure messages were collapsed by the SDK on mcp >= 2.1.0.**
   `Tool.run` re-raises `ToolError` and `ResourceError` with their text intact
   and turns every OTHER exception into

@@ -38,6 +38,29 @@ _SIZED_BUCKET_AGGS = frozenset(
 )
 _AGG_KEYS = ("aggs", "aggregations")
 
+# Top-level _search body keys that are never a query type. A query_dsl carrying
+# any of them is a full body missing only "query" (match_all upstream), not a
+# bare clause to wrap: {"size": 0, "aggs": {...}} wrapped as a query is an
+# "unknown query" error, with its aggs out of _check_bucket_sizes' reach.
+_BODY_KEYS = frozenset(
+    {
+        *_AGG_KEYS,
+        "size",
+        "from",
+        "sort",
+        "_source",
+        "fields",
+        "track_total_hits",
+        "post_filter",
+        "search_after",
+        "collapse",
+        "highlight",
+        "min_score",
+        "timeout",
+        "terminate_after",
+    }
+)
+
 # Shared: every DSL tool here reads from the OpenSearch backend, never mutates.
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
@@ -111,7 +134,9 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             str,
             Field(
                 description='JSON string of a full DSL body, e.g. {"query": {...}, "aggs": {...}}. '
-                'A bare query object with no "query" key is wrapped as {"query": ...} for you.'
+                'A bare query clause such as {"term": {...}} is wrapped as {"query": ...} for you; '
+                'a body with "aggs", "size", "sort" or another search key but no "query" '
+                "is sent as is (match_all)."
             ),
         ],
         size: Annotated[
@@ -146,7 +171,12 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         """
         _check_index(index)
         body = _load_dsl(query_dsl, 'a full DSL body such as {"query": {"match_all": {}}}')
-        if "query" not in body:
+        if not isinstance(body, dict):
+            raise ToolInputError(
+                f"query_dsl must be a JSON object; received {query_dsl!r}. "
+                'Expected a full DSL body such as {"query": {"match_all": {}}}.'
+            )
+        if "query" not in body and not _BODY_KEYS & body.keys():
             body = {"query": body}
         _check_bucket_sizes(body)
         body["size"] = min(max(0, size), 500)

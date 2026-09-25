@@ -193,3 +193,62 @@ async def test_search_dsl_passes_bucket_aggregations_at_the_limit():
     )
     assert result.is_error is False
     assert len(seen) == 1
+
+
+# -- only a bare query clause is wrapped in {"query": ...} --
+#
+# The wrap used to fire on any body without a "query" key, so an
+# aggregation-only body ({"size": 0, "aggs": {...}}) went upstream as
+# {"query": {"size": 0, "aggs": {...}}}, which OpenSearch rejects as an
+# unknown query -- and its aggs sat where the bucket-size guard never looked.
+
+
+def _sent_body(seen: list[httpx.Request]) -> dict:
+    return json.loads(seen[0].content)
+
+
+@pytest.mark.asyncio
+async def test_search_dsl_wraps_a_bare_query_clause():
+    mcp, seen = _dsl_server(lambda _req: httpx.Response(200, json={}))
+    clause = {"term": {"event.dataset": "conn"}}
+    await mcp.call_tool("search_dsl", {"index": "i", "query_dsl": json.dumps(clause)})
+    assert _sent_body(seen)["query"] == clause
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"size": 0, "aggs": {"t": {"terms": {"field": "a"}}}},
+        {"aggregations": {"t": {"terms": {"field": "a"}}}},
+        {"sort": [{"@timestamp": "desc"}]},
+    ],
+)
+async def test_search_dsl_sends_a_query_less_body_as_a_body(body):
+    mcp, seen = _dsl_server(lambda _req: httpx.Response(200, json={}))
+    await mcp.call_tool("search_dsl", {"index": "i", "query_dsl": json.dumps(body)})
+    sent = _sent_body(seen)
+    assert "query" not in sent
+    assert {k: v for k, v in sent.items() if k != "size"} == {
+        k: v for k, v in body.items() if k != "size"
+    }
+
+
+@pytest.mark.asyncio
+async def test_search_dsl_bucket_guard_sees_aggs_in_a_query_less_body():
+    mcp, seen = _refusing_server()
+    body = {"size": 0, "aggs": {"t": {"terms": {"field": "a", "size": 50000}}}}
+    raised = await raised_by(mcp, "search_dsl", {"index": "i", "query_dsl": json.dumps(body)})
+    assert isinstance(raised, ToolInputError)
+    assert "aggs.t.terms.size" in str(raised)
+    assert seen == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query_dsl", ["[1, 2]", '"text"', "5"])
+async def test_search_dsl_refuses_a_non_object_body(query_dsl):
+    mcp, seen = _refusing_server()
+    raised = await raised_by(mcp, "search_dsl", {"index": "i", "query_dsl": query_dsl})
+    assert isinstance(raised, ToolInputError)
+    assert "must be a JSON object" in str(raised)
+    assert seen == []

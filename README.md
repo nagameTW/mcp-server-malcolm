@@ -482,7 +482,7 @@ All 51 read tools are on by default, and their schemas are about 34,000 tokens t
 
 | Group | Tools | Schema tokens | Covers |
 | --- | --- | --- | --- |
-| `dsl` | 5 | ~2,380 | Raw OpenSearch: `search_dsl`, `count`, index and cluster metadata |
+| `dsl` | 5 | ~2,410 | Raw OpenSearch: `search_dsl`, `count`, index and cluster metadata |
 | `query` | 3 | ~2,350 | `malcolm_search`, `malcolm_aggregate`, `malcolm_alerts` |
 | `fields` | 3 | ~1,780 | Field discovery — the anti-hallucination layer |
 | `health` | 4 | ~1,730 | Service status, data coverage, ping, dashboard export |
@@ -494,9 +494,9 @@ All 51 read tools are on by default, and their schemas are about 34,000 tokens t
 | `arkime-inventory` | 7 | ~4,330 | Saved views, shortcuts, crons, capture-node stats, hunt status |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards saved objects |
 | `detections` | 5 | ~4,210 | Alerting monitors and anomaly detectors |
-| **Total** | **51** | **~34,550** | |
+| **Total** | **51** | **~34,580** | |
 
-Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~34,550 tokens to ~22,770:
+Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~34,580 tokens to ~22,800:
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
