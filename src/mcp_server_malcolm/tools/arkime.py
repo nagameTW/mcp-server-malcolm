@@ -118,10 +118,8 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 '"zeek.ftp.password == EXISTS!". A list is an OR: "port == [80,443]". '
                 "Field names are Arkime's own, NOT the ECS names malcolm_field_search "
                 "returns — look them up with arkime_field_search. A name Arkime "
-                "cannot resolve is not an error: measured on Malcolm v26.07.1, "
-                '"nosuch.field==1" over a window holding 6M sessions answered '
-                "matched:0 with no marker, indistinguishable from a query that "
-                "genuinely found nothing."
+                "cannot resolve, or an expression it cannot parse, is reported as "
+                "an error carrying Arkime's own message."
             ),
         ],
         limit: Annotated[

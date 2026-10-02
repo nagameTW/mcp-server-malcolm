@@ -69,9 +69,15 @@ def _mock(handler):
     return c
 
 
+# The one-session route arkime_session_detail reads to resolve the capture node.
+_DETAIL = f"/arkime/api/session/{_SID}"
+# Arkime's answer for an id it does not hold, measured on Malcolm's training instance.
+_NOT_FOUND = {"success": False, "text": "Session not found", "i18n": "api.sessions.sessionNotFound"}
+
+
 def _session_lookup(req, node=_NODE):
     """Answer the node-resolution lookup arkime_session_detail makes."""
-    return httpx.Response(200, json={"data": [{"id": _SID, "node": node}]})
+    return httpx.Response(200, json={"id": _SID, "node": node})
 
 
 def _server(handler):
@@ -88,7 +94,7 @@ async def test_payload_returns_decoded_bytes_with_direction_markers():
     seen = {}
 
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         seen["path"] = req.url.path
         seen["base"] = req.url.params.get("base")
@@ -118,7 +124,7 @@ async def test_payload_unescapes_entities_without_manufacturing_markup():
     """
 
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         return httpx.Response(200, text=_PACKETS_HTML)
 
@@ -134,13 +140,13 @@ async def test_payload_resolves_the_node_and_an_explicit_one_skips_the_lookup():
 
     def handler(req):
         calls.append(req.url.path)
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         return httpx.Response(200, text=_PACKETS_HTML)
 
     mcp = _server(handler)
     await mcp.call_tool("arkime_session_payload", {"session_id": _SID})
-    assert calls == ["/arkime/api/sessions", f"/arkime/api/session/{_NODE}/{_SID}/packets"]
+    assert calls == [_DETAIL, f"/arkime/api/session/{_NODE}/{_SID}/packets"]
 
     calls.clear()
     await mcp.call_tool("arkime_session_payload", {"session_id": _SID, "node": "other-node"})
@@ -150,7 +156,7 @@ async def test_payload_resolves_the_node_and_an_explicit_one_skips_the_lookup():
 @pytest.mark.asyncio
 async def test_payload_session_without_stored_packets_is_an_answer_not_a_failure():
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         return httpx.Response(200, text=_NO_PCAP)
 
@@ -164,8 +170,8 @@ async def test_payload_session_without_stored_packets_is_an_answer_not_a_failure
 @pytest.mark.asyncio
 async def test_payload_unknown_session_is_an_answer_not_a_failure():
     def handler(req):
-        assert req.url.path == "/arkime/api/sessions", "must not fetch packets for a missing id"
-        return httpx.Response(200, json={"data": []})
+        assert req.url.path == _DETAIL, "must not fetch packets for a missing id"
+        return httpx.Response(500, json=_NOT_FOUND)
 
     out = tool_text(
         await _server(handler).call_tool("arkime_session_payload", {"session_id": _SID})
@@ -178,7 +184,7 @@ async def test_payload_arkime_not_found_text_is_an_answer_not_a_failure():
     """Arkime answers an unknown id on the packets route with 200 and prose."""
 
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         return httpx.Response(200, text=f"Problem loading packets for {_SID} Error: Not found")
 
@@ -193,7 +199,7 @@ async def test_payload_arkime_not_found_text_is_an_answer_not_a_failure():
 @pytest.mark.asyncio
 async def test_payload_refuses_an_oversized_render():
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         return httpx.Response(200, text="<pre>" + ("A" * 250_000) + "</pre>")
 
@@ -261,7 +267,7 @@ async def test_session_file_returns_metadata_and_hashes_of_the_served_bytes():
     body = b"MZ\x90\x00this-is-the-file"
 
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         assert req.url.path == f"/arkime/api/session/{_NODE}/{_SID}/bodyhash/{_MD5}"
         return httpx.Response(200, content=body)
@@ -287,7 +293,7 @@ async def test_session_file_no_match_in_this_session_is_an_answer_not_a_failure(
     """Arkime's 400 "No match" means this session carried no such body."""
 
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         return httpx.Response(400, content=b"No match")
 
@@ -305,8 +311,8 @@ async def test_session_file_no_match_in_this_session_is_an_answer_not_a_failure(
 @pytest.mark.asyncio
 async def test_session_file_unknown_session_is_an_answer_not_a_failure():
     def handler(req):
-        assert req.url.path == "/arkime/api/sessions"
-        return httpx.Response(200, json={"data": []})
+        assert req.url.path == _DETAIL
+        return httpx.Response(500, json=_NOT_FOUND)
 
     out = tool_text(
         await _server(handler).call_tool(
@@ -319,7 +325,7 @@ async def test_session_file_unknown_session_is_an_answer_not_a_failure():
 @pytest.mark.asyncio
 async def test_session_file_url_only_skips_the_download_but_still_names_the_session():
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         raise AssertionError("no download expected")
 
@@ -337,7 +343,7 @@ async def test_session_file_url_only_skips_the_download_but_still_names_the_sess
 @pytest.mark.asyncio
 async def test_session_file_refuses_an_oversized_body():
     def handler(req):
-        if req.url.path == "/arkime/api/sessions":
+        if req.url.path == _DETAIL:
             return _session_lookup(req)
         return httpx.Response(200, content=b"x", headers={"content-length": str(200 * 1024 * 1024)})
 

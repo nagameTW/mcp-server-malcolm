@@ -1020,7 +1020,7 @@ class MalcolmClient:
             "order": order,
             **_arkime_query_params("", time_from, time_to),
         }
-        return await self.get("/arkime/api/sessions", params=params)
+        return _raise_on_arkime_error(await self.get("/arkime/api/sessions", params=params))
 
     @_upstream
     async def arkime_session_pcap(self, session_id: str, max_bytes: int = 0) -> bytes:
@@ -1163,49 +1163,30 @@ class MalcolmClient:
         resp.raise_for_status()
         return resp.text
 
+    @_upstream
     async def arkime_session_detail(self, session_id: str) -> dict[str, Any]:
-        """Full SPI document for one session, via the sessions search.
+        """Full SPI document for one session, via GET /arkime/api/session/<id>.
 
-        Fetched through /arkime/api/sessions with an `id ==` expression and
-        date=-1 (all time). The id is indexed, so this stays a point lookup
-        rather than a scan.
+        The route answers application/json for both the bare and the
+        node-prefixed id and needs no time window. Measured on Arkime 6.6.0
+        (Malcolm v26.07.1) and again on Malcolm's public training instance.
 
-        This docstring used to justify that detour by claiming GET
-        /arkime/api/session/<id> serves the SPA HTML shell rather than JSON.
-        That is false on Arkime 6.6.0: measured here it answers 200
-        application/json in 10,794 bytes with 36 top-level keys, for both the
-        bare and the node-prefixed id, and 500 {"text":"Session not found"} for
-        an unknown one.
+        This used to go through /arkime/api/sessions with an `id ==`
+        expression, which answers Arkime's session row instead of the document:
+        14 top-level keys against the route's 36 on v26.07.1, 11 against 25 on
+        the training instance, missing @timestamp, event, tags and the Zeek
+        detail -- while the bundled prompt promised all fields.
 
-        The detour is not equivalent to it. Measured on the same session, the
-        search answers 14 top-level keys against the route's 36 -- a strict
-        subset, adding nothing of its own and missing 22: @timestamp, event,
-        tags, tagsCnt, tcpflags, protocol, protocolCnt, length, ethertype,
-        segmentCnt, packetPos, packetRange, srcOui, srcOuiCnt, dstOui,
-        dstOuiCnt, srcTTL, srcTTLCnt, dstTTL, dstTTLCnt, srcRIR and dstRIR.
-        (`id` and `nodehost` are in both.) It is kept only because swapping the
-        URL widens every answer this tool has ever returned, which is a
-        behavior change rather than a docstring correction. Swap it when that
-        widening is wanted: both id forms work and the route needs no time
-        window.
-
-        The id is reduced to its bare form first. arkime_sessions hands out the
-        node-prefixed id ("3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw") but Arkime's
-        `id ==` matches only the part after the last ':' — measured on Malcolm v26.07.1,
-        the prefixed form returns 0 rows and the bare one returns the session.
-        Feeding this tool the id its sibling produced therefore always missed.
-        Only this expression needs the bare form: sessions.pcap takes the
-        prefixed id as-is, so arkime_session_pcap passes it through untouched.
-
-        Returns {} when no session matches the id.
+        Returns {} for an id Arkime does not hold, which it answers with 500
+        {"text": "Session not found"}. Any other failure raises.
         """
-        bare_id = session_id.rsplit(":", 1)[-1].rsplit("@", 1)[-1]
-        result = await self.get(
-            "/arkime/api/sessions",
-            params={"expression": f"id == {bare_id}", "date": -1, "length": 1},
-        )
-        data = result.get("data") if isinstance(result, dict) else None
-        return data[0] if data else {}
+        c = await self._client()
+        resp = await c.get(_checked_path(f"/arkime/api/session/{quote(session_id, safe='')}"))
+        if resp.status_code == 500 and "Session not found" in resp.text:
+            return {}
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
 
     @_upstream
     async def arkime_unique(
@@ -1309,7 +1290,7 @@ class MalcolmClient:
         """
         params = _arkime_query_params(expression, time_from, time_to)
         params["spi"] = spi
-        return await self.get("/arkime/api/spiview", params=params)
+        return _raise_on_arkime_error(await self.get("/arkime/api/spiview", params=params))
 
     async def arkime_connections(
         self,
@@ -1553,7 +1534,7 @@ class MalcolmClient:
             "fields": fields,
             **_arkime_query_params(expression, time_from, time_to),
         }
-        data = await self._arkime_post("/arkime/api/sessions/summary", body)
+        data = _raise_on_arkime_error(await self._arkime_post("/arkime/api/sessions/summary", body))
         if not isinstance(data, list) or not data:
             return {"totals": {}, "breakdowns": []}
         return {
@@ -1949,6 +1930,28 @@ def _decode_search_source(obj: dict[str, Any]) -> dict[str, Any]:
         "filters": source.get("filter", []),
         "index_pattern": refs.get(source.get("indexRefName"), {}).get("id", ""),
     }
+
+
+def _raise_on_arkime_error(data: Any) -> Any:
+    """Return `data`, or raise when Arkime reported a failure inside an HTTP 200.
+
+    Arkime answers 200 for the errors it catches. /api/sessions and
+    /api/spiview put the text under "error"; /api/sessions/summary streams
+    [{"bsqErr": ...}] (viewer/apiSessions.js). Measured on Malcolm's training
+    instance: the expression "ip.src==[[[" answered 200 {"data": [],
+    "recordsFiltered": 0, "error": "Parse error on line 1: ..."}, which read
+    as a search that ran and matched nothing.
+    """
+    first = data[0] if isinstance(data, list) and data else data
+    detail = (first.get("error") or first.get("bsqErr")) if isinstance(first, dict) else None
+    if not detail:
+        return data
+    if isinstance(detail, dict):
+        detail = detail.get("text") or detail
+    raise ToolInputError(
+        f"Arkime refused the query: {detail}. Arkime field names are its own; "
+        f"look them up with arkime_field_search."
+    )
 
 
 def _arkime_query_params(expression: str, time_from: str, time_to: str) -> dict[str, Any]:

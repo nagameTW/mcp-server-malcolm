@@ -56,62 +56,40 @@ async def test_session_detail_hits_endpoint_and_returns_fields():
 
     def handler(req):
         seen["path"] = req.url.path
-        seen["expression"] = req.url.params.get("expression")
-        seen["date"] = req.url.params.get("date")
-        # /arkime/api/sessions wraps records in a "data" array.
-        return httpx.Response(
-            200, json={"data": [{"source": {"ip": "192.0.2.77"}, "protocols": ["dns"]}]}
-        )
+        # /arkime/api/session/<id> answers the stored document itself, not a "data" array.
+        return httpx.Response(200, json={"source": {"ip": "192.0.2.77"}, "tags": ["t"]})
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
     out = await mcp.call_tool("arkime_session_detail", {"session_id": "240601-X"})
-    # GET /arkime/api/session/<id> serves the SPA HTML, not JSON; a single
-    # session comes from the sessions search with an id== expression + date=-1.
-    assert seen["path"] == "/arkime/api/sessions"
-    assert seen["expression"] == "id == 240601-X"
-    assert seen["date"] == "-1"
+    assert seen["path"] == "/arkime/api/session/240601-X"
     assert "192.0.2.77" in str(out)
 
 
 @pytest.mark.asyncio
-async def test_session_detail_strips_the_node_prefix_from_the_id():
-    """arkime_sessions returns "3@240425:240425-xxx" but Arkime's `id ==`
-    matches only the bare id after the last ':' — measured live on 26.07.1 the
-    prefixed form returns 0 rows, so the documented workflow (search, then drill
-    into the id you got back) always missed."""
+@pytest.mark.parametrize(
+    "session_id", ["3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw", "240425-IrHoGmqqp7SR6TWIWoG0Dw"]
+)
+async def test_session_detail_passes_either_id_form_through(session_id):
+    """The route takes the node-prefixed id arkime_sessions hands out and the bare
+    one alike: measured on Malcolm's training instance, both answered the same
+    25-key document. (The old `id ==` expression matched only the bare form.)"""
     seen = {}
 
     def handler(req):
-        seen["expression"] = req.url.params.get("expression")
-        return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
+        seen["path"] = req.url.path
+        return httpx.Response(200, json={"source": {"ip": "192.0.2.77"}})
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))
-    await mcp.call_tool(
-        "arkime_session_detail", {"session_id": "3@240425:240425-IrHoGmqqp7SR6TWIWoG0Dw"}
-    )
-    assert seen["expression"] == "id == 240425-IrHoGmqqp7SR6TWIWoG0Dw"
-
-
-@pytest.mark.asyncio
-async def test_session_detail_accepts_an_already_bare_id():
-    seen = {}
-
-    def handler(req):
-        seen["expression"] = req.url.params.get("expression")
-        return httpx.Response(200, json={"data": [{"source": {"ip": "192.0.2.77"}}]})
-
-    mcp = MCPServer("t")
-    register_arkime_tools(mcp, _mock_client(handler))
-    await mcp.call_tool("arkime_session_detail", {"session_id": "240425-IrHoGmqqp7SR6TWIWoG0Dw"})
-    assert seen["expression"] == "id == 240425-IrHoGmqqp7SR6TWIWoG0Dw"
+    await mcp.call_tool("arkime_session_detail", {"session_id": session_id})
+    assert seen["path"] == f"/arkime/api/session/{session_id}"
 
 
 @pytest.mark.asyncio
 async def test_session_detail_reports_not_found():
     def handler(req):
-        return httpx.Response(200, json={"data": []})
+        return httpx.Response(500, json={"success": False, "text": "Session not found"})
 
     mcp = MCPServer("t")
     register_arkime_tools(mcp, _mock_client(handler))

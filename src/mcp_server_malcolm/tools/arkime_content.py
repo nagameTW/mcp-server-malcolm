@@ -200,15 +200,9 @@ def register_arkime_content_tools(mcp: MCPServer, client: MalcolmClient) -> None
     ) -> str:
         """Fetch the session Arkime holds under one id — a point lookup, not a search.
 
-        What comes back is Arkime's own session row, which is narrower than the
-        document behind it: measured on Malcolm v26.07.1 across 17 sessions,
-        11-14 top-level keys of the 21-30 the stored document held, 400-560
-        characters against 1-3 KB. `tags`, the `event` block and the Zeek /
-        Suricata detail were absent every time, and http.md5 was too even where
-        an http block came back. When the field you need is not in the answer,
-        read the document itself with malcolm_search, or with search_dsl over
-        arkime_sessions3-* on a {"term": {"_id": ...}} query taking the part of
-        the id after the last ":". For the session's raw packets use
+        What comes back is the full stored document for that session, including
+        @timestamp, `tags`, the `event` block and the Zeek / Suricata detail
+        that arkime_sessions rows leave out. For the session's raw packets use
         arkime_session_pcap; for what the two sides actually sent, the payload
         bytes rather than parsed fields, use arkime_session_payload; for
         distinct values across many sessions use arkime_unique /
