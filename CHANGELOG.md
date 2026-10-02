@@ -6,6 +6,41 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **`malcolm_alerts` said a signature did not exist when it did.** With no
+  `time_from`, the alert search covers all history, but the substring pre-scan
+  that turns `signature` or `category` into exact names asked `/mapi/agg`,
+  which defaults to the last 24 hours. On Malcolm's training instance, a 2021
+  capture, `signature="Modbus"` answered "No alert signature contains 'Modbus'"
+  beside 5,037 matching alerts. The pre-scan now covers the same window as the
+  search. The scan also reads only the 500 most frequent values; when values
+  beyond those exist, a miss now says how many alert documents went unscanned
+  instead of asserting absence, and a hit is prefixed with a `Note:` line, since
+  a rarer match can still be missing (there, "Modbus Request flood detected"
+  sat among 327 unscanned alerts).
+- **`malcolm_field_values` printed a page as a count.** "Values for
+  'destination.ip' (30 distinct)" was the `limit`, not the field's cardinality;
+  on the training instance 813,785 documents held values that were not listed.
+  When `/mapi/agg` reports documents outside the returned values, the header
+  now says how many.
+- **`malcolm_field_values` did not flag a field name Malcolm never indexes.**
+  The rename hint only ran on an empty bucket list, but Malcolm files every
+  document that lacks the field under a "-" bucket, so `http.user_agent`
+  answered "(1 distinct): - (7,718,258 docs)". A list holding only "-" now gets
+  the hint (`http.useragent`). When the field list cannot be fetched, the reply
+  no longer claims the field exists.
+- **`malcolm_data_coverage` listed only the first 50 datasets** and summed only
+  those into `total_documents`. The training instance has 174. It now asks for
+  up to 500, and `total_documents` includes any documents in datasets past
+  that, reported as `documents_in_unlisted_datasets`.
+- **`malcolm_aggregate` checked a key `/mapi/agg` never returns** to decide
+  whether a result was empty, so the field lookup ran on every call. It now
+  reads the real buckets, ignoring the "-" placeholder. The visible output for
+  a valid field was already right; the hint for an unknown one now comes from
+  the actual buckets rather than from the dead check. The hint's first line no
+  longer says "No documents matched", which was false for a "-" bucket.
+
 ### Added
 
 - **`MALCOLM_MCP_DISABLE_TOOLS`, a per-tool disable list layered on the read

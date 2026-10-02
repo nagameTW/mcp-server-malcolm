@@ -716,7 +716,9 @@ class MalcolmClient:
 
         if not lines:
             return ""
-        return "No documents matched. These filter fields do not exist:\n" + "\n".join(lines)
+        return "These field names are not indexed here, so nothing can match them:\n" + "\n".join(
+            lines
+        )
 
     # -- Health & Status ------------------------------------------------
 
@@ -1781,10 +1783,16 @@ class MalcolmClient:
         filters: dict[str, Any] | None = None,
         time_from: str = "",
         time_to: str = "",
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], int]:
         """Get distinct values for a field via aggregation.
 
-        Returns list of {"key": ..., "doc_count": ...}.
+        Returns:
+            (buckets, other_docs): buckets is a list of {"key", "doc_count"};
+            other_docs is the aggregation's sum_other_doc_count, the documents
+            whose value did not make the top `limit`. A terms aggregation drops
+            the rarest values first, so other_docs > 0 means the list is cut,
+            not complete -- measured on Malcolm's training instance,
+            destination.ip at limit 30 left 813,785 documents unlisted.
         """
         data = await self.aggregate(
             fields=field,
@@ -1793,7 +1801,7 @@ class MalcolmClient:
             time_from=time_from,
             time_to=time_to,
         )
-        return _extract_buckets(data, field)
+        return _extract_buckets(data, field), _agg_other_docs(data, field)
 
     async def field_profile(
         self, field: str, time_from: str = "", time_to: str = ""
@@ -1813,6 +1821,14 @@ class MalcolmClient:
         )
         buckets = _extract_buckets(data, "event.dataset")
         return [{"dataset": b["key"], "doc_count": b["doc_count"]} for b in buckets]
+
+
+def _agg_other_docs(data: dict[str, Any], field: str) -> int:
+    """sum_other_doc_count of the /mapi/agg aggregation keyed by `field`, else 0."""
+    sub = data.get(field)
+    if isinstance(sub, dict):
+        return int(sub.get("sum_other_doc_count") or 0)
+    return 0
 
 
 def _extract_buckets(data: dict[str, Any], field: str) -> list[dict[str, Any]]:
