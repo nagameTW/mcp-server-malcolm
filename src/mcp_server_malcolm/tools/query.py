@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
 
+from mcp_server_malcolm.client import _extract_buckets
 from mcp_server_malcolm.tools._parse import parse_int_list, parse_json_object
 
 if TYPE_CHECKING:
@@ -149,8 +150,11 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             doctype=doctype.strip(),
         )
         body = json.dumps(data, indent=2, ensure_ascii=False, default=str)
-        checked = [f for f in fields.split(",") if f.strip()] + list(parsed or {})
-        return await _with_empty_hint(client, data.get("values"), checked, body)
+        checked = [f.strip() for f in fields.split(",") if f.strip()] + list(parsed or {})
+        # /mapi/agg keys the buckets by the first field. "-" holds documents that
+        # lack it, which is all of them when the name is not indexed.
+        rows = [b for b in _extract_buckets(data, checked[0]) if b.get("key") != "-"]
+        return await _with_empty_hint(client, rows, checked, body)
 
     @mcp.tool(title="Search Suricata alerts", annotations=_READ)
     async def malcolm_alerts(
@@ -191,8 +195,7 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             str,
             Field(
                 description="Start time, dateparser format. Empty searches ALL history, "
-                "but the signature/category substring pre-scan then sees only the last "
-                "24 hours — pass a range when hunting an older signature."
+                "and the signature/category substring pre-scan covers the same window."
             ),
         ] = "",
         time_to: Annotated[
@@ -217,27 +220,28 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         resolves the substring against the field's 500 most common values first
         and filters on the matches. A substring that matches no recorded value
         returns a message saying so rather than an empty result set — that is the
-        difference between "no such signature here" and "no alerts fired". That
-        pre-scan is the one place the time range bites: it reads only the last 24
-        hours, while the alert search itself covers ALL history when time_from is
-        empty, so on a capture older than a day every signature reads as
-        unrecorded until you pass time_from.
+        difference between "no such signature here" and "no alerts fired". When
+        more than 500 values exist in the window, the message says how many alert
+        documents carry the values that were not scanned instead of asserting
+        absence; narrow the window, or filter rule.name on the exact name with
+        malcolm_search. When the substring did match but rarer values went
+        unscanned, a "Note:" line precedes the JSON saying how many alert
+        documents those values carry.
         Returns the raw Malcolm /mapi/document response (matching alert documents).
         """
         filters: dict[str, Any] = {"event.dataset": "alert"}
+        notes: list[str] = []
 
         if signature:
             # 11_suricata_logs.conf renames suricata.alert.signature to rule.name
             # outright — filtering the old name matches nothing, ever.
-            matched = await _values_containing(
+            matched, unscanned = await _values_containing(
                 client, "rule.name", signature, time_from=time_from, time_to=time_to
             )
             if not matched:
-                return (
-                    f"No alert signature contains {signature!r}. Call "
-                    f'malcolm_field_values(field="rule.name") to see the signatures '
-                    f"this Malcolm has actually recorded."
-                )
+                return _no_match("signature", "rule.name", signature, unscanned)
+            if unscanned:
+                notes.append(_partial_note("signature", len(matched), unscanned))
             filters["rule.name"] = matched
         if severity:
             # Dropping an unparseable level used to leave the key unset, which
@@ -249,15 +253,13 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         if dest_ip:
             filters["destination.ip"] = dest_ip
         if category:
-            matched = await _values_containing(
+            matched, unscanned = await _values_containing(
                 client, "rule.category", category, time_from=time_from, time_to=time_to
             )
             if not matched:
-                return (
-                    f"No alert category contains {category!r}. Call "
-                    f'malcolm_field_values(field="rule.category") to see the categories '
-                    f"this Malcolm has actually recorded."
-                )
+                return _no_match("category", "rule.category", category, unscanned)
+            if unscanned:
+                notes.append(_partial_note("category", len(matched), unscanned))
             filters["rule.category"] = matched
         if action:
             filters["suricata.alert.action"] = action
@@ -273,7 +275,7 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             time_from=time_from,
             time_to=time_to,
         )
-        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+        return "\n".join([*notes, json.dumps(data, indent=2, ensure_ascii=False, default=str)])
 
 
 async def _values_containing(
@@ -297,18 +299,48 @@ async def _values_containing(
         time_to: Aggregation window end (dateparser format).
 
     Returns:
-        Matching values, drawn from the field's top _VALUE_SCAN_LIMIT values by
-        document count; empty when nothing matches.
+        (matches, unscanned): the values containing `needle`, drawn from the
+        field's top _VALUE_SCAN_LIMIT values by document count, and the number
+        of alert documents whose value fell outside that top list.
     """
-    buckets = await client.field_values(
+    # /mapi/agg defaults to the last 24 hours while /mapi/document defaults to
+    # all history, so an empty time_from has to be spelled out here or the scan
+    # misses every signature the search would find -- measured on Malcolm's
+    # training instance, "Modbus" read as unrecorded beside 5,037 matching alerts.
+    buckets, unscanned = await client.field_values(
         field=field,
         limit=_VALUE_SCAN_LIMIT,
         filters={"event.dataset": "alert"},
-        time_from=time_from,
+        time_from=time_from or "0",
         time_to=time_to,
     )
     needle = needle.lower()
-    return [str(b["key"]) for b in buckets if needle in str(b.get("key", "")).lower()]
+    matches = [str(b["key"]) for b in buckets if needle in str(b.get("key", "")).lower()]
+    return matches, unscanned
+
+
+def _partial_note(kind: str, matched: int, unscanned: int) -> str:
+    """Note for a substring that matched, when rarer values were never scanned."""
+    return (
+        f"Note: the {kind} substring matched {matched} of the {_VALUE_SCAN_LIMIT} most "
+        f"frequent values in this window; another {unscanned:,} alert documents carry rarer "
+        f"values that were not scanned, so a rarer match may be missing below."
+    )
+
+
+def _no_match(kind: str, field: str, needle: str, unscanned: int) -> str:
+    """Message for a substring no scanned value contains, honest about the scan's reach."""
+    if unscanned:
+        return (
+            f"No alert {kind} among the {_VALUE_SCAN_LIMIT} most frequent in this window "
+            f"contains {needle!r}, but another {unscanned:,} alert documents carry rarer "
+            f"values that were not scanned. Narrow time_from/time_to, or filter {field} on "
+            f"the exact name with malcolm_search."
+        )
+    return (
+        f"No alert {kind} contains {needle!r}. Call malcolm_field_values(field={field!r}) "
+        f"to see the values this Malcolm has actually recorded."
+    )
 
 
 async def _with_empty_hint(

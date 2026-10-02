@@ -138,7 +138,7 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         """
         parsed_filters = parse_json_object(filters, "filters", '{"event.dataset":"alert"}')
 
-        buckets = await client.field_values(
+        buckets, other_docs = await client.field_values(
             field=field,
             limit=min(max(1, limit), 500),
             filters=parsed_filters,
@@ -146,17 +146,27 @@ def register_field_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             time_to=time_to,
         )
 
-        if not buckets:
+        # Malcolm files every document that lacks the field under "-", so a field
+        # it never indexes answers one "-" bucket holding everything, not [].
+        if not [b for b in buckets if b.get("key") != "-"]:
             # Distinguish "wrong name" from "no data": Malcolm renames fields on
             # ingest, so a plausible name can be one that is simply never stored.
             if hint := await client.explain_unknown_fields([field]):
                 return hint
             return (
-                f"No values found for field '{field}'. The field exists but holds no "
-                f"data in this window — widen time_from/time_to or relax the filters."
+                f"No values found for field '{field}' in this window. Widen "
+                f"time_from/time_to or relax the filters, and confirm the name with "
+                f"malcolm_field_search."
             )
 
-        lines = [f"Values for '{field}' ({len(buckets)} distinct):"]
+        if other_docs:
+            header = (
+                f"Top {len(buckets)} values for '{field}'; another {other_docs:,} documents "
+                f"hold values not listed (raise limit to see them):"
+            )
+        else:
+            header = f"Values for '{field}' ({len(buckets)} distinct):"
+        lines = [header]
         for b in buckets:
             lines.append(f"  {b.get('key', '?')}  ({b.get('doc_count', 0):,} docs)")
 

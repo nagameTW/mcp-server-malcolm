@@ -130,14 +130,18 @@ def register_health_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             errors.append(f"ingest stats: {exc}")
 
         try:
-            buckets = await client.field_values(
+            # 500 is /mapi/agg's per-level ceiling. 50 used to cut a real
+            # deployment short: Malcolm's training instance holds 174 datasets.
+            buckets, other_docs = await client.field_values(
                 field="event.dataset",
-                limit=50,
+                limit=500,
                 time_from=time_from,
                 time_to=time_to,
             )
             result["datasets"] = {b["key"]: b["doc_count"] for b in buckets if "key" in b}
-            result["total_documents"] = sum(b.get("doc_count", 0) for b in buckets)
+            result["total_documents"] = sum(b.get("doc_count", 0) for b in buckets) + other_docs
+            if other_docs:
+                result["documents_in_unlisted_datasets"] = other_docs
         except Exception as exc:  # noqa: BLE001
             result["dataset_error"] = str(exc)
             errors.append(f"dataset counts: {exc}")
