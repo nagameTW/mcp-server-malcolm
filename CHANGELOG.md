@@ -62,6 +62,22 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **An upstream refusal lost its reason** (#66). Every client request turned
+  an HTTP error into httpx's message, which names only the status and URL. The
+  reason was in the body and was dropped: on the training instance
+  `arkime_connections` answered a bad expression with a 403 whose body read
+  `Parse error on line 1`, and the tool said only `403 Forbidden`. Malcolm's
+  `/mapi/opensearch/` is a plain nginx pass-through, so `search_dsl`, `count`
+  and `index_mapping` lost OpenSearch's `parsing_exception` or
+  `index_not_found_exception` the same way. Errors now end with the first 300
+  characters of the body, redacted like the rest of the message. An HTML error
+  page adds nothing, and neither does a streamed download that failed before
+  its body was read.
+- **The DSL tools claimed to work against any OpenSearch** (#75). The module
+  docstring, a client comment and both READMEs said repointing the base URL at
+  a bare OpenSearch node would work. Every DSL path carries Malcolm's
+  `/mapi/opensearch/` prefix, so it does not. The text now says the tools need
+  Malcolm's proxy.
 - **`malcolm_related_sessions` listed the direct hits a second time as
   "related"** (#70). Malcolm copies every Zeek record's `zeek.uid` into
   `rootId`, so the `rootId` search returned the direct set again. The related

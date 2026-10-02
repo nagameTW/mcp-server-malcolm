@@ -1,10 +1,9 @@
-"""Generic OpenSearch DSL tools -- the backend-agnostic query core.
+"""Raw OpenSearch DSL tools.
 
-These POST plain OpenSearch DSL to the configured endpoint (Malcolm's
-/mapi/opensearch proxy today). They carry NO Malcolm-specific query
-shape: repoint the client's base_url and they work against any
-OpenSearch-compatible backend. The Malcolm-specific tools live in the
-other modules and can be dropped without touching this one.
+These send plain OpenSearch DSL through Malcolm's /mapi/opensearch/ proxy,
+with no Malcolm filter syntax in between. They still need Malcolm: every
+path carries that proxy prefix. The Malcolm-filter tools live in the other
+modules and can be dropped without touching this one.
 """
 
 from __future__ import annotations
@@ -155,7 +154,9 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         only need a match count and not the documents, use count. For Malcolm's
         simpler field-filter syntax instead of raw DSL, use malcolm_search.
         Aggregations honor the time filter inside the DSL body, so there is no hidden
-        default time window. Returns the raw OpenSearch _search response.
+        default time window. Returns the raw OpenSearch _search response. A body
+        OpenSearch rejects comes back as an error carrying OpenSearch's own reason,
+        e.g. a parsing_exception naming the unknown query type.
 
         Every input guard runs before any request leaves this server: malformed
         query_dsl, an index containing /, ? or .., and a terms, multi_terms,
@@ -276,8 +277,8 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         writing a DSL query against it. To list which indices exist rather than inspect
         one index's schema, use list_indices. For Malcolm's non-standard field names
         across all indices, malcolm_field_search is easier than reading raw mappings.
-        Returns the raw OpenSearch _mapping response; a non-existent index yields an
-        OpenSearch error in the response body.
+        Returns the raw OpenSearch _mapping response; a non-existent index is
+        reported as an error carrying OpenSearch's index_not_found_exception.
 
         A wildcard returns one mapping block per matching index rather than a
         merged one, and each block repeats the whole schema: "arkime_sessions3-*"

@@ -229,11 +229,35 @@ def _upstream(fn: Callable[_P, Awaitable[_R]]) -> Callable[_P, Awaitable[_R]]:
         try:
             return await fn(*args, **kwargs)
         except httpx.HTTPStatusError as exc:
-            raise UpstreamError(_upstream_text(exc), exc.response.status_code) from exc
+            text = _upstream_text(exc) + _body_excerpt(exc.response)
+            raise UpstreamError(text, exc.response.status_code) from exc
         except httpx.HTTPError as exc:
             raise UpstreamError(_upstream_text(exc)) from exc
 
     return wrapper
+
+
+# Enough for OpenSearch's root_cause type and reason, which lead its error body.
+_BODY_EXCERPT_CHARS = 300
+
+
+def _body_excerpt(resp: httpx.Response) -> str:
+    """The upstream's own reason for a refusal, as a suffix for the error text.
+
+    httpx's message names only the status and URL. The reason is in the body:
+    OpenSearch's parsing_exception or index_not_found_exception through the
+    /mapi/opensearch/ proxy, Arkime's {"text": "Error: Parse error ..."}.
+    An HTML error page from nginx says nothing the status does not, and a
+    streamed download that failed before its body was read has no body to give.
+    """
+    if "html" in resp.headers.get("content-type", ""):
+        return ""
+    try:
+        body = " ".join(resp.text.split())
+    except httpx.ResponseNotRead:
+        return ""
+    # Redact before cutting, so a cut cannot split a secret away from its key.
+    return f"\nResponse body: {redact(body)[:_BODY_EXCERPT_CHARS]}" if body else ""
 
 
 def _upstream_text(exc: httpx.HTTPError) -> str:
@@ -485,10 +509,9 @@ class MalcolmClient:
             body["doctype"] = doctype
         return await self.post_or_get(f"/mapi/agg/{safe_fields}", body)
 
-    # -- OpenSearch DSL (generic; backend-agnostic) ---------------------
-    # These speak plain OpenSearch DSL against the configured endpoint via
-    # Malcolm's /mapi/opensearch proxy. No Malcolm-specific query shape —
-    # point the base_url elsewhere and they work against any OpenSearch.
+    # -- OpenSearch DSL ---------------------------------------------------
+    # Plain OpenSearch DSL through Malcolm's /mapi/opensearch/ proxy, which
+    # nginx passes straight to OpenSearch, error bodies included.
 
     async def opensearch_dsl(self, index: str, body: dict[str, Any]) -> dict[str, Any]:
         """POST a raw DSL search body; returns the raw OpenSearch response."""
