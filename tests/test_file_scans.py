@@ -561,6 +561,9 @@ def _with_is_orig(value):
         # the downloading client in source.ip and the web server in destination.ip.
         ("F", "198.51.100.1", "192.0.2.7"),
         ("T", "192.0.2.7", "198.51.100.1"),
+        # Strelka/filescan records store the same flag as a JSON bool.
+        (False, "198.51.100.1", "192.0.2.7"),
+        (True, "192.0.2.7", "198.51.100.1"),
     ],
 )
 async def test_file_scans_names_the_sender_from_is_orig(is_orig, sender, receiver):

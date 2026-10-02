@@ -75,8 +75,8 @@ All notable changes to this project are recorded here. The format follows
 - **`malcolm_file_scans` gave no way to tell which way a file moved** (#72).
   `source_ip` and `destination_ip` on a Zeek files record are the connection's
   originator and responder, so an HTTP download reads client to server. Zeek
-  keeps the file's direction in `network.is_orig`, and 88% of the training
-  instance's files records are `F`, sent by the responder. Rows now carry
+  keeps the file's direction in `network.is_orig`. On the training instance
+  84% of the files records (90,014 of 107,510) were sent by the responder. Rows now carry
   `sender_ip` and `receiver_ip` derived from it, and the tool description says
   what `source_ip` and `destination_ip` mean. The existing keys are unchanged.
 - **An Arkime query Arkime could not run read as zero matches** (#65).
