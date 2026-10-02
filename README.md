@@ -19,6 +19,10 @@ Ask an AI agent about the traffic in your [Malcolm](https://malcolm.fyi) instanc
 - "List the executables Zeek carved out of yesterday's traffic, with their hashes." → `malcolm_file_scans`
 - "Upload this PCAP, then hunt the stored packets for this string." → `malcolm_upload_pcap`, `arkime_create_hunt` (write tools, off by default)
 
+![Claude Code answering a question about Modbus alerts through mcp-server-malcolm](https://raw.githubusercontent.com/nagameTW/mcp-server-malcolm/main/docs/demo.gif)
+
+*An unedited Claude Code session against Malcolm's public training instance (training.malcolm.fyi): two `malcolm_aggregate` calls, then the answer.*
+
 This is the first MCP server for Malcolm, the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox). It runs under any MCP client, such as Claude Code, Claude Desktop or Cursor. It is read-only until you turn on a write class; with one on, it can also create alerts, tag sessions, launch hunts or upload PCAP.
 
 ## Contents

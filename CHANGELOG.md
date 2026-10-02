@@ -32,7 +32,10 @@ All notable changes to this project are recorded here. The format follows
   used to name the server and list Malcolm's components, which only told a
   reader who already runs Malcolm what this is. It now shows four example
   requests and the tools each one calls, and Quick start comes before the
-  design rationale ("Why an MCP layer"), which moved down a section.
+  design rationale ("Why an MCP layer"), which moved down a section. A GIF
+  of an unedited Claude Code session against Malcolm's public training
+  instance sits under the examples. It lives in `docs/`, which is not part of
+  the wheel or sdist.
 - **`search_dsl` refuses a bucket aggregation whose `size` is above 500**
   (#59). The top-level `size` was always clamped, but a `size` inside `aggs`
   went to OpenSearch as written, so one `terms` aggregation asking for 50,000
