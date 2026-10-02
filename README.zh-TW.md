@@ -10,19 +10,24 @@
 
 [![mcp-server-malcolm MCP server](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/card.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
-第一個給 [Malcolm](https://malcolm.fyi) 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。
+問 AI agent 你的 [Malcolm](https://malcolm.fyi) 裡有哪些流量，它會用 Malcolm 實際存的欄位名稱和 filter 語法去查，不用自己猜。例如：
 
-它讓任何支援 MCP 協定的 AI agent 都能用結構化工具存取 Malcolm：搜尋與聚合網路流量、探索欄位名稱、查詢 Suricata 告警、瀏覽 Arkime session、查詢 NetBox 資產、檢查系統健康。開啟 write class 之後，它還能建立告警、標記 session、發動 hunt、上傳 PCAP。沒開之前，它就是唯讀的。
+- 「列出過去 24 小時跟 10.10.20.15 有關的 Suricata 告警，順便查這個 IP 是 NetBox 裡哪台裝置。」→ `malcolm_alerts`、`malcolm_netbox_lookup`
+- 「過去一小時，各協定的 top talker 是誰？」→ `malcolm_aggregate`
+- 「列出 Zeek 從昨天的流量裡切出來的執行檔，附上 hash。」→ `malcolm_file_scans`
+- 「上傳這個 PCAP，再到已存的封包裡 hunt 這個字串。」→ `malcolm_upload_pcap`、`arkime_create_hunt`（write 工具，預設關閉）
+
+這是第一個給 Malcolm 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。Claude Code、Claude Desktop、Cursor 這類 MCP 客戶端都能用。沒開 write class 之前它是唯讀的；開了之後還能建立告警、標記 session、發動 hunt 或上傳 PCAP。
 
 ## 目錄
 
-- [為什麼要有 MCP 這一層](#為什麼要有-mcp-這一層)
 - [快速開始](#快速開始)
   - [1. 安裝](#1-安裝)
   - [2. 註冊到你的客戶端](#2-註冊到你的客戶端)
   - [3. 連線設定](#3-連線設定)
   - [4. 開啟 write 工具（選用）](#4-開啟-write-工具選用)
   - [其他安裝方式](#其他安裝方式)
+- [為什麼要有 MCP 這一層](#為什麼要有-mcp-這一層)
 - [預設唯讀，需要時再開](#預設唯讀需要時再開)
 - [讀取工具](#讀取工具)
 - [Write 工具（需自行開啟）](#write-工具需自行開啟)
@@ -38,21 +43,6 @@
 - [用到的 Malcolm API 端點](#用到的-malcolm-api-端點)
 - [不做的事](#不做的事)
 - [授權](#授權)
-
-## 為什麼要有 MCP 這一層
-
-Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_sessions3-*`），欄位名稱非標準，還有自己一套 filter 語法。要 LLM 直接對這個 index 寫 OpenSearch DSL，多半會寫錯。這個 server 把這件事從模型身上接過來：
-
-- 對外用 Malcolm 的 filter 語法，不是原生 DSL。
-- 提供欄位探索，讓模型查詢前先確認欄位名稱。
-- 提供欄位值列舉，讓模型看到欄位裡實際有哪些值。
-- 兩套欄位字彙都涵蓋。Arkime expression 吃 Arkime 自己的名稱（`ip.src`），Malcolm 其他地方吃 ECS 名稱（`source.ip`），而 Malcolm 自己的欄位清單只有後者。前者由 `arkime_field_search` 補上。
-- 封裝 Suricata 告警查詢，替它處理欄位映射（`suricata.alert.*` 對 `rule.*`）。
-- 補上 NetBox 資產上下文（IP 對應裝置、網段）。
-
-這一層真正要擋的失敗是無聲的那種。查一個 Malcolm 沒有索引的欄位，它不會報錯，只會回空結果；模型猜了個看似合理但錯誤的名稱，讀到的是「這種流量不存在」，然後就走掉了。所以當搜尋回空的時候，這個 server 會去比對查詢用到的欄位，把 Malcolm 實際存放該值的名稱回報出來。這個比對只在結果已經是空的之後才跑，查得到東西的時候不會多佔模型任何 context。
-
-write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開著的 OpenSearch、NetBox 原始 passthrough 直接交給 agent，不如只開一組具名、有稽核的 write 動作。細節見 [安全模型](#安全模型)。
 
 ## 快速開始
 
@@ -322,6 +312,21 @@ docker run -i --rm --network host \
 關於帳密：`docker inspect <container> --format '{{json .Config.Env}}'` 會把 `MALCOLM_PASSWORD` 以明文印出來，而且不管值是用 `-e VAR`、`-e VAR=value` 還是 `--env-file` 傳進去的都一樣——不管哪一種，Docker 都把解析後的環境存進容器的 metadata。只要那個容器物件還在，任何拿得到 Docker daemon 或 socket 的人就能把 Malcolm 密碼讀回去。沒有 `MALCOLM_PASSWORD_FILE` 那種讀 secrets 檔的輸入方式；`client.py:324` 只讀環境變數，別無其他。讓容器保持用完即丟（`--rm`、一個客戶端 session 一個容器，這本來就是 stdio server 隱含的模型）能縮短這個窗口，但關不掉它。
 
 `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` 是唯一需要 bind mount 的功能，因為 `malcolm_upload_pcap` 要讀的檔案必須已經位於 `MALCOLM_MCP_UPLOAD_DIR` 內。掛到那裡的主機目錄，得讓容器內的 uid 10001 讀得到。這一條是從 `tools/write/pcap_upload.py` 讀出來的，沒有實測——整個測試過程 write class 都是關著的。
+
+## 為什麼要有 MCP 這一層
+
+Malcolm 把所有網路 metadata 存在單一 OpenSearch index（`arkime_sessions3-*`），欄位名稱非標準，還有自己一套 filter 語法。要 LLM 直接對這個 index 寫 OpenSearch DSL，多半會寫錯。這個 server 把這件事從模型身上接過來：
+
+- 對外用 Malcolm 的 filter 語法，不是原生 DSL。
+- 提供欄位探索，讓模型查詢前先確認欄位名稱。
+- 提供欄位值列舉，讓模型看到欄位裡實際有哪些值。
+- 兩套欄位字彙都涵蓋。Arkime expression 吃 Arkime 自己的名稱（`ip.src`），Malcolm 其他地方吃 ECS 名稱（`source.ip`），而 Malcolm 自己的欄位清單只有後者。前者由 `arkime_field_search` 補上。
+- 封裝 Suricata 告警查詢，替它處理欄位映射（`suricata.alert.*` 對 `rule.*`）。
+- 補上 NetBox 資產上下文（IP 對應裝置、網段）。
+
+這一層真正要擋的失敗是無聲的那種。查一個 Malcolm 沒有索引的欄位，它不會報錯，只會回空結果；模型猜了個看似合理但錯誤的名稱，讀到的是「這種流量不存在」，然後就走掉了。所以當搜尋回空的時候，這個 server 會去比對查詢用到的欄位，把 Malcolm 實際存放該值的名稱回報出來。這個比對只在結果已經是空的之後才跑，查得到東西的時候不會多佔模型任何 context。
+
+write 這邊也是同一個想法。與其把 Malcolm 對任何登入者都開著的 OpenSearch、NetBox 原始 passthrough 直接交給 agent，不如只開一組具名、有稽核的 write 動作。細節見 [安全模型](#安全模型)。
 
 ## 預設唯讀，需要時再開
 

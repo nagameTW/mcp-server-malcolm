@@ -12,19 +12,24 @@
 
 [![mcp-server-malcolm MCP server](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/card.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
-The first MCP server for [Malcolm](https://malcolm.fyi), the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox).
+Ask an AI agent about the traffic in your [Malcolm](https://malcolm.fyi) instance, and it queries Malcolm with the field names and filter syntax Malcolm actually uses instead of guessing them. For example:
 
-It gives any MCP-compatible AI agent structured access to Malcolm: search and aggregate network traffic, discover field names, query Suricata alerts, browse Arkime sessions, resolve NetBox assets, and check system health. Turn on the write classes and it can also create alerts, tag sessions, launch hunts, and upload PCAP. It is read-only until you turn one on.
+- "Show every Suricata alert involving 10.10.20.15 in the last 24 hours, and which NetBox device owns that IP." → `malcolm_alerts`, `malcolm_netbox_lookup`
+- "Who were the top talkers by protocol over the last hour?" → `malcolm_aggregate`
+- "List the executables Zeek carved out of yesterday's traffic, with their hashes." → `malcolm_file_scans`
+- "Upload this PCAP, then hunt the stored packets for this string." → `malcolm_upload_pcap`, `arkime_create_hunt` (write tools, off by default)
+
+This is the first MCP server for Malcolm, the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox). It runs under any MCP client, such as Claude Code, Claude Desktop or Cursor. It is read-only until you turn on a write class; with one on, it can also create alerts, tag sessions, launch hunts or upload PCAP.
 
 ## Contents
 
-- [Why an MCP layer](#why-an-mcp-layer)
 - [Quick start](#quick-start)
   - [1. Install](#1-install)
   - [2. Register it with your client](#2-register-it-with-your-client)
   - [3. Connection settings](#3-connection-settings)
   - [4. Enabling write tools (optional)](#4-enabling-write-tools-optional)
   - [Other ways to install](#other-ways-to-install)
+- [Why an MCP layer](#why-an-mcp-layer)
 - [Read-only until you opt in](#read-only-until-you-opt-in)
 - [Read tools](#read-tools)
 - [Write tools (opt-in)](#write-tools-opt-in)
@@ -40,27 +45,6 @@ It gives any MCP-compatible AI agent structured access to Malcolm: search and ag
 - [Malcolm API endpoints used](#malcolm-api-endpoints-used)
 - [Non-goals](#non-goals)
 - [License](#license)
-
-## Why an MCP layer
-
-Malcolm keeps all network metadata in one OpenSearch index (`arkime_sessions3-*`) with non-standard field names and its own filter syntax. An LLM asked to write raw OpenSearch DSL against that index gets it wrong more often than not. This server takes that job off the model:
-
-- It exposes Malcolm's filter syntax instead of raw DSL.
-- It provides field discovery so the model checks field names before it queries.
-- It provides value enumeration so the model sees what values a field actually holds.
-- It covers both field vocabularies. Arkime expressions take Arkime's own names (`ip.src`), the rest of Malcolm takes ECS names (`source.ip`), and Malcolm's own field list carries only the second set. `arkime_field_search` supplies the first.
-- It wraps Suricata alert queries and handles the field mapping (`suricata.alert.*` vs `rule.*`).
-- It adds NetBox asset context (IP-to-device, network segments).
-
-The failure mode this is built against is a quiet one. Malcolm answers a query
-against a field it does not index with an empty result rather than an error, so
-a model that guesses a plausible-but-wrong name reads "no such traffic" and
-moves on. When a search comes back empty, this server checks the fields the
-query named and reports the name Malcolm actually stores the value under. That
-lookup runs only after a result set is already empty, so nothing is added to
-the model's context on queries that worked.
-
-The write side follows the same idea. Rather than hand an agent the raw OpenSearch and NetBox passthroughs that Malcolm already leaves open to any authenticated user, this server exposes a small, named, audited set of write actions. More on that under [Security model](#security-model).
 
 ## Quick start
 
@@ -330,6 +314,27 @@ Both working modes completed a full MCP session against the live Malcolm: `initi
 On credentials: `docker inspect <container> --format '{{json .Config.Env}}'` prints `MALCOLM_PASSWORD` in cleartext, and does so regardless of whether the value was passed as `-e VAR`, `-e VAR=value`, or `--env-file` — Docker stores the resolved environment in the container's metadata either way. Anyone with Docker daemon or socket access can read the Malcolm password back out for as long as the container object exists. There is no `MALCOLM_PASSWORD_FILE`-style secrets-file input; `client.py:324` reads the environment variable and nothing else. Keeping containers ephemeral (`--rm`, one per client session, which is the model a stdio server already implies) shortens the window without closing it.
 
 `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` is the one feature that needs a bind mount, since `malcolm_upload_pcap` reads a file that must already sit inside `MALCOLM_MCP_UPLOAD_DIR`. The host directory mounted there has to be readable by uid 10001 inside the container. That requirement is read from `tools/write/pcap_upload.py`, not exercised — the write classes stayed off throughout this testing.
+
+## Why an MCP layer
+
+Malcolm keeps all network metadata in one OpenSearch index (`arkime_sessions3-*`) with non-standard field names and its own filter syntax. An LLM asked to write raw OpenSearch DSL against that index gets it wrong more often than not. This server takes that job off the model:
+
+- It exposes Malcolm's filter syntax instead of raw DSL.
+- It provides field discovery so the model checks field names before it queries.
+- It provides value enumeration so the model sees what values a field actually holds.
+- It covers both field vocabularies. Arkime expressions take Arkime's own names (`ip.src`), the rest of Malcolm takes ECS names (`source.ip`), and Malcolm's own field list carries only the second set. `arkime_field_search` supplies the first.
+- It wraps Suricata alert queries and handles the field mapping (`suricata.alert.*` vs `rule.*`).
+- It adds NetBox asset context (IP-to-device, network segments).
+
+The failure mode this is built against is a quiet one. Malcolm answers a query
+against a field it does not index with an empty result rather than an error, so
+a model that guesses a plausible-but-wrong name reads "no such traffic" and
+moves on. When a search comes back empty, this server checks the fields the
+query named and reports the name Malcolm actually stores the value under. That
+lookup runs only after a result set is already empty, so nothing is added to
+the model's context on queries that worked.
+
+The write side follows the same idea. Rather than hand an agent the raw OpenSearch and NetBox passthroughs that Malcolm already leaves open to any authenticated user, this server exposes a small, named, audited set of write actions. More on that under [Security model](#security-model).
 
 ## Read-only until you opt in
 
