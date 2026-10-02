@@ -76,8 +76,12 @@ class FileRow(TypedDict, total=False):
     mime_type: str
     bytes: str | int  # Zeek sends a string, Strelka an int
     transport: str
+    # The connection's originator and responder, not the file's direction.
     source_ip: str
     destination_ip: str
+    # The file's direction, from Zeek's is_orig; absent when it was not recorded.
+    sender_ip: str
+    receiver_ip: str
     md5: str
     sha256: str
     severity: int
@@ -192,6 +196,10 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         0 there means Strelka scanned the file and matched nothing. A row's
         `extracted` value is the argument malcolm_extract_file takes; a row
         carrying `note` instead was seen on the wire but is not on disk.
+        `source_ip` and `destination_ip` are the connection's originator and
+        responder, so a download reads client to server. The file went from
+        `sender_ip` to `receiver_ip`, which appear when Zeek recorded the
+        direction.
 
         No match returns a sentence saying so, naming the field if a filter used
         one Malcolm does not index, rather than an empty list. Field names are
@@ -441,6 +449,13 @@ def _file_row(source: dict[str, Any]) -> FileRow:
         "scan_scanners": _str_list(rules.get("scanner")),
         "zeek_uid": _first(zeek.get("uid")),
     }
+
+    # Zeek's files record keeps the connection's endpoints in source/destination
+    # and the file's direction in is_orig: "T" means the originator sent it.
+    is_orig = _first((source.get("network") or {}).get("is_orig"))
+    if is_orig is not None:
+        ends = (row["source_ip"], row["destination_ip"])
+        row["sender_ip"], row["receiver_ip"] = ends if _is_true(is_orig) else ends[::-1]
 
     if extracted := _disk_name(source):
         row["extracted"] = extracted

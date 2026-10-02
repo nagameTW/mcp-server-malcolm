@@ -37,26 +37,29 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 description="Max sessions to return per side (direct and related counted "
                 "separately).",
                 ge=1,
+                le=500,
             ),
         ] = 50,
     ) -> str:
         """Correlate one Zeek UID across sessions via both direct and cross-reference matches.
 
-        Use this to pivot from a single connection UID to everything tied to it: it
-        queries zeek.uid (the direct connection) and rootId (Malcolm's cross-log link,
-        carrying references from other log types like files, dns, ssl) in one call.
+        Use this to pivot from a single connection UID to everything tied to it.
+        "direct" is every record carrying the UID in zeek.uid: the conn record and
+        its dns, http, ssl, files and other protocol records. "related" is every
+        record whose rootId is the UID but whose zeek.uid is not, chiefly the
+        connections carried inside a tunnel when the UID is the tunnel's. For an
+        ordinary connection "related" is empty, which is the normal answer.
         Zeek UIDs only: to pivot from an Arkime session id use
         arkime_session_detail, and for a plain single-field query without the dual
-        direct/related split use malcolm_search with a zeek.uid filter. This tool
-        earns its place only where one connection is recorded under two different
-        keys.
+        direct/related split use malcolm_search with a zeek.uid filter.
 
         Behavior: runs TWO independent Malcolm searches (one per match kind); `limit`
         caps EACH side separately, so up to 2×limit sessions come back total. The two
         searches fail independently — a failure on one side does not abort the other;
-        instead the result carries a `direct_error` or `related_error` string for the
-        side that failed while still returning the side that succeeded (check for those
-        keys); both failing is reported as an error, since nothing was correlated.
+        instead the result carries a `direct_error` or `related_error` string in place
+        of that side's hit list, and the summary names the side as failed rather than
+        counting it; both failing is reported as an error, since nothing was
+        correlated.
         Neither search is time-filtered — like malcolm_search, both cover all
         retained history, so an empty result is a real absence rather than a
         window. Returns a JSON object with separate "direct" and "related" hit
@@ -70,7 +73,7 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             )
 
         uid = uid.strip()
-        results: dict = {"uid": uid, "direct": [], "related": []}
+        results: dict = {"uid": uid}
 
         # Direct match: sessions with this UID
         try:
@@ -85,13 +88,14 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         except Exception as exc:  # noqa: BLE001
             results["direct_error"] = str(exc)
 
-        # Related match: sessions referencing this UID. Malcolm parks the Zeek
-        # connection UID in Arkime's rootId (1200_zeek_mutate.conf:69,
-        # filescan/11_parse.conf:127), which is what ties a flow's dns/ssl/files
-        # records back to its conn record. There is no related.zeek.uid field.
+        # Related match: records that point at this UID through rootId without
+        # carrying it themselves. Malcolm copies every Zeek record's zeek.uid into
+        # rootId (1200_zeek_mutate.conf), so rootId alone repeats the direct hits;
+        # what it adds is a conn record inside a tunnel, whose rootId is the
+        # tunnel's uid (1015_zeek_conn.conf). There is no related.zeek.uid field.
         try:
             related = await client.search(
-                filters={"rootId": uid},
+                filters={"rootId": uid, "!zeek.uid": uid},
                 limit=limit,
             )
             related_hits = related.get("results", related.get("hits", []))
@@ -106,8 +110,15 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             # document carrying only the two error keys would read as success.
             raise UpstreamError(f"{results['direct_error']}; {results['related_error']}")
 
-        direct_count = len(results.get("direct", []))
-        related_count = len(results.get("related", []))
-        results["summary"] = f"{direct_count} direct + {related_count} related sessions"
+        # A failed side has no count; printing 0 would read as a real absence.
+        results["summary"] = (
+            " + ".join(
+                f"{side} search failed"
+                if f"{side}_error" in results
+                else f"{len(results[side])} {side}"
+                for side in ("direct", "related")
+            )
+            + " sessions"
+        )
 
         return json.dumps(results, indent=2, ensure_ascii=False, default=str)

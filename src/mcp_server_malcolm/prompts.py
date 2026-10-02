@@ -123,7 +123,7 @@ You are threat hunting on Malcolm (network traffic analysis). Follow this loop.
    - arkime_connections(expression=...) -> who-talked-to-whom graph for lateral
      movement.
    - malcolm_related_sessions(uid="<zeek.uid>") -> tie a Zeek connection to its
-     dns/ssl/files records.
+     dns/ssl/files records, and a tunnel to the connections inside it.
 
 8. PUT NAMES ON THE ADDRESSES.
    - malcolm_netbox_lookup(ip="192.0.2.77") -> internal assets: is this a known
