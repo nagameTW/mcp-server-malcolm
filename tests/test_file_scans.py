@@ -545,3 +545,36 @@ async def test_file_scans_survives_a_row_of_entirely_list_valued_fields():
         "text/plain",
         "a.txt",
     )
+
+
+def _with_is_orig(value):
+    doc = json.loads(json.dumps(_FILE_DOC))
+    doc["_source"]["network"] = {"is_orig": value}
+    return doc
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("is_orig", "sender", "receiver"),
+    [
+        # Measured on the training instance: an HTTP download is is_orig F with
+        # the downloading client in source.ip and the web server in destination.ip.
+        ("F", "198.51.100.1", "192.0.2.7"),
+        ("T", "192.0.2.7", "198.51.100.1"),
+    ],
+)
+async def test_file_scans_names_the_sender_from_is_orig(is_orig, sender, receiver):
+    mcp = _tools(_docs_handler([_with_is_orig(is_orig)]))
+    row = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+
+    assert (row["sender_ip"], row["receiver_ip"]) == (sender, receiver)
+    assert (row["source_ip"], row["destination_ip"]) == ("192.0.2.7", "198.51.100.1")
+
+
+@pytest.mark.asyncio
+async def test_file_scans_claims_no_direction_without_is_orig():
+    mcp = _tools(_docs_handler([_FILE_DOC]))
+    row = json.loads(tool_text(await mcp.call_tool("malcolm_file_scans", {})))["files"][0]
+
+    assert "sender_ip" not in row
+    assert "receiver_ip" not in row

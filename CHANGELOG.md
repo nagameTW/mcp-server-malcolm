@@ -62,6 +62,23 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **`malcolm_related_sessions` listed the direct hits a second time as
+  "related"** (#70). Malcolm copies every Zeek record's `zeek.uid` into
+  `rootId`, so the `rootId` search returned the direct set again. The related
+  side now asks for `rootId` equal to the UID and `zeek.uid` not equal to it,
+  which leaves the records `rootId` really adds: the connections inside a
+  tunnel, whose `rootId` is the tunnel's UID. On the training instance a
+  tunnel UID went from "2 direct + 46 related" to "2 direct + 44 related", the
+  44 being its inner connections. A side whose search failed is now named as
+  failed in the summary and has no hit list, where it used to count as 0.
+  `limit` is capped at 500 like the other search tools.
+- **`malcolm_file_scans` gave no way to tell which way a file moved** (#72).
+  `source_ip` and `destination_ip` on a Zeek files record are the connection's
+  originator and responder, so an HTTP download reads client to server. Zeek
+  keeps the file's direction in `network.is_orig`, and 88% of the training
+  instance's files records are `F`, sent by the responder. Rows now carry
+  `sender_ip` and `receiver_ip` derived from it, and the tool description says
+  what `source_ip` and `destination_ip` mean. The existing keys are unchanged.
 - **An Arkime query Arkime could not run read as zero matches** (#65).
   Arkime answers a bad expression or an unknown field with HTTP 200 and the
   reason in the body: `{"error": ...}` from `/api/sessions` and `/api/spiview`,
