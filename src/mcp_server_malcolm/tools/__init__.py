@@ -20,6 +20,13 @@ if TYPE_CHECKING:
 # alerting) or does not want the agent touching.
 DISABLE_READ_GROUPS_ENV = "MALCOLM_MCP_DISABLE_READ_GROUPS"
 
+# Comma-separated read tools to remove after the groups are registered. The
+# finer knob for a group that has to stay: arkime is the largest block and the
+# one nobody can drop, since arkime_sessions is the only search that returns a
+# session ID. A deny list rather than an allow list, so a tool added in a later
+# release is not silently absent from every existing config.
+DISABLE_TOOLS_ENV = "MALCOLM_MCP_DISABLE_TOOLS"
+
 
 def _read_groups() -> dict[str, Callable[[MCPServer, MalcolmClient], None]]:
     """Map each read group name to its registrar, in registration order."""
@@ -54,6 +61,11 @@ def _read_groups() -> dict[str, Callable[[MCPServer, MalcolmClient], None]]:
     }
 
 
+def _env_names(env: str) -> frozenset[str]:
+    raw = os.environ.get(env, "")
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
 def _disabled_read_groups(valid: frozenset[str]) -> frozenset[str]:
     """Parse the disable list, rejecting names that match no group.
 
@@ -61,8 +73,7 @@ def _disabled_read_groups(valid: frozenset[str]) -> frozenset[str]:
     drop is the one outcome nobody would notice until the schema bill or an
     unwanted tool call showed up.
     """
-    raw = os.environ.get(DISABLE_READ_GROUPS_ENV, "")
-    names = frozenset(part.strip() for part in raw.split(",") if part.strip())
+    names = _env_names(DISABLE_READ_GROUPS_ENV)
     unknown = names - valid
     if unknown:
         raise ValueError(
@@ -85,6 +96,32 @@ def register_all_tools(mcp: MCPServer, client: MalcolmClient) -> frozenset[str]:
         if name not in disabled:
             register(mcp, client)
     return disabled
+
+
+def remove_disabled_tools(mcp: MCPServer) -> frozenset[str]:
+    """Remove the read tools named in the per-tool disable list.
+
+    Run after register_all_tools and before the write tools, so the valid names
+    are exactly the read tools still registered. A typo, a tool whose group is
+    already disabled, and a write tool all fail startup the same loud way the
+    group list does.
+    """
+    from mcp.server.mcpserver.exceptions import ToolError
+
+    names = _env_names(DISABLE_TOOLS_ENV)
+    unknown = set()
+    for name in names:
+        try:
+            mcp.remove_tool(name)
+        except ToolError:
+            unknown.add(name)
+    if unknown:
+        raise ValueError(
+            f"{DISABLE_TOOLS_ENV}: unknown read tool(s) {', '.join(sorted(unknown))}. "
+            "Use exact names as tools/list shows them. A tool in a disabled read group "
+            "is already gone, and write tools are set by the MALCOLM_MCP_ENABLE_* flags."
+        )
+    return names
 
 
 def register_write_tools(mcp: MCPServer, client: MalcolmClient, cfg: WriteConfig) -> None:

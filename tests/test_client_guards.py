@@ -569,3 +569,30 @@ async def test_an_upstream_failure_that_has_text_keeps_its_own():
     with pytest.raises(UpstreamError) as err:
         await c.ping()
     assert str(err.value) == "All connection attempts failed"
+
+
+# -- MALCOLM_BASE_URL is read when MALCOLM_URL is unset (#46) --
+#
+# A Malcolm .env reused from elsewhere often spells it MALCOLM_BASE_URL. With
+# only the default to fall back on, the client aimed at https://localhost and
+# the first call came back 401, which reads as a wrong password.
+
+
+@pytest.mark.parametrize(
+    ("url", "base_url", "expected"),
+    [
+        (None, "https://base.example", "https://base.example"),
+        ("https://url.example", "https://base.example", "https://url.example"),
+        ("", "https://base.example", "https://base.example"),
+        (None, None, "https://localhost"),
+    ],
+)
+def test_from_env_falls_back_to_malcolm_base_url(
+    url: str | None, base_url: str | None, expected: str, monkeypatch: pytest.MonkeyPatch
+):
+    for name, value in (("MALCOLM_URL", url), ("MALCOLM_BASE_URL", base_url)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert MalcolmClient.from_env().base_url == expected

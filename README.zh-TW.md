@@ -173,11 +173,11 @@ claude mcp add malcolm \
 
 ### 3. 連線設定
 
-底下的預設值就是 `MalcolmClient.from_env` 讀到的（`client.py:294-304`）。
+底下的預設值就是 `MalcolmClient.from_env` 讀到的（`client.py:302-331`）。
 
 | 變數 | 預設值 | 說明 |
 | --- | --- | --- |
-| `MALCOLM_URL` | `https://localhost` | Malcolm base URL，例如 `https://malcolm.example` |
+| `MALCOLM_URL` | `https://localhost` | Malcolm base URL，例如 `https://malcolm.example`。沒設時會先讀 `MALCOLM_BASE_URL` 再退回預設值，從其他工具沿用來的 Malcolm `.env` 可以直接用 |
 | `MALCOLM_USERNAME` | `admin` | Basic auth 使用者名稱 |
 | `MALCOLM_PASSWORD` | `admin` | Basic auth 密碼 |
 | `MALCOLM_SSL_VERIFY` | `true` | `true`、`false`、或 CA bundle 的路徑（只要不是 `true`/`false`，就當成 CA 路徑交給 httpx） |
@@ -185,7 +185,7 @@ claude mcp add malcolm \
 | `MALCOLM_MAX_CONCURRENCY` | `8` | 同時對上游發出的請求數 |
 | `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | 上游請求速率上限 |
 
-`https://localhost` 和 `true` 這兩個預設值，是把變數拿掉後看實際送出去的請求確認的。`admin`/`admin` 這組帳密預設值來自讀 `client.py:296-297`：把三個連線變數全部拿掉，對 `https://localhost` 會拿到 401，這證明了 URL 的預設值、也證明那組帳密在那個 lab 上是錯的，但不能證明它字面上就是 `admin`。30 秒的 timeout 同樣是讀原始碼得來的——試著對一個不可路由的位址計時，大約 5 秒就回來了，因為 OS 層的 connect 失敗先發生，所以 30 秒那條路從來沒有被走到。
+`https://localhost` 和 `true` 這兩個預設值，是把變數拿掉後看實際送出去的請求確認的。`admin`/`admin` 這組帳密預設值來自讀 `client.py:323-324`：把三個連線變數全部拿掉，對 `https://localhost` 會拿到 401，這證明了 URL 的預設值、也證明那組帳密在那個 lab 上是錯的，但不能證明它字面上就是 `admin`。30 秒的 timeout 同樣是讀原始碼得來的——試著對一個不可路由的位址計時，大約 5 秒就回來了，因為 OS 層的 connect 失敗先發生，所以 30 秒那條路從來沒有被走到。
 
 關於 TLS：驗證預設開啟，而 Malcolm 出廠是自簽憑證。把 `MALCOLM_SSL_VERIFY` 指向 Malcolm 的 CA bundle，只有在 Malcolm 的 server 憑證帶有對應你連線主機名的 `subjectAltName` 時才有用 — Malcolm 自己的 setup 產出的憑證沒有 SAN 擴充欄位，所以就算 CA 指對了驗證還是會失敗。遠端的 Malcolm 請換上 SAN 正確的憑證。`MALCOLM_SSL_VERIFY="false"` 是完全關閉驗證，只有隔離的 localhost 實驗環境能接受；走網路的話，憑證和查詢結果都會經過未經驗證的通道。
 
@@ -209,6 +209,8 @@ Error executing tool malcolm_ping: [SSL: CERTIFICATE_VERIFY_FAILED] certificate 
 Error executing tool malcolm_ping: Client error '401 Unauthorized' for url 'https://malcolm.example/mapi/ping'
 For more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/401
 ```
+
+先看主機名稱，再懷疑密碼。你的 Malcolm 明明在別台，401 卻來自 `https://localhost`，代表 `MALCOLM_URL` 和 `MALCOLM_BASE_URL` 都沒進到 server 的環境變數裡。它退回預設值，問錯了機器。
 
 **主機連不上**（`MALCOLM_URL` 打錯、連接埠被防火牆擋掉、scheme 錯了）：
 
@@ -317,7 +319,7 @@ docker run -i --rm --network host \
 
 兩種能通的模式都對著跑著的 Malcolm 完成了一次完整的 MCP session：`initialize`、回傳 51 個工具的 `tools/list`，以及兩次工具呼叫（`malcolm_ping` → `pong`，`count` → 202,531 筆 `conn` session）。`MALCOLM_SSL_VERIFY` 留在預設的 `true` 時，在容器裡失敗的理由跟在容器外一樣，都是自簽憑證。
 
-關於帳密：`docker inspect <container> --format '{{json .Config.Env}}'` 會把 `MALCOLM_PASSWORD` 以明文印出來，而且不管值是用 `-e VAR`、`-e VAR=value` 還是 `--env-file` 傳進去的都一樣——不管哪一種，Docker 都把解析後的環境存進容器的 metadata。只要那個容器物件還在，任何拿得到 Docker daemon 或 socket 的人就能把 Malcolm 密碼讀回去。沒有 `MALCOLM_PASSWORD_FILE` 那種讀 secrets 檔的輸入方式；`client.py:297` 只讀環境變數，別無其他。讓容器保持用完即丟（`--rm`、一個客戶端 session 一個容器，這本來就是 stdio server 隱含的模型）能縮短這個窗口，但關不掉它。
+關於帳密：`docker inspect <container> --format '{{json .Config.Env}}'` 會把 `MALCOLM_PASSWORD` 以明文印出來，而且不管值是用 `-e VAR`、`-e VAR=value` 還是 `--env-file` 傳進去的都一樣——不管哪一種，Docker 都把解析後的環境存進容器的 metadata。只要那個容器物件還在，任何拿得到 Docker daemon 或 socket 的人就能把 Malcolm 密碼讀回去。沒有 `MALCOLM_PASSWORD_FILE` 那種讀 secrets 檔的輸入方式；`client.py:324` 只讀環境變數，別無其他。讓容器保持用完即丟（`--rm`、一個客戶端 session 一個容器，這本來就是 stdio server 隱含的模型）能縮短這個窗口，但關不掉它。
 
 `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` 是唯一需要 bind mount 的功能，因為 `malcolm_upload_pcap` 要讀的檔案必須已經位於 `MALCOLM_MCP_UPLOAD_DIR` 內。掛到那裡的主機目錄，得讓容器內的 uid 10001 讀得到。這一條是從 `tools/write/pcap_upload.py` 讀出來的，沒有實測——整個測試過程 write class 都是關著的。
 
@@ -343,7 +345,7 @@ write 存取分成五個 class，各自有一個環境變數開關，預設全�
 
 | 工具 | 說明 |
 |------|------|
-| `search_dsl` | 執行原生 OpenSearch DSL 查詢（hits + aggregations，無隱藏時間窗） |
+| `search_dsl` | 執行原生 OpenSearch DSL 查詢（hits + aggregations，無隱藏時間窗，每層 aggregation 最多 500 個 bucket） |
 | `count` | 計算符合 DSL query 子句的文件數 |
 | `list_indices` | 列出 index（名稱/健康/狀態/文件數） |
 | `index_mapping` | 取得 index 的欄位 mapping/schema |
@@ -472,7 +474,7 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 
 | Group | 工具數 | Schema tokens | 內容 |
 | --- | --- | --- | --- |
-| `dsl` | 5 | ~2,300 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
+| `dsl` | 5 | ~2,410 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
 | `query` | 3 | ~2,350 | `malcolm_search`、`malcolm_aggregate`、`malcolm_alerts` |
 | `fields` | 3 | ~1,780 | 欄位探索——防幻覺那一層 |
 | `health` | 4 | ~1,730 | 服務狀態、資料涵蓋範圍、ping、dashboard 匯出 |
@@ -484,9 +486,9 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 | `arkime-inventory` | 7 | ~4,330 | 儲存的 view、shortcut、cron、擷取節點狀態、hunt 狀態 |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards 的 saved object |
 | `detections` | 5 | ~4,210 | Alerting monitor 與異常偵測器 |
-| **合計** | **51** | **~34,470** | |
+| **合計** | **51** | **~34,580** | |
 
-以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,470 token 降到約 22,690：
+以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,580 token 降到約 22,800：
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
@@ -503,6 +505,19 @@ ValueError: MALCOLM_MCP_DISABLE_READ_GROUPS: unknown read group(s) netboxx. Vali
 ```
 
 有兩個 group 關掉之前要想清楚。`fields` 是擋住模型亂編欄位名稱的那一層，而 server 給模型的指示裡明寫了「查詢陌生欄位前先查名稱」；少了這個 group，指示講的工具就不存在了。`arkime` 裡有 `arkime_sessions`，那是唯一會回傳 session ID 的搜尋，關掉它等於同時抽掉每個 `arkime-content` 工具的輸入來源。
+
+所以 `arkime` 是最大的一組（約 8,450 token），偏偏也是多數環境非留不可的一組。`MALCOLM_MCP_DISABLE_TOOLS` 可以照名稱拿掉單一讀取工具，在 group 處理完之後才套用，專門處理那些必須保留的 group 裡用不到的工具：
+
+```bash
+-e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections
+-e MALCOLM_MCP_DISABLE_TOOLS=arkime_spiview,arkime_spigraphhierarchy,arkime_multiunique
+```
+
+```
+[mcp-server-malcolm] read tools disabled: arkime_multiunique, arkime_spigraphhierarchy, arkime_spiview
+```
+
+名稱要和 `tools/list` 裡的工具名稱完全一樣。只要有一個名稱不是已註冊的讀取工具，啟動就會失敗。常見的三種情況是打錯字、那個工具所屬的 group 已經關掉，或是填了 write 工具（write 工具只由各自的 `MALCOLM_MCP_ENABLE_*` 控制）。逐一列工具時，server 不會檢查工具之間的依賴。留下 `arkime_session_detail`、拿掉 `arkime_sessions` 是允許的，但前者就拿不到輸入了。建議先用 group 做粗的裁切，剩下的再用這個處理。
 
 ## 安全模型
 
@@ -789,7 +804,7 @@ tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=compl
 
 | 環境變數 | 預設值 | 說明 |
 |----------|--------|------|
-| `MALCOLM_URL` | `https://localhost` | Malcolm 基礎 URL |
+| `MALCOLM_URL` | `https://localhost` | Malcolm 基礎 URL。沒設時會先讀 `MALCOLM_BASE_URL`，再退回預設值 |
 | `MALCOLM_USERNAME` | `admin` | Basic auth 使用者名稱 |
 | `MALCOLM_PASSWORD` | `admin` | Basic auth 密碼 |
 | `MALCOLM_SSL_VERIFY` | `true` | 是否驗證 TLS 憑證。`true`/`false`，或填 CA-bundle 路徑（自簽 Malcolm 請填路徑） |
@@ -797,6 +812,7 @@ tools/list       51 個工具，cacheScope=public ttlMs=3600000 resultType=compl
 | `MALCOLM_MAX_CONCURRENCY` | `8` | 同時對上游發出的請求數 |
 | `MALCOLM_MAX_REQUESTS_PER_MINUTE` | `600` | 每個滾動 60 秒窗內允許的上游請求數；超過上限的請求是被壓著等，不是被拒絕 |
 | `MALCOLM_MCP_DISABLE_READ_GROUPS` | 未設定 | 以逗號分隔、不要註冊的讀取 group；名稱不存在會讓啟動失敗。見[精簡讀取工具](#精簡讀取工具) |
+| `MALCOLM_MCP_DISABLE_TOOLS` | 未設定 | 以逗號分隔、在 group 之後才拿掉的讀取工具；名稱不是已註冊的讀取工具會讓啟動失敗。見[精簡讀取工具](#精簡讀取工具) |
 | `MALCOLM_MCP_ENABLE_ALERTING` | `false` | 開啟 alerting write class |
 | `MALCOLM_MCP_ENABLE_ARKIME_TAGS` | `false` | 開啟 session 加 tag（只加不減） |
 | `MALCOLM_MCP_ENABLE_HUNT_JOBS` | `false` | 開啟 Arkime hunt 建立 + 狀態查詢 |

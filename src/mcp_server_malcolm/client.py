@@ -4,7 +4,7 @@ All Malcolm API interactions go through this client.
 Usable standalone (direct import) or via the MCP server layer.
 
 Configuration via environment variables:
-    MALCOLM_URL                      Base URL (default: https://localhost)
+    MALCOLM_URL                      Base URL (default: MALCOLM_BASE_URL, then https://localhost)
     MALCOLM_USERNAME                 Basic auth user (default: admin)
     MALCOLM_PASSWORD                 Basic auth password (default: admin)
     MALCOLM_SSL_VERIFY               Verify TLS certs (default: true; "false" or a CA path)
@@ -314,7 +314,12 @@ class MalcolmClient:
         upstream traffic; see the module docstring for the defaults.
         """
         return cls(
-            base_url=os.environ.get("MALCOLM_URL", "https://localhost"),
+            # MALCOLM_BASE_URL is the spelling other Malcolm tooling's .env files
+            # use; without the fallback a reused .env silently aims at localhost
+            # and the first call fails as a 401, which reads as a bad password.
+            base_url=os.environ.get("MALCOLM_URL")
+            or os.environ.get("MALCOLM_BASE_URL")
+            or "https://localhost",
             username=os.environ.get("MALCOLM_USERNAME", "admin"),
             password=os.environ.get("MALCOLM_PASSWORD", "admin"),
             ssl_verify=_parse_ssl_verify(os.environ.get("MALCOLM_SSL_VERIFY", "true")),

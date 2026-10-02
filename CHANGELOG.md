@@ -6,8 +6,54 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`MALCOLM_MCP_DISABLE_TOOLS`, a per-tool disable list layered on the read
+  groups** (#52). `arkime` is the largest group, 11 tools and ~8,450 schema
+  tokens, and the one a deployment usually cannot drop: `arkime_sessions` is
+  the only search that returns a session ID, so disabling the group also takes
+  away every `arkime-content` tool's input. The new list removes single read
+  tools by name after the groups are applied, e.g.
+  `arkime_spiview,arkime_spigraphhierarchy,arkime_multiunique`. A name that is
+  not a registered read tool aborts startup, whether it is a typo, a tool whose
+  group is already disabled, or a write tool. A startup line names the removed
+  tools. It is a deny list on purpose: an allow list would go stale on every
+  release that adds a tool.
+- **`MALCOLM_BASE_URL` is read when `MALCOLM_URL` is unset** (#46). A Malcolm
+  `.env` reused from other tooling often uses that spelling. Before this, the
+  client quietly fell back to `https://localhost`, and the first call came back
+  as a 401, which reads as a wrong password. `MALCOLM_URL` still wins when both
+  are set, and the default is unchanged. The README's 401 note now says to check
+  the host before the password.
+
+### Changed
+
+- **`search_dsl` refuses a bucket aggregation whose `size` is above 500**
+  (#59). The top-level `size` was always clamped, but a `size` inside `aggs`
+  went to OpenSearch as written, so one `terms` aggregation asking for 50,000
+  buckets could fill most of a client's context window with a single result.
+  `terms`, `multi_terms`, `significant_terms`, `significant_text` and
+  `composite` are now checked at every nesting level, under both `aggs` and
+  `aggregations`, against the same 500-per-level ceiling `malcolm_aggregate`'s
+  `limit` has. The request is refused before it leaves the server, with an
+  error that names the path (`aggs.by_src.terms.size=50000`) and says to page
+  with a composite aggregation instead. It refuses rather than clamps, because
+  500 silently truncated buckets would look like the complete answer. A query
+  that worked before with a larger `size` now needs to page.
+  `date_histogram` and `histogram` size their buckets by interval and are still
+  bounded only by OpenSearch's `search.max_buckets`.
+
 ### Fixed
 
+- **`search_dsl` sent an aggregation-only body as a query.** Any `query_dsl`
+  without a `query` key was wrapped as `{"query": ...}`, including a full body
+  such as `{"size": 0, "aggs": {...}}`. OpenSearch rejects that as an unknown
+  query, and the aggregations sat where the new bucket-size check could not see
+  them. Only a bare query clause such as `{"term": {...}}` is wrapped now. A
+  body carrying `aggs`, `size`, `sort` or another top-level search key goes
+  upstream as written and matches every document. A `query_dsl` that is not a
+  JSON object (an array, a string, a number) is refused as an input error
+  rather than failing further in.
 - **Tool failure messages were collapsed by the SDK on mcp >= 2.1.0.**
   `Tool.run` re-raises `ToolError` and `ResourceError` with their text intact
   and turns every OTHER exception into
