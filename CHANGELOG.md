@@ -8,6 +8,15 @@ All notable changes to this project are recorded here. The format follows
 
 ### Added
 
+- **`search_dsl` and `count` say up front when OpenSearch answered only in
+  part** (#77). OpenSearch returns HTTP 200 when some shards fail or the
+  search times out, and the shortfall sits only in `_shards` and `timed_out`.
+  A model reading `hits` and `aggregations` takes such a reply as complete,
+  and a zero from the shards that answered as proof of absence. Both tools
+  now put an `INCOMPLETE:` line above the JSON in that case, naming the
+  failed shard count or the timeout. A complete reply is byte-for-byte what
+  it was. Malcolm's `/mapi/document` and `/mapi/agg` drop these fields, so
+  the other tools cannot do the same.
 - **`MALCOLM_MCP_DISABLE_TOOLS`, a per-tool disable list layered on the read
   groups** (#52). `arkime` is the largest group, 11 tools and ~8,630 schema
   tokens, and the one a deployment usually cannot drop: `arkime_sessions` is

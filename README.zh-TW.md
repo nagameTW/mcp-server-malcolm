@@ -485,7 +485,7 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 
 | Group | 工具數 | Schema tokens | 內容 |
 | --- | --- | --- | --- |
-| `dsl` | 5 | ~2,410 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
+| `dsl` | 5 | ~2,470 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
 | `query` | 3 | ~2,600 | `malcolm_search`、`malcolm_aggregate`、`malcolm_alerts` |
 | `fields` | 3 | ~1,780 | 欄位探索——防幻覺那一層 |
 | `health` | 4 | ~1,730 | 服務狀態、資料涵蓋範圍、ping、dashboard 匯出 |

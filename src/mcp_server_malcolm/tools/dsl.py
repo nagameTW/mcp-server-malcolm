@@ -117,6 +117,30 @@ def _check_size(size: Any, path: str) -> None:
         )
 
 
+def _incomplete_note(data: Any) -> list[str]:
+    """A warning line when OpenSearch answered from only some shards or timed out.
+
+    Both arrive as HTTP 200 with the shortfall only in _shards and timed_out,
+    which a model reading hits and aggregations does not look at. Malcolm's own
+    /mapi/document and /mapi/agg drop those fields, so this is the one place a
+    partial answer can be seen at all.
+    """
+    if not isinstance(data, dict):
+        return []
+    shards = data.get("_shards") if isinstance(data.get("_shards"), dict) else {}
+    problems = []
+    if failed := shards.get("failed"):
+        problems.append(f"{failed} of {shards.get('total', '?')} shards failed")
+    if data.get("timed_out") is True:
+        problems.append("the search timed out")
+    if not problems:
+        return []
+    return [
+        f"INCOMPLETE: {' and '.join(problems)}. Counts and rows below are a floor, "
+        "not the total; re-run before concluding absence."
+    ]
+
+
 def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register the generic DSL-core query tools."""
 
@@ -156,7 +180,9 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Aggregations honor the time filter inside the DSL body, so there is no hidden
         default time window. Returns the raw OpenSearch _search response. A body
         OpenSearch rejects comes back as an error carrying OpenSearch's own reason,
-        e.g. a parsing_exception naming the unknown query type.
+        e.g. a parsing_exception naming the unknown query type. A reply from only
+        some shards, or one that timed out, still arrives as success, so an
+        "INCOMPLETE:" line above the JSON says so; treat its counts as a floor.
 
         Every input guard runs before any request leaves this server: malformed
         query_dsl, an index containing /, ? or .., and a terms, multi_terms,
@@ -182,7 +208,9 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         _check_bucket_sizes(body)
         body["size"] = min(max(0, size), 500)
         data = await client.opensearch_dsl(index, body)
-        return json.dumps(data, ensure_ascii=False, default=str)
+        return "\n".join(
+            [*_incomplete_note(data), json.dumps(data, ensure_ascii=False, default=str)]
+        )
 
     @mcp.tool(title="Count matching documents", annotations=_READ)
     async def count(
@@ -207,7 +235,8 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         Use this instead of search_dsl when you only need the number of matches, not
         the documents themselves. Note the query_dsl shape differs from search_dsl's —
         the schema says how. Returns the raw OpenSearch _count response
-        ({"count": N, ...}).
+        ({"count": N, ...}), with an "INCOMPLETE:" line above it when some shards
+        failed or the count timed out.
 
         This tool takes no time arguments and applies no default window, so a
         bare call counts everything the index still holds, which on any real
@@ -225,7 +254,9 @@ def register_dsl_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             else {"match_all": {}}
         )
         data = await client.opensearch_count(index, query)
-        return json.dumps(data, ensure_ascii=False, default=str)
+        return "\n".join(
+            [*_incomplete_note(data), json.dumps(data, ensure_ascii=False, default=str)]
+        )
 
     @mcp.tool(title="List indices", annotations=_READ)
     async def list_indices(

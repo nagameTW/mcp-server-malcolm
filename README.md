@@ -493,7 +493,7 @@ All 51 read tools are on by default, and their schemas are about 34,000 tokens t
 
 | Group | Tools | Schema tokens | Covers |
 | --- | --- | --- | --- |
-| `dsl` | 5 | ~2,410 | Raw OpenSearch: `search_dsl`, `count`, index and cluster metadata |
+| `dsl` | 5 | ~2,470 | Raw OpenSearch: `search_dsl`, `count`, index and cluster metadata |
 | `query` | 3 | ~2,600 | `malcolm_search`, `malcolm_aggregate`, `malcolm_alerts` |
 | `fields` | 3 | ~1,780 | Field discovery — the anti-hallucination layer |
 | `health` | 4 | ~1,730 | Service status, data coverage, ping, dashboard export |
