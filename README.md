@@ -5,7 +5,7 @@
 [![CI](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml/badge.svg)](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/github/license/nagameTW/mcp-server-malcolm?style=flat-square&logo=opensourceinitiative&logoColor=white&color=3DA639)](./LICENSE)
 [![Glama score](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/score.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
 **English** | [繁體中文](README.zh-TW.md)
@@ -19,11 +19,13 @@ Ask an AI agent about the traffic in your [Malcolm](https://malcolm.fyi) instanc
 - "List the executables Zeek carved out of yesterday's traffic, with their hashes." → `malcolm_file_scans`
 - "Upload this PCAP, then hunt the stored packets for this string." → `malcolm_upload_pcap`, `arkime_create_hunt` (write tools, off by default)
 
+**Read-only by default.** The write tools that create alerts, tag sessions, launch hunts or upload PCAP are not registered until you turn on their write class. See [Read-only until you opt in](#read-only-until-you-opt-in).
+
 ![Claude Code answering a question about Modbus alerts through mcp-server-malcolm](https://raw.githubusercontent.com/nagameTW/mcp-server-malcolm/main/docs/demo.gif)
 
 *An unedited Claude Code session against Malcolm's public training instance (training.malcolm.fyi): two `malcolm_aggregate` calls, then the answer. Claude Code ran in `--verbose` mode so each tool call is shown; by default it folds them into one "Calling malcolm" line.*
 
-This is the first MCP server for Malcolm, the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox). It runs under any MCP client, such as Claude Code, Claude Desktop or Cursor. It is read-only until you turn on a write class; with one on, it can also create alerts, tag sessions, launch hunts or upload PCAP.
+mcp-server-malcolm is an MCP server for Malcolm, the open-source network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch, with optional NetBox). It runs under any MCP client, such as Claude Code, Claude Desktop or Cursor.
 
 ## Contents
 
@@ -54,7 +56,7 @@ This is the first MCP server for Malcolm, the open-source network traffic analys
 
 You don't write any code to use this. An MCP client (Claude Code, Claude Desktop, Cursor, …) launches the server as a subprocess and talks to it over stdio; your job is to tell the client how to launch it and which credentials to inject.
 
-Every command in this chapter was run as printed, on Linux/aarch64 (kernel 6.14, Python 3.11.14 and 3.14.6) against a live Malcolm v26.07.1, and the error text is verbatim. The install in §1, its check, and the Claude Code registration in §2 were run a second time on macOS 26/arm64 with Python 3.14.6, against a live Malcolm 25.12.1. Where something was reasoned from source rather than executed, or was left untested (x86_64 hosts, GUI MCP clients, four of the five write classes), it says so at that point.
+Every command in this chapter was run as printed against a live Malcolm, and the error text is verbatim. The platforms and versions are listed under [Where this README was tested](#where-this-readme-was-tested).
 
 ### 1. Install
 
@@ -860,6 +862,10 @@ The time window matters: Arkime defaults to a recent one, so point it at a perio
 your deployment actually holds. The script exits non-zero if any tool disagrees
 with the API, and also if a tool is exposed but has no comparison written for it —
 so adding a tool without a parity check fails the run.
+
+### Where this README was tested
+
+Every command in [Quick start](#quick-start) was run as printed, on Linux/aarch64 (kernel 6.14, Python 3.11.14 and 3.14.6) against a live Malcolm v26.07.1, and the error text is verbatim. The install in §1, its check, and the Claude Code registration in §2 were run a second time on macOS 26/arm64 with Python 3.14.6, against a live Malcolm 25.12.1. Where something was reasoned from source rather than executed, or was left untested (x86_64 hosts, GUI MCP clients, four of the five write classes), it says so at that point.
 
 ## Malcolm API endpoints used
 
