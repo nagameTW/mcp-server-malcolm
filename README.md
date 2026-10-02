@@ -498,16 +498,16 @@ All 51 read tools are on by default, and their schemas are about 34,000 tokens t
 | `fields` | 3 | ~1,780 | Field discovery — the anti-hallucination layer |
 | `health` | 4 | ~1,730 | Service status, data coverage, ping, dashboard export |
 | `netbox` | 3 | ~1,370 | NetBox asset lookup |
-| `arkime` | 11 | ~8,450 | Arkime session search and the SPI analysis endpoints |
+| `arkime` | 11 | ~8,630 | Arkime session search and the SPI analysis endpoints |
 | `arkime-content` | 5 | ~3,270 | PCAP, payload and file-by-hash extraction |
 | `correlation` | 1 | ~630 | `malcolm_related_sessions` |
 | `files` | 2 | ~2,160 | Zeek file scans and extracted-file fetch |
 | `arkime-inventory` | 7 | ~4,330 | Saved views, shortcuts, crons, capture-node stats, hunt status |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards saved objects |
 | `detections` | 5 | ~4,210 | Alerting monitors and anomaly detectors |
-| **Total** | **51** | **~34,840** | |
+| **Total** | **51** | **~35,020** | |
 
-Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~34,840 tokens to ~23,050:
+Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~35,020 tokens to ~23,230:
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
@@ -525,7 +525,7 @@ ValueError: MALCOLM_MCP_DISABLE_READ_GROUPS: unknown read group(s) netboxx. Vali
 
 Two groups deserve a warning before you drop them. `fields` is what stops the model inventing field names, and the server's own instructions tell it to look every unfamiliar field up before querying; without that group the instructions describe tools that are not there. `arkime` carries `arkime_sessions`, the only search that returns a session ID, so disabling it also strips the input every `arkime-content` tool needs.
 
-That makes `arkime` the largest group (~8,450 tokens) and the one a deployment usually has to keep. `MALCOLM_MCP_DISABLE_TOOLS` removes single read tools by name, applied after the groups, for what is left over inside a group that has to stay:
+That makes `arkime` the largest group (~8,630 tokens) and the one a deployment usually has to keep. `MALCOLM_MCP_DISABLE_TOOLS` removes single read tools by name, applied after the groups, for what is left over inside a group that has to stay:
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections

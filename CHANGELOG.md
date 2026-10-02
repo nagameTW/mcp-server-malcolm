@@ -9,7 +9,7 @@ All notable changes to this project are recorded here. The format follows
 ### Added
 
 - **`MALCOLM_MCP_DISABLE_TOOLS`, a per-tool disable list layered on the read
-  groups** (#52). `arkime` is the largest group, 11 tools and ~8,450 schema
+  groups** (#52). `arkime` is the largest group, 11 tools and ~8,630 schema
   tokens, and the one a deployment usually cannot drop: `arkime_sessions` is
   the only search that returns a session ID, so disabling the group also takes
   away every `arkime-content` tool's input. The new list removes single read
@@ -69,6 +69,27 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **Arkime and NetBox results cut at a fixed cap gave no sign of it** (#73).
+  Measured on the training instance unless noted:
+  - `arkime_connections` never sent Arkime's `length`, so every graph came
+    from Arkime's default of 100 sessions. "protocols == modbus" matched
+    41,768 sessions and drew 8 nodes. The new `sessions` parameter defaults
+    to 10,000 (23 nodes, 1.4 s; up to 100,000, which drew 39). A `Note:` line
+    gives both numbers when more sessions matched than were used.
+  - `arkime_spigraphhierarchy` keeps Arkime's top 20 under each node. A
+    `Note:` line now counts the nodes holding exactly 20, five on a
+    two-level source/destination tree.
+  - `arkime_multiunique` returned every combination: 6,378 lines and 183,248
+    characters for `ip.src,ip.dst`. It now stops at `limit` (default 1,000,
+    up to 10,000) and ends with a line counting the rest.
+  - `arkime_unique` adds a `Note:` line when it returns exactly 10,000
+    values, Arkime's ceiling for that route (measured earlier on v26.07.1:
+    10,000 of 16,005).
+  - `malcolm_netbox_lookup` keeps the first 5 IP or device matches and 10
+    prefixes. It now adds NetBox's own `count` as `matched` when more
+    matched. The training instance has no NetBox, so this part is checked
+    against NetBox's documented response only.
+  The hierarchy and connections output also drops its indentation.
 - **`malcolm_related_sessions` gave no sign that a side was cut at `limit`**
   (#73). `/mapi/document` reports no total, so the summary now marks a side
   that filled `limit`, e.g. "2 direct + 10 related (the limit; more may exist)

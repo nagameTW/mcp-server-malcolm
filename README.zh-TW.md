@@ -490,16 +490,16 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 | `fields` | 3 | ~1,780 | 欄位探索——防幻覺那一層 |
 | `health` | 4 | ~1,730 | 服務狀態、資料涵蓋範圍、ping、dashboard 匯出 |
 | `netbox` | 3 | ~1,370 | NetBox 資產查詢 |
-| `arkime` | 11 | ~8,450 | Arkime session 搜尋與各個 SPI 分析 endpoint |
+| `arkime` | 11 | ~8,630 | Arkime session 搜尋與各個 SPI 分析 endpoint |
 | `arkime-content` | 5 | ~3,270 | PCAP、payload、依 hash 取檔 |
 | `correlation` | 1 | ~630 | `malcolm_related_sessions` |
 | `files` | 2 | ~2,160 | Zeek 檔案掃描結果與已擷取檔案下載 |
 | `arkime-inventory` | 7 | ~4,330 | 儲存的 view、shortcut、cron、擷取節點狀態、hunt 狀態 |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards 的 saved object |
 | `detections` | 5 | ~4,210 | Alerting monitor 與異常偵測器 |
-| **合計** | **51** | **~34,840** | |
+| **合計** | **51** | **~35,020** | |
 
-以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,840 token 降到約 23,050：
+以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 35,020 token 降到約 23,230：
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
@@ -517,7 +517,7 @@ ValueError: MALCOLM_MCP_DISABLE_READ_GROUPS: unknown read group(s) netboxx. Vali
 
 有兩個 group 關掉之前要想清楚。`fields` 是擋住模型亂編欄位名稱的那一層，而 server 給模型的指示裡明寫了「查詢陌生欄位前先查名稱」；少了這個 group，指示講的工具就不存在了。`arkime` 裡有 `arkime_sessions`，那是唯一會回傳 session ID 的搜尋，關掉它等於同時抽掉每個 `arkime-content` 工具的輸入來源。
 
-所以 `arkime` 是最大的一組（約 8,450 token），偏偏也是多數環境非留不可的一組。`MALCOLM_MCP_DISABLE_TOOLS` 可以照名稱拿掉單一讀取工具，在 group 處理完之後才套用，專門處理那些必須保留的 group 裡用不到的工具：
+所以 `arkime` 是最大的一組（約 8,630 token），偏偏也是多數環境非留不可的一組。`MALCOLM_MCP_DISABLE_TOOLS` 可以照名稱拿掉單一讀取工具，在 group 處理完之後才套用，專門處理那些必須保留的 group 裡用不到的工具：
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections
