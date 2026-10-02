@@ -67,3 +67,24 @@ async def test_limit_is_capped_like_the_other_search_tools():
     mcp = _tools(lambda req: httpx.Response(200, json={"results": []}))
     with pytest.raises(Exception):
         await mcp.call_tool("malcolm_related_sessions", {"uid": _UID, "limit": 501})
+
+
+async def test_a_side_that_filled_limit_says_more_may_exist():
+    def handler(req):
+        if "rootId" in json.loads(req.content)["filter"]:
+            return httpx.Response(200, json={"results": [{"_id": "r"}]})
+        return httpx.Response(200, json={"results": [{"_id": "a"}, {"_id": "b"}]})
+
+    text = tool_text(
+        await _tools(handler).call_tool("malcolm_related_sessions", {"uid": _UID, "limit": 2})
+    )
+    summary = json.loads(text)["summary"]
+
+    assert summary.startswith("2 direct (the limit; more may exist)")
+    assert "1 related sessions" in summary
+
+
+async def test_output_is_not_indented():
+    mcp = _tools(lambda req: httpx.Response(200, json={"results": [{"_id": "a"}]}))
+    text = tool_text(await mcp.call_tool("malcolm_related_sessions", {"uid": _UID}))
+    assert "\n" not in text

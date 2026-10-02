@@ -64,7 +64,8 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         retained history, so an empty result is a real absence rather than a
         window. Returns a JSON object with separate "direct" and "related" hit
         lists plus a "summary" count (and per-side error keys only when a side
-        fails).
+        fails). Malcolm reports no total, so the summary marks a side that
+        filled `limit` as possibly holding more.
         """
         if not uid.strip():
             raise ToolInputError(
@@ -111,14 +112,16 @@ def register_correlation_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             raise UpstreamError(f"{results['direct_error']}; {results['related_error']}")
 
         # A failed side has no count; printing 0 would read as a real absence.
+        # /mapi/document reports no total, so a side that filled limit may hold more.
+        more = " (the limit; more may exist)"
         results["summary"] = (
             " + ".join(
                 f"{side} search failed"
                 if f"{side}_error" in results
-                else f"{len(results[side])} {side}"
+                else f"{len(results[side])} {side}{more if len(results[side]) >= limit else ''}"
                 for side in ("direct", "related")
             )
             + " sessions"
         )
 
-        return json.dumps(results, indent=2, ensure_ascii=False, default=str)
+        return json.dumps(results, ensure_ascii=False, default=str)
