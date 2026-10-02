@@ -28,6 +28,15 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- **`malcolm_alerts` returns one compact row per alert** (#74). It used to
+  return the raw `/mapi/document` response, indented. On the training
+  instance the default 20 alerts ran to 77,963 characters, about 22,000
+  tokens, near the 25,000-token tool-result cap Claude Code applies by
+  default. Each row now carries the document id, time, rule name, id and
+  category, Suricata severity and action, both endpoints, transport,
+  protocol and `community_id`, the key that finds the same flow in Zeek's
+  conn records. The same 20 alerts come to 9,235 characters, about 3,600
+  tokens. `full=true` returns the raw documents, without indentation.
 - **Both READMEs now open with what you can ask the agent.** The first screen
   used to name the server and list Malcolm's components, which only told a
   reader who already runs Malcolm what this is. It now shows four example
@@ -53,6 +62,16 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **`malcolm_search` output was indented, and a full page looked
+  complete** (#74, #73). Dropping the indentation cut 20 conn documents from
+  79,571 to 46,328 characters, about 20% of the tokens; the documents
+  themselves are unchanged. The tool now states the measured per-document
+  size and points at `malcolm_aggregate` for counts. `/mapi/document`
+  reports no total, so when `malcolm_search` or `malcolm_alerts` fills
+  `limit`, a `Note:` line says more may match. `malcolm_file_scans` adds
+  `limit_reached: true` in the same case, since its `count` is the rows
+  returned. `arkime_views` and `arkime_shortcuts` add `total` from Arkime's
+  `recordsTotal` beside `count`, the rows on this page.
 - **`malcolm_alerts` said a signature did not exist when it did.** With no
   `time_from`, the alert search covers all history, but the substring pre-scan
   that turns `signature` or `category` into exact names asked `/mapi/agg`,

@@ -9,6 +9,7 @@ from pydantic import Field
 
 from mcp_server_malcolm.client import _extract_buckets
 from mcp_server_malcolm.tools._parse import parse_int_list, parse_json_object
+from mcp_server_malcolm.tools.files import _first
 
 if TYPE_CHECKING:
     from mcp.server.mcpserver import MCPServer
@@ -79,17 +80,25 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         searches ALL retained history, where malcolm_aggregate covers only the
         last 24 hours; and filter values are matched exactly, so any wildcard or
         substring has to go to search_dsl instead.
+
+        Every document comes back whole, 2 to 3.5 KB of JSON each on Malcolm's
+        training data, so 20 conn documents run to about 46,000 characters.
+        For counts or top values use malcolm_aggregate, and keep limit small
+        when reading documents. When the results fill limit, a "Note:" line
+        above the JSON says more may match; Malcolm reports no total.
         """
         parsed = _parse_filters(filters)
+        limit = min(max(1, limit), 500)
         data = await client.search(
             filters=parsed,
-            limit=min(max(1, limit), 500),
+            limit=limit,
             time_from=time_from,
             time_to=time_to,
             doctype=doctype.strip(),
         )
-        body = json.dumps(data, indent=2, ensure_ascii=False, default=str)
-        return await _with_empty_hint(client, data.get("results"), parsed, body)
+        results = data.get("results")
+        body = "\n".join([*_limit_note(results, limit), _compact(data)])
+        return await _with_empty_hint(client, results, parsed, body)
 
     @mcp.tool(title="Aggregate traffic by field", annotations=_READ)
     async def malcolm_aggregate(
@@ -191,6 +200,13 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             ),
         ] = "",
         limit: Annotated[int, Field(description="Max alerts to return.", ge=1, le=500)] = 20,
+        full: Annotated[
+            bool,
+            Field(
+                description="Return the raw alert documents (about 2 KB each) instead of "
+                "one compact row per alert."
+            ),
+        ] = False,
         time_from: Annotated[
             str,
             Field(
@@ -226,8 +242,14 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         absence; narrow the window, or filter rule.name on the exact name with
         malcolm_search. When the substring did match but rarer values went
         unscanned, a "Note:" line precedes the JSON saying how many alert
-        documents those values carry.
-        Returns the raw Malcolm /mapi/document response (matching alert documents).
+        documents those values carry. Another "Note:" line says when the alerts
+        filled limit, since Malcolm reports no total.
+
+        Returns {"showing": N, "alerts": [...]}, one row per alert with its
+        document id, time, rule name, id and category, Suricata severity and
+        action, both endpoints, transport, protocol and community_id (the key
+        that finds the same flow in Zeek's conn records through malcolm_search).
+        Set full=true for the raw documents, which carry every field.
         """
         filters: dict[str, Any] = {"event.dataset": "alert"}
         notes: list[str] = []
@@ -269,13 +291,61 @@ def register_query_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             sids = parse_int_list(sid, "sid", '"2019401,2024897"')
             filters["rule.id"] = sids[0] if len(sids) == 1 else sids
 
+        limit = min(max(1, limit), 500)
         data = await client.search(
             filters=filters,
-            limit=min(max(1, limit), 500),
+            limit=limit,
             time_from=time_from,
             time_to=time_to,
         )
-        return "\n".join([*notes, json.dumps(data, indent=2, ensure_ascii=False, default=str)])
+        hits = data.get("results") or []
+        notes.extend(_limit_note(hits, limit))
+        if not full:
+            data = {"showing": len(hits), "alerts": [_alert_row(hit) for hit in hits]}
+        return "\n".join([*notes, _compact(data)])
+
+
+def _compact(data: Any) -> str:
+    # No indent: measured on 20 alerts it cut 39% of the characters and 17% of
+    # the tokens, for no loss of content.
+    return json.dumps(data, ensure_ascii=False, default=str)
+
+
+def _limit_note(rows: list | None, limit: int) -> list[str]:
+    """A note when rows filled limit: /mapi/document returns no total."""
+    if not rows or len(rows) < limit:
+        return []
+    advice = (
+        "Narrow the filters" if limit >= 500 else "Raise limit (up to 500) or narrow the filters"
+    )
+    return [f"Note: {len(rows)} results came back, which is the limit; more may match. {advice}."]
+
+
+def _alert_row(hit: dict[str, Any]) -> dict[str, Any]:
+    """One alert reduced to what triage reads; the raw document runs to ~2 KB."""
+    source = hit.get("_source") or {}
+    rule = source.get("rule") or {}
+    alert = (source.get("suricata") or {}).get("alert") or {}
+    src = source.get("source") or {}
+    dst = source.get("destination") or {}
+    net = source.get("network") or {}
+    row = {
+        "id": hit.get("_id"),
+        "timestamp": source.get("@timestamp"),
+        "rule_name": _first(rule.get("name")),
+        "rule_id": _first(rule.get("id")),
+        "category": _first(rule.get("category")),
+        "severity": alert.get("severity"),
+        "action": alert.get("action"),
+        "source_ip": _first(src.get("ip")),
+        "source_port": _first(src.get("port")),
+        "destination_ip": _first(dst.get("ip")),
+        "destination_port": _first(dst.get("port")),
+        "transport": _first(net.get("transport")),
+        "protocol": _first(net.get("protocol")),
+        "community_id": _first(net.get("community_id")),
+    }
+    return {key: value for key, value in row.items() if value not in (None, "", [])}
 
 
 async def _values_containing(
