@@ -45,6 +45,12 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **The MCP Registry still listed 0.4.0 as the latest version.** 1.0.3 put the
+  right version back into `server.json`, but nothing ever sent that file to the
+  registry, so every release since 0.4.0 stayed on PyPI only. A client that
+  installs from the registry pinned a version 13 releases old. The release
+  workflow now publishes `server.json` to the registry once the PyPI upload
+  succeeds.
 - **An Arkime time bound that was not epoch seconds came back as "no
   traffic".** Every Arkime read tool documents `time_from` and `time_to` as
   epoch seconds, but a date string such as `2021-03-01` went straight through
