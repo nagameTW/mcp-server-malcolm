@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import quote
 
 from pydantic import Field
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from mcp_server_malcolm.errors import ToolInputError, UpstreamError
 from mcp_server_malcolm.tools._parse import parse_json_object
@@ -94,8 +94,9 @@ class FileRow(TypedDict, total=False):
 class FileScanResult(TypedDict):
     """What malcolm_file_scans returns when anything matched."""
 
-    count: int
+    count: int  # rows returned; Malcolm reports no total
     files: list[FileRow]
+    limit_reached: NotRequired[bool]  # only present, as true, when count == limit
 
 
 class ExtractedFile(TypedDict, total=False):
@@ -226,7 +227,10 @@ def register_file_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             )
 
         files = [_file_row(row.get("_source") or {}) for row in rows]
-        return {"count": len(files), "files": files}
+        result: FileScanResult = {"count": len(files), "files": files}
+        if len(files) >= limit:
+            result["limit_reached"] = True
+        return result
 
     @mcp.tool(title="Fetch a Zeek-extracted file", annotations=_READ)
     async def malcolm_extract_file(

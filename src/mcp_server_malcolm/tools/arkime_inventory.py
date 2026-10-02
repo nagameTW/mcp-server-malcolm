@@ -38,7 +38,8 @@ class SavedView(TypedDict, total=False):
 
 
 class ViewList(TypedDict):
-    count: int
+    count: int  # views on this page
+    total: int  # views visible to this account, from Arkime's recordsTotal
     views: list[SavedView]
 
 
@@ -54,7 +55,8 @@ class Shortcut(TypedDict, total=False):
 
 
 class ShortcutList(TypedDict):
-    count: int
+    count: int  # shortcuts on this page
+    total: int  # shortcuts visible to this account, from Arkime's recordsTotal
     shortcuts: list[Shortcut]
 
 
@@ -182,7 +184,7 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             )
             for row in rows
         ]
-        return {"count": len(views), "views": views}
+        return {"count": len(views), "total": data.get("recordsTotal", len(views)), "views": views}
 
     @mcp.tool(title="List saved Arkime value lists", annotations=_READ)
     async def arkime_shortcuts(
@@ -230,7 +232,11 @@ def register_arkime_inventory_tools(mcp: MCPServer, client: MalcolmClient) -> No
             )
             for row in rows
         ]
-        return {"count": len(shortcuts), "shortcuts": shortcuts}
+        return {
+            "count": len(shortcuts),
+            "total": data.get("recordsTotal", len(shortcuts)),
+            "shortcuts": shortcuts,
+        }
 
     @mcp.tool(title="List Arkime cron queries", annotations=_READ)
     async def arkime_crons() -> CronQueryList | str:

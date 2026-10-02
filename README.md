@@ -374,7 +374,7 @@ Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearc
 |------|-------------|
 | `malcolm_search` | Search network traffic with Malcolm filter syntax |
 | `malcolm_aggregate` | Aggregate traffic by one or more fields (top-N with counts) |
-| `malcolm_alerts` | Search Suricata alerts by signature, severity, IP |
+| `malcolm_alerts` | Search Suricata alerts by signature, severity, IP; one compact row per alert |
 
 ### Field discovery (anti-hallucination)
 
@@ -492,7 +492,7 @@ All 51 read tools are on by default, and their schemas are about 34,000 tokens t
 | Group | Tools | Schema tokens | Covers |
 | --- | --- | --- | --- |
 | `dsl` | 5 | ~2,410 | Raw OpenSearch: `search_dsl`, `count`, index and cluster metadata |
-| `query` | 3 | ~2,350 | `malcolm_search`, `malcolm_aggregate`, `malcolm_alerts` |
+| `query` | 3 | ~2,600 | `malcolm_search`, `malcolm_aggregate`, `malcolm_alerts` |
 | `fields` | 3 | ~1,780 | Field discovery — the anti-hallucination layer |
 | `health` | 4 | ~1,730 | Service status, data coverage, ping, dashboard export |
 | `netbox` | 3 | ~1,370 | NetBox asset lookup |
@@ -503,9 +503,9 @@ All 51 read tools are on by default, and their schemas are about 34,000 tokens t
 | `arkime-inventory` | 7 | ~4,330 | Saved views, shortcuts, crons, capture-node stats, hunt status |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards saved objects |
 | `detections` | 5 | ~4,210 | Alerting monitors and anomaly detectors |
-| **Total** | **51** | **~34,580** | |
+| **Total** | **51** | **~34,840** | |
 
-Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~34,580 tokens to ~22,800:
+Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~34,840 tokens to ~23,050:
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory

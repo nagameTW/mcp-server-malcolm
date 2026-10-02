@@ -366,7 +366,7 @@ write 存取分成五個 class，各自有一個環境變數開關，預設全�
 |------|------|
 | `malcolm_search` | 用 Malcolm filter 語法搜尋網路流量文件 |
 | `malcolm_aggregate` | 依一個或多個欄位聚合流量（Top-N 計數） |
-| `malcolm_alerts` | 依 signature、severity、IP 搜尋 Suricata 告警 |
+| `malcolm_alerts` | 依 signature、severity、IP 搜尋 Suricata 告警，每筆告警回一列精簡資料 |
 
 ### 欄位探索（防幻覺）
 
@@ -484,7 +484,7 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 | Group | 工具數 | Schema tokens | 內容 |
 | --- | --- | --- | --- |
 | `dsl` | 5 | ~2,410 | 原始 OpenSearch：`search_dsl`、`count`、index 與 cluster metadata |
-| `query` | 3 | ~2,350 | `malcolm_search`、`malcolm_aggregate`、`malcolm_alerts` |
+| `query` | 3 | ~2,600 | `malcolm_search`、`malcolm_aggregate`、`malcolm_alerts` |
 | `fields` | 3 | ~1,780 | 欄位探索——防幻覺那一層 |
 | `health` | 4 | ~1,730 | 服務狀態、資料涵蓋範圍、ping、dashboard 匯出 |
 | `netbox` | 3 | ~1,370 | NetBox 資產查詢 |
@@ -495,9 +495,9 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 | `arkime-inventory` | 7 | ~4,330 | 儲存的 view、shortcut、cron、擷取節點狀態、hunt 狀態 |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards 的 saved object |
 | `detections` | 5 | ~4,210 | Alerting monitor 與異常偵測器 |
-| **合計** | **51** | **~34,580** | |
+| **合計** | **51** | **~34,840** | |
 
-以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,580 token 降到約 22,800：
+以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 34,840 token 降到約 23,050：
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
