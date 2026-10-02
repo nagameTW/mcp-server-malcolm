@@ -348,9 +348,9 @@ write 存取分成五個 class，各自有一個環境變數開關，預設全�
 
 以下全部預設註冊，不需要開任何 flag。要拿掉的話是以 group 為單位，每個 group 包含哪些工具見[精簡讀取工具](#精簡讀取工具)。
 
-### DSL 核心（與後端無關）
+### DSL 核心（原生 OpenSearch）
 
-對設定好的端點（Malcolm 的 `/mapi/opensearch` proxy）送純 OpenSearch DSL。不綁 Malcolm 專屬的查詢格式：把 base URL 改指到任何相容 OpenSearch 的後端，它們照樣能用。
+透過 Malcolm 的 `/mapi/opensearch` proxy 送純 OpenSearch DSL，中間不經過 Malcolm 的 filter 語法。Malcolm filter 表達不了的查詢就用這組。它們要靠 Malcolm 的 proxy，所以不能直接接一台單獨的 OpenSearch。
 
 | 工具 | 說明 |
 |------|------|

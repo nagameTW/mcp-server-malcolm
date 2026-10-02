@@ -356,9 +356,9 @@ Every write but one is additive: the exception is `arkime_cancel_hunt`, which st
 
 All of these are registered by default — none of them needs a flag turned on. They can be dropped a group at a time; see [Trimming the read surface](#trimming-the-read-surface) for which tools each group holds.
 
-### DSL core (backend-agnostic)
+### DSL core (raw OpenSearch)
 
-Plain OpenSearch DSL against the configured endpoint (Malcolm's `/mapi/opensearch` proxy). No Malcolm-specific query shape: point the base URL at any OpenSearch-compatible backend and they still work.
+Plain OpenSearch DSL sent through Malcolm's `/mapi/opensearch` proxy, with no Malcolm filter syntax in between. Use these when a Malcolm filter cannot express the query. They need Malcolm's proxy, so they do not work against a bare OpenSearch node.
 
 | Tool | Description |
 |------|-------------|
