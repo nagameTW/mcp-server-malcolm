@@ -1322,6 +1322,7 @@ class MalcolmClient:
         expression: str = "",
         time_from: str = "",
         time_to: str = "",
+        length: int = 10000,
     ) -> dict[str, Any]:
         """Source/destination connection graph via GET /api/connections.
 
@@ -1347,6 +1348,8 @@ class MalcolmClient:
         params = _arkime_query_params(expression, time_from, time_to)
         params["srcField"] = src_field
         params["dstField"] = dst_field
+        # How many matching sessions the graph is drawn from; Arkime's default is 100.
+        params["length"] = length
         return await self.get("/arkime/api/connections", params=params)
 
     @_upstream

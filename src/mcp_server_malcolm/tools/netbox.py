@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 from pydantic import Field
 
@@ -93,7 +93,7 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                     params={"address": ip},
                 )
                 entries = data.get("results", []) if isinstance(data, dict) else []
-                results["ip_lookup"] = _summarize_ip_results(entries, ip)
+                results["ip_lookup"] = _with_total(_summarize_ip_results(entries, ip), data)
             except Exception as exc:  # noqa: BLE001
                 results["ip_error"] = f"NetBox IP lookup failed: {exc}"
 
@@ -104,7 +104,9 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                     params={"name": device},
                 )
                 entries = data.get("results", []) if isinstance(data, dict) else []
-                results["device_lookup"] = _summarize_device_results(entries, device)
+                results["device_lookup"] = _with_total(
+                    _summarize_device_results(entries, device), data
+                )
             except Exception as exc:  # noqa: BLE001
                 results["device_error"] = f"NetBox device lookup failed: {exc}"
 
@@ -115,7 +117,9 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                     params={"prefix": prefix},
                 )
                 entries = data.get("results", []) if isinstance(data, dict) else []
-                results["prefix_lookup"] = _summarize_prefix_results(entries, prefix)
+                results["prefix_lookup"] = _with_total(
+                    _summarize_prefix_results(entries, prefix), data
+                )
             except Exception as exc:  # noqa: BLE001
                 results["prefix_error"] = f"NetBox prefix lookup failed: {exc}"
 
@@ -186,6 +190,14 @@ def register_netbox_tools(mcp: MCPServer, client: MalcolmClient) -> None:
 
         data = await client.netbox_get(path, params=parsed)
         return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+
+
+def _with_total(summary: dict, data: Any) -> dict:
+    """Add NetBox's own match count when the summary shows fewer rows than matched."""
+    total = data.get("count") if isinstance(data, dict) else None
+    if isinstance(total, int) and total > len(summary.get("results", [])):
+        return {**summary, "matched": total}
+    return summary
 
 
 def _summarize_ip_results(entries: list, ip: str) -> dict:

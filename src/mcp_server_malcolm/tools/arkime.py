@@ -28,6 +28,20 @@ _SUMMARY_DEFAULT_FIELDS = "protocols"
 _READ = {"readOnlyHint": True, "destructiveHint": False, "openWorldHint": True}
 
 
+# Arkime's ceiling on one field's distinct values (measured: 10,000 of 16,005).
+_UNIQUE_CEILING = 10000
+# Arkime's spigraphhierarchy keeps this many values under each node.
+_HIERARCHY_TOP = 20
+_CONNECTIONS_MAX_SESSIONS = 100000
+_MULTIUNIQUE_MAX = 10000
+
+
+def _nodes_at_cap(node: dict) -> int:
+    """How many nodes in a spigraphhierarchy tree hold exactly the top-N cap."""
+    children = [c for c in node.get("children") or [] if isinstance(c, dict)]
+    return (len(children) >= _HIERARCHY_TOP) + sum(map(_nodes_at_cap, children))
+
+
 def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
     """Register Arkime session search, aggregation and export tools."""
 
@@ -261,6 +275,11 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             time_to=time_to.strip(),
         )
 
+        if text.count("\n") >= _UNIQUE_CEILING:
+            text = (
+                f"Note: {_UNIQUE_CEILING:,} values came back, Arkime's ceiling for this "
+                "route, so the list is likely cut. Scope it with expression.\n" + text
+            )
         return text or "(no values)"
 
     @mcp.tool(title="Graph top values over time", annotations=_READ)
@@ -471,6 +490,18 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
                 "Empty = all sessions."
             ),
         ] = "",
+        sessions: Annotated[
+            int,
+            Field(
+                description="How many matching sessions the graph is drawn from "
+                "(Arkime's length; its own default is 100). More sessions find more "
+                "hosts and take longer: on Malcolm's training instance a query "
+                "matching 41,768 sessions drew 8 nodes from 100 sessions, 23 from "
+                "10,000 (1.4 s) and 39 from 50,000 (3.5 s).",
+                ge=1,
+                le=_CONNECTIONS_MAX_SESSIONS,
+            ),
+        ] = 10000,
         time_from: Annotated[
             str,
             Field(
@@ -496,13 +527,11 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         arkime_spigraphhierarchy. Returns the raw Arkime connections response
         (nodes and links).
 
-        The graph is built from a bounded slice of the matching sessions rather
-        than from all of them, and that bound is not a parameter here: measured
-        on Malcolm v26.07.1, a 24-hour window whose expression matched 6,005,737
-        sessions produced 10 nodes and 8 links, while the same window held 112
-        distinct source addresses. Nothing in the response marks the shortfall,
-        so narrow with expression and a tight window before reading a sparse
-        graph as "these are the only hosts talking".
+        The graph is drawn from `sessions` of the matching sessions, not from
+        all of them. When more sessions matched than were used, a "Note:" line
+        above the JSON gives both numbers; narrow with expression or raise
+        sessions before reading a sparse graph as "these are the only hosts
+        talking".
         """
         data = await client.arkime_connections(
             src_field=src_field.strip() or "srcIp",
@@ -510,9 +539,18 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             expression=expression.strip(),
             time_from=time_from,
             time_to=time_to,
+            length=sessions,
         )
 
-        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+        notes = []
+        matched = data.get("recordsFiltered") if isinstance(data, dict) else None
+        if isinstance(matched, int) and matched > sessions:
+            notes.append(
+                f"Note: the graph was drawn from {sessions:,} of the {matched:,} matching "
+                f"sessions. Raise sessions (up to {_CONNECTIONS_MAX_SESSIONS:,}) or narrow "
+                "the expression before reading it as complete."
+            )
+        return "\n".join([*notes, json.dumps(data, ensure_ascii=False, default=str)])
 
     @mcp.tool(title="List unique field combinations", annotations=_READ)
     async def arkime_multiunique(
@@ -534,6 +572,15 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             bool,
             Field(description="Include a per-combination occurrence count (default true)."),
         ] = True,
+        limit: Annotated[
+            int,
+            Field(
+                description="Max combinations to return. Arkime sends every one, so the "
+                "rest are cut here and counted on a last line.",
+                ge=1,
+                le=_MULTIUNIQUE_MAX,
+            ),
+        ] = 1000,
         time_from: Annotated[
             str,
             Field(
@@ -560,9 +607,10 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         time_from. Every field added multiplies the rows, well past the 10,000
         values arkime_unique stops at — measured on Malcolm v26.07.1 over one 24-hour
         window, a two-field tuple returned 22,548 lines and a three-field tuple
-        50,817, about 2 MB of text. Scope it with expression first, or size the
-        match with
-        arkime_sessions_summary before asking for the tuples.
+        50,817, about 2 MB of text. This tool returns the first `limit` lines
+        and ends with a line counting the rest. Scope it with expression first,
+        or size the match with arkime_sessions_summary before asking for the
+        tuples.
         """
         if not fields.strip():
             raise ToolInputError(
@@ -577,7 +625,12 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             time_from=time_from,
             time_to=time_to,
         )
-
+        lines = text.splitlines()
+        if len(lines) > limit:
+            text = "\n".join(lines[:limit]) + (
+                f"\n... {len(lines) - limit:,} more combinations not shown. Raise limit "
+                f"(up to {_MULTIUNIQUE_MAX:,}) or narrow the expression."
+            )
         return text or "(no values)"
 
     @mcp.tool(title="Build nested field hierarchy", annotations=_READ)
@@ -624,8 +677,10 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
         level keeps Arkime's top 20 and this tool does not expose that number:
         measured on Malcolm v26.07.1, a two-level tree returned 20 first-level values
         out of the 112 the window held, each parent carrying a different number
-        of children. An empty tree with no time range usually means the data
-        predates Arkime's default recent window: pass time_from.
+        of children. A "Note:" line above the JSON counts the nodes holding
+        exactly 20 children, whose lists may be cut. An empty tree with no time
+        range usually means the data predates Arkime's default recent window:
+        pass time_from.
         """
         if not fields.strip():
             raise ToolInputError(
@@ -639,8 +694,17 @@ def register_arkime_tools(mcp: MCPServer, client: MalcolmClient) -> None:
             time_from=time_from,
             time_to=time_to,
         )
-
-        return json.dumps(data, indent=2, ensure_ascii=False, default=str)
+        tree = data.get("hierarchicalResults") if isinstance(data, dict) else None
+        cut = _nodes_at_cap(tree) if isinstance(tree, dict) else 0
+        notes = (
+            [
+                f"Note: Arkime keeps the top {_HIERARCHY_TOP} values under each node; {cut} "
+                f"nodes have exactly {_HIERARCHY_TOP} children, so those lists may be cut."
+            ]
+            if cut
+            else []
+        )
+        return "\n".join([*notes, json.dumps(data, ensure_ascii=False, default=str)])
 
     # Arkime's own connections.csv is deliberately not wrapped: on Arkime 6.6.0 it
     # emits nine header columns over seven-column rows, so every column after
