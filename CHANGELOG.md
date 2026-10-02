@@ -45,6 +45,14 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **The core query tools failed on a Malcolm that refuses POST.**
+  `malcolm_search`, `malcolm_alerts`, `malcolm_aggregate` and the other tools
+  built on `/mapi/document` and `/mapi/agg` only ever sent POST. Malcolm
+  documents both endpoints as GET or POST, and a read-only front end can allow
+  GET and refuse POST. Malcolm's public training instance (training.malcolm.fyi)
+  answers 403 to every POST and serves the same request as GET. Both calls now
+  retry once as GET, with the body as query parameters, when POST comes back
+  403 or 405. Any other failure still surfaces unchanged.
 - **`search_dsl` sent an aggregation-only body as a query.** Any `query_dsl`
   without a `query` key was wrapped as `{"query": ...}`, including a full body
   such as `{"size": 0, "aggs": {...}}`. OpenSearch rejects that as an unknown

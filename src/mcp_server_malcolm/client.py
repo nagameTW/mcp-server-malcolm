@@ -390,6 +390,24 @@ class MalcolmClient:
         resp.raise_for_status()
         return resp.json()
 
+    async def post_or_get(self, path: str, body: dict[str, Any]) -> Any:
+        """POST, then the same request as GET if the deployment refuses POST.
+
+        Malcolm documents /mapi/document and /mapi/agg as GET or POST. A
+        read-only front end can refuse POST outright: the public training
+        instance (training.malcolm.fyi) answers 403 to every POST and serves
+        the identical GET. Any other failure propagates without a retry.
+        """
+        try:
+            return await self.post(path, body)
+        except UpstreamError as exc:
+            if exc.status not in (403, 405):
+                raise
+        # ponytail: a GET-only deployment pays one refused POST per call;
+        # remember the refusal per client if that starts to matter for rate limits.
+        params = {k: json.dumps(v) if isinstance(v, dict | list) else v for k, v in body.items()}
+        return await self.get(path, params)
+
     @_upstream
     async def get_raw(self, path: str, params: dict[str, Any] | None = None) -> httpx.Response:
         """HTTP GET returning the raw response (for binary downloads).
@@ -418,7 +436,7 @@ class MalcolmClient:
         time_to: str = "",
         doctype: str = "",
     ) -> dict[str, Any]:
-        """Search indexed documents via POST /mapi/document.
+        """Search indexed documents via POST /mapi/document (GET if POST is refused).
 
         doctype selects the target index server-side: "host"/"beat"* -> the
         other/beats index, "arkime"/"session"* -> the Arkime sessions index,
@@ -433,7 +451,7 @@ class MalcolmClient:
             body["to"] = time_to
         if doctype:
             body["doctype"] = doctype
-        return await self.post("/mapi/document", body)
+        return await self.post_or_get("/mapi/document", body)
 
     async def aggregate(
         self,
@@ -444,7 +462,7 @@ class MalcolmClient:
         time_to: str = "",
         doctype: str = "",
     ) -> dict[str, Any]:
-        """Aggregate on one or more fields via POST /mapi/agg/<fields>.
+        """Aggregate on one or more fields via POST /mapi/agg/<fields> (GET if refused).
 
         Args:
             fields: Comma-separated field names, e.g. "source.ip,destination.ip".
@@ -465,7 +483,7 @@ class MalcolmClient:
             body["to"] = time_to
         if doctype:
             body["doctype"] = doctype
-        return await self.post(f"/mapi/agg/{safe_fields}", body)
+        return await self.post_or_get(f"/mapi/agg/{safe_fields}", body)
 
     # -- OpenSearch DSL (generic; backend-agnostic) ---------------------
     # These speak plain OpenSearch DSL against the configured endpoint via
