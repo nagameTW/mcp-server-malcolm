@@ -62,6 +62,12 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **`malcolm_related_sessions` gave no sign that a side was cut at `limit`**
+  (#73). `/mapi/document` reports no total, so the summary now marks a side
+  that filled `limit`, e.g. "2 direct + 10 related (the limit; more may exist)
+  sessions" for a tunnel holding 44 connections. The output also drops its
+  indentation like `malcolm_search`: the same tunnel at `limit=100` went from
+  182,899 to 107,361 characters.
 - **An upstream refusal lost its reason** (#66). Every client request turned
   an HTTP error into httpx's message, which names only the status and URL. The
   reason was in the body and was dropped: on the training instance
