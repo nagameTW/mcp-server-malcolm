@@ -6,10 +6,20 @@ Two jobs, both about what a client sees when something goes wrong.
 failure produces a *successful* MCP result: the SDK wraps the string in a text
 block and leaves ``isError`` false (mcp/server/mcpserver/server.py). A client
 that retries on error, renders errors differently, or drops them from the
-transcript is then misled. Anything raised out of a tool body becomes
-``ToolError`` and lands as ``isError: true`` (mcp/server/mcpserver/tools/base.py),
-which is what the tools spec asks for. So failures raise one of the exceptions
-below; they never come back as ordinary return values.
+transcript is then misled. So failures raise one of the exceptions below; they
+never come back as ordinary return values.
+
+**Descending from the SDK's ``ToolError``, so the message survives the
+boundary.** Since mcp 2.1.0 (python-sdk #3314) ``Tool.run`` re-raises
+``ToolError`` and ``ResourceError`` with their text intact and collapses every
+OTHER exception into ``UnexpectedToolError("Error executing tool <name>")``,
+leaving the original only in the server's own log
+(mcp/server/mcpserver/tools/base.py). A plain ``Exception`` therefore still
+lands as ``isError: true`` -- but stripped of the one thing that makes the
+failure actionable. A model told only "Error executing tool search_dsl" cannot
+tell a bad index pattern from malformed JSON, so its next attempt is a guess.
+That is a silent degradation: nothing raises, no test fails, the hunt just gets
+worse. Both subclasses therefore inherit ``ToolError``.
 
 **Saying only what the caller may know.** Upstream exception text is written
 for an operator, not for a model: httpx puts the full request URL in
@@ -21,15 +31,19 @@ from __future__ import annotations
 
 import re
 
+from mcp.server.mcpserver.exceptions import ToolError
+
 __all__ = ["MalcolmToolError", "ToolInputError", "UpstreamError", "redact"]
 
 
-class MalcolmToolError(Exception):
+class MalcolmToolError(ToolError):
     """Base for every failure a tool reports to its caller.
 
     Exists so tests and any future result-shaping code can catch the whole
-    family at once. Both subclasses are ordinary exceptions, so the SDK's
-    blanket ``except Exception`` still converts them to ``isError: true``.
+    family at once. Descends from the SDK's ``ToolError`` so the message
+    reaches the client rather than being collapsed into "Error executing tool
+    <name>" -- see the module docstring for why that stopped being automatic in
+    mcp 2.1.0.
     """
 
 

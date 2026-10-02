@@ -6,6 +6,28 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Fixed
+
+- **Tool failure messages were collapsed by the SDK on mcp >= 2.1.0.**
+  `Tool.run` re-raises `ToolError` and `ResourceError` with their text intact
+  and turns every OTHER exception into
+  `UnexpectedToolError("Error executing tool <name>")`, keeping the original
+  only in the server's own log (python-sdk #3314). `MalcolmToolError` was a
+  plain `Exception` — the module docstring even said so, and said it relied on
+  the SDK's blanket `except Exception`. That assumption stopped holding in
+  2.1.0, so `ToolInputError` and `UpstreamError` reached the client stripped of
+  the one thing that makes a failure actionable.
+
+  A model told only "Error executing tool search_dsl" cannot tell a rejected
+  index pattern from malformed JSON, so its next attempt is a guess. Nothing
+  raised, no test failed, and the flag was still correct — the hunt just got
+  worse. `MalcolmToolError` now inherits the SDK's `ToolError`.
+
+  Found downstream, by a consumer's contract test, not here. This also closes
+  that gap: `tests/test_failures_raise.py` now asserts the message
+  reaches the client, not only the flag. The two existing end-to-end tests
+  checked `is_error` alone and stayed green throughout.
+
 ## [1.1.1] - 2026-08-14
 
 Documentation and packaging. No tool, flag or wire behaviour changes, and a
