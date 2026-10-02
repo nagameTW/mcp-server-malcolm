@@ -1012,11 +1012,12 @@ class MalcolmClient:
         """Search Arkime sessions. Omitting the range uses Arkime's default
         (recent) window; pass epoch-seconds strings in time_from/time_to
         (as startTime/stopTime) to reach historical data."""
-        params: dict[str, Any] = {"expression": expression, "length": limit, "order": order}
-        if time_from:
-            params["startTime"] = time_from
-        if time_to:
-            params["stopTime"] = time_to
+        params: dict[str, Any] = {
+            "expression": expression,
+            "length": limit,
+            "order": order,
+            **_arkime_query_params("", time_from, time_to),
+        }
         return await self.get("/arkime/api/sessions", params=params)
 
     @_upstream
@@ -1546,13 +1547,10 @@ class MalcolmClient:
             1714003200-1714089600. Only a field Arkime refused collapses to the
             sentinel, which is what keeps the two cases apart.
         """
-        body: dict[str, Any] = {"fields": fields}
-        if expression:
-            body["expression"] = expression
-        if time_from:
-            body["startTime"] = time_from
-        if time_to:
-            body["stopTime"] = time_to
+        body: dict[str, Any] = {
+            "fields": fields,
+            **_arkime_query_params(expression, time_from, time_to),
+        }
         data = await self._arkime_post("/arkime/api/sessions/summary", body)
         if not isinstance(data, list) or not data:
             return {"totals": {}, "breakdowns": []}
@@ -1938,14 +1936,36 @@ def _decode_search_source(obj: dict[str, Any]) -> dict[str, Any]:
 
 
 def _arkime_query_params(expression: str, time_from: str, time_to: str) -> dict[str, Any]:
-    """Standard Arkime SessionsQuery params (expression + time window)."""
+    """Standard Arkime SessionsQuery params (expression + time window).
+
+    Raises:
+        ToolInputError: a bound is not epoch seconds. Arkime answers a
+            non-numeric startTime with HTTP 200 and no rows -- on
+            training.malcolm.fyi, unique?exp=protocols lists 15 protocols with
+            startTime=631152000 and none with startTime=1990-01-01 -- which a
+            caller cannot tell from a window that holds no traffic.
+
+    A start with no end is closed at now, which is what the tools document for
+    an empty time_to. Arkime itself ignores a startTime sent alone: the same
+    unique call with only startTime=631152000 returned an empty body.
+    """
+    if time_from and not time_to:
+        time_to = str(int(time.time()))
     params: dict[str, Any] = {}
     if expression:
         params["expression"] = expression
-    if time_from:
-        params["startTime"] = time_from
-    if time_to:
-        params["stopTime"] = time_to
+    for name, key, value in (
+        ("time_from", "startTime", time_from),
+        ("time_to", "stopTime", time_to),
+    ):
+        if not value:
+            continue
+        if not value.strip().isdigit():
+            raise ToolInputError(
+                f"{name} must be epoch seconds (e.g. 1614556800), got {value!r}. "
+                "Arkime returns an empty result for any other format instead of an error."
+            )
+        params[key] = value.strip()
     return params
 
 

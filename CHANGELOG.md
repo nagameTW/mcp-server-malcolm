@@ -45,6 +45,20 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **An Arkime time bound that was not epoch seconds came back as "no
+  traffic".** Every Arkime read tool documents `time_from` and `time_to` as
+  epoch seconds, but a date string such as `2021-03-01` went straight through
+  as `startTime`, and Arkime answers that with HTTP 200 and no rows. On Malcolm's
+  training instance, `arkime_unique` on `protocols` listed 15 protocols with
+  `631152000` and nothing with `1990-01-01`. The value is now refused before
+  the request, with a message naming the parameter and the expected format.
+  `arkime_sessions` and `arkime_sessions_summary` used to set the window
+  themselves and now go through the same check.
+- **An Arkime window with a start and no end returned nothing.** The same
+  tools document an empty `time_to` as "now", but only `startTime` was sent,
+  and Arkime ignores a `startTime` that arrives without a `stopTime`. The
+  `arkime_unique` call above, given only `time_from=631152000`, came back
+  empty. A start with no end is now closed at the current time.
 - **The core query tools failed on a Malcolm that refuses POST.**
   `malcolm_search`, `malcolm_alerts`, `malcolm_aggregate` and the other tools
   built on `/mapi/document` and `/mapi/agg` only ever sent POST. Malcolm

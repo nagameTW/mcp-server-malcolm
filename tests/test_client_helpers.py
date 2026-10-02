@@ -4,6 +4,7 @@ the read-layer logic the review flagged as untested (M5)."""
 from __future__ import annotations
 
 import json
+import time
 from typing import Any, Callable
 
 import httpx
@@ -75,6 +76,53 @@ def test_arkime_query_params_full():
         "startTime": "100",
         "stopTime": "200",
     }
+
+
+@pytest.mark.parametrize("value", ["2021-03-01", "2 years ago", "1614556800.5", "now"])
+def test_arkime_query_params_refuses_a_time_that_is_not_epoch_seconds(value):
+    """Arkime answers a non-numeric startTime with HTTP 200 and no rows.
+
+    Measured on training.malcolm.fyi: /arkime/api/unique?exp=protocols with
+    startTime=631152000 lists 15 protocols, the same call with
+    startTime=1990-01-01 lists none. An empty answer there reads as "no such
+    traffic", so the bad value has to fail before the request.
+    """
+    with pytest.raises(ToolInputError, match="epoch seconds"):
+        _arkime_query_params("", value, "")
+    with pytest.raises(ToolInputError, match="time_to"):
+        _arkime_query_params("", "", value)
+
+
+def test_arkime_query_params_closes_an_open_window_at_now():
+    """time_to is documented as "Empty = now", and Arkime needs both bounds.
+
+    Measured on training.malcolm.fyi: unique?exp=protocols with only
+    startTime=631152000 returned an empty body; adding stopTime returned the
+    15 protocols.
+    """
+    before = int(time.time())
+    params = _arkime_query_params("", "631152000", "")
+    assert params["startTime"] == "631152000"
+    assert before <= int(params["stopTime"]) <= int(time.time())
+
+
+async def test_arkime_sessions_and_summary_refuse_a_date_string_before_any_request():
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={})
+
+    c = MalcolmClient(base_url="https://malcolm.example")
+    c._http = httpx.AsyncClient(
+        base_url="https://malcolm.example", transport=httpx.MockTransport(handler)
+    )
+
+    with pytest.raises(ToolInputError):
+        await c.arkime_sessions("protocols == modbus", time_from="2021-03-01")
+    with pytest.raises(ToolInputError):
+        await c.arkime_sessions_summary("ip.src", time_to="yesterday")
+    assert seen == []
 
 
 # -- _parse_filters ----------------------------------------------------------
