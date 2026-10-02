@@ -6,6 +6,16 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-02
+
+Still 51 read tools. Most of this release makes a partial answer say so: a
+list cut at a limit, an Arkime error inside an HTTP 200, a reply from only some
+OpenSearch shards. Three defaults change what a caller gets back:
+`malcolm_alerts` returns compact rows (`full=true` for the raw documents),
+`arkime_connections` draws its graph from 10,000 sessions instead of Arkime's
+100, and `arkime_multiunique` stops at 1,000 lines. `search_dsl` now refuses a
+bucket aggregation above 500.
+
 ### Added
 
 - **`search_dsl` and `count` say up front when OpenSearch answered only in
@@ -1077,7 +1087,8 @@ tools instead of guessing at field names and filter syntax.
 - Read-only by default. Writes are additive only: this version has no tool that
   deletes data, removes a tag, or touches user accounts.
 
-[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.1.1...HEAD
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.3...v1.1.0
 [1.0.3]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.0.2...v1.0.3
