@@ -497,9 +497,9 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Arkime 6.6.0 上它的表�
 | `arkime-inventory` | 7 | ~4,330 | 儲存的 view、shortcut、cron、擷取節點狀態、hunt 狀態 |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards 的 saved object |
 | `detections` | 5 | ~4,210 | Alerting monitor 與異常偵測器 |
-| **合計** | **51** | **~35,020** | |
+| **合計** | **51** | **~35,080** | |
 
-以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 35,020 token 降到約 23,230：
+以 metadata 為主的調查很少會用到的那四組關掉，session 就從 51 個工具降到 34 個，schema 帳單從約 35,080 token 降到約 23,290：
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory

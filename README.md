@@ -505,9 +505,9 @@ All 51 read tools are on by default, and their schemas are about 34,000 tokens t
 | `arkime-inventory` | 7 | ~4,330 | Saved views, shortcuts, crons, capture-node stats, hunt status |
 | `dashboards` | 2 | ~1,890 | OpenSearch Dashboards saved objects |
 | `detections` | 5 | ~4,210 | Alerting monitors and anomaly detectors |
-| **Total** | **51** | **~35,020** | |
+| **Total** | **51** | **~35,080** | |
 
-Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~35,020 tokens to ~23,230:
+Dropping the four groups a metadata-only hunt rarely reaches for takes the session from 51 tools to 34, and the schema bill from ~35,080 tokens to ~23,290:
 
 ```bash
 -e MALCOLM_MCP_DISABLE_READ_GROUPS=netbox,dashboards,detections,arkime-inventory
