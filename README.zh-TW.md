@@ -19,7 +19,7 @@
 
 ![Claude Code 透過 mcp-server-malcolm 回答 Modbus 告警問題](https://raw.githubusercontent.com/nagameTW/mcp-server-malcolm/main/docs/demo.gif)
 
-*未剪輯的 Claude Code 實際操作，連的是 Malcolm 官方公開的 training instance（training.malcolm.fyi）：呼叫兩次 `malcolm_aggregate`，接著給出答案。*
+*未剪輯的 Claude Code 實際操作，連的是 Malcolm 官方公開的 training instance（training.malcolm.fyi）：呼叫兩次 `malcolm_aggregate`，接著給出答案。錄影時開了 `--verbose`，所以每次工具呼叫都看得到；預設模式會把它們收成一行「Calling malcolm」。*
 
 這是第一個給 Malcolm 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。Claude Code、Claude Desktop、Cursor 這類 MCP 客戶端都能用。沒開 write class 之前它是唯讀的；開了之後還能建立告警、標記 session、發動 hunt 或上傳 PCAP。
 
