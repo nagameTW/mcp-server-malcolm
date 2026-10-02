@@ -78,6 +78,9 @@ _POPULATED: dict[str, Any] = {
     "aggregations": {"field": {"buckets": [{"key": "192.0.2.10", "doc_count": 7}]}},
     "buckets": [{"key": "192.0.2.10", "doc_count": 7, "max_anomaly_grade": 0.8}],
     "total": 1,
+    # arkime_session_detail reads the one-session route, which answers the
+    # document itself; the payload tools resolve the capture node from it.
+    "node": "capture-node-a",
     "totalAlerts": 1,
     "alerts": [{"id": "a1", "monitor_name": "m", "state": "ACTIVE", "severity": "1"}],
     "monitor": {

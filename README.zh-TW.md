@@ -871,7 +871,8 @@ uv run --with mcp python scripts/api_parity_check.py
 | `/mapi/netbox-sites` | GET | `malcolm_netbox_sites` |
 | `/mapi/event` | POST | `malcolm_create_alert`（write） |
 | `/arkime/api/fields` | GET | `arkime_field_search` |
-| `/arkime/api/sessions` | GET | `arkime_sessions`、`arkime_session_detail`（`id ==` 表達式） |
+| `/arkime/api/sessions` | GET | `arkime_sessions` |
+| `/arkime/api/session/<id>` | GET | `arkime_session_detail` |
 | `/arkime/api/sessions.pcap` | GET | `arkime_session_pcap` |
 | `/arkime/api/session/<node>/<id>/packets` | GET | `arkime_session_payload` |
 | `/arkime/api/session/<node>/<id>/bodyhash/<hash>` | GET | `arkime_session_file_by_hash` |

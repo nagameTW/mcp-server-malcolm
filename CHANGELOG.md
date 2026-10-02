@@ -62,6 +62,22 @@ All notable changes to this project are recorded here. The format follows
 
 ### Fixed
 
+- **An Arkime query Arkime could not run read as zero matches** (#65).
+  Arkime answers a bad expression or an unknown field with HTTP 200 and the
+  reason in the body: `{"error": ...}` from `/api/sessions` and `/api/spiview`,
+  a streamed `[{"bsqErr": ...}]` from `/api/sessions/summary`. On the training
+  instance `ip.src==[[[` came back from `arkime_sessions` as `matched: 0`.
+  These three tools now fail with Arkime's own message. `arkime_spigraph` was
+  listed in the issue but needs no change: it already answers a bad query with
+  a 403.
+- **`arkime_session_detail` returned a search row, not the session** (#71). It
+  ran an `id ==` search on `/api/sessions`, which only returns the columns a
+  session list shows: 11 keys on a training conn session. It now reads
+  `/api/session/<id>`, which returns the stored document, 25 keys on the same
+  session, with `@timestamp`, `tags`, `event` and the Zeek or Suricata detail.
+  The route takes the bare or node-prefixed id. Arkime answers an unknown id
+  with a 500 `Session not found`; that still comes back as "No Arkime session
+  found", and any other 500 is still an error.
 - **`malcolm_search` output was indented, and a full page looked
   complete** (#74, #73). Dropping the indentation cut 20 conn documents from
   79,571 to 46,328 characters, about 20% of the tokens; the documents
