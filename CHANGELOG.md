@@ -1,0 +1,1081 @@
+# Changelog
+
+All notable changes to this project are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project uses
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+## [1.2.1] - 2026-10-02
+
+### Changed
+
+- **Tool descriptions are shorter.** They drop figures and examples that did
+  not help a model choose a call, so the README token table drops from
+  ~35,080 to ~34,150. The documentation and tests were revised with them. No
+  tool changes behaviour.
+
+## [1.2.0] - 2026-10-02
+
+Still 51 read tools. Most of this release makes a partial answer say so: a
+list cut at a limit, an Arkime error inside an HTTP 200, a reply from only some
+OpenSearch shards. Three defaults change what a caller gets back:
+`malcolm_alerts` returns compact rows (`full=true` for the raw documents),
+`arkime_connections` draws its graph from 10,000 sessions instead of Arkime's
+100, and `arkime_multiunique` stops at 1,000 lines. `search_dsl` now refuses a
+bucket aggregation above 500.
+
+### Added
+
+- **`search_dsl` and `count` say up front when OpenSearch answered only in
+  part**. OpenSearch returns HTTP 200 when some shards fail or the
+  search times out, and the shortfall sits only in `_shards` and `timed_out`.
+  A model reading `hits` and `aggregations` takes such a reply as complete,
+  and a zero from the shards that answered as proof of absence. Both tools
+  now put an `INCOMPLETE:` line above the JSON in that case, naming the
+  failed shard count or the timeout. A complete reply is byte-for-byte what
+  it was. Malcolm's `/mapi/document` and `/mapi/agg` drop these fields, so
+  the other tools cannot do the same.
+- **`MALCOLM_MCP_DISABLE_TOOLS`, a per-tool disable list layered on the read
+  groups**. `arkime` is the largest group, 11 tools and ~8,630 schema
+  tokens, and the one a deployment usually cannot drop: `arkime_sessions` is
+  the only search that returns a session ID, so disabling the group also takes
+  away every `arkime-content` tool's input. The new list removes single read
+  tools by name after the groups are applied, e.g.
+  `arkime_spiview,arkime_spigraphhierarchy,arkime_multiunique`. A name that is
+  not a registered read tool aborts startup, whether it is a typo, a tool whose
+  group is already disabled, or a write tool. A startup line names the removed
+  tools. It is a deny list on purpose: an allow list would go stale on every
+  release that adds a tool.
+- **`MALCOLM_BASE_URL` is read when `MALCOLM_URL` is unset**, as an
+  alias. Before this, a configuration that used that spelling quietly fell back
+  to `https://localhost`, and the first call came back as a 401, which reads as
+  a wrong password. `MALCOLM_URL` still wins when both
+  are set, and the default is unchanged. The README's 401 note now says to check
+  the host before the password.
+
+### Changed
+
+- **"Read-only by default" now sits right under the examples in both
+  READMEs.** It used to be the last clause of a paragraph below the demo.
+  That paragraph also loses "the first MCP server for Malcolm", which was a
+  claim to defend rather than information. The test-environment detail at the
+  top of Quick start moved to a new "Where this README was tested" subsection,
+  leaving one line in its place. The license badge now reads the license from
+  GitHub.
+- **`malcolm_alerts` returns one compact row per alert**. It used to
+  return the raw `/mapi/document` response, indented. On the training
+  instance the default 20 alerts ran to 77,963 characters, about 22,000
+  tokens, near the 25,000-token tool-result cap Claude Code applies by
+  default. Each row now carries the document id, time, rule name, id and
+  category, Suricata severity and action, both endpoints, transport,
+  protocol and `community_id`, the key that finds the same flow in Zeek's
+  conn records. The same 20 alerts come to 9,235 characters, about 3,600
+  tokens. `full=true` returns the raw documents, without indentation.
+- **Both READMEs now open with what you can ask the agent.** The first screen
+  used to name the server and list Malcolm's components, which only told a
+  reader who already runs Malcolm what this is. It now shows four example
+  requests and the tools each one calls, and Quick start comes before the
+  design rationale ("Why an MCP layer"), which moved down a section. A GIF
+  of an unedited Claude Code session against Malcolm's public training
+  instance sits under the examples. It lives in `docs/`, which is not part of
+  the wheel or sdist.
+- **`search_dsl` refuses a bucket aggregation whose `size` is above 500**.
+  The top-level `size` was always clamped, but a `size` inside `aggs`
+  went to OpenSearch as written, so one `terms` aggregation asking for 50,000
+  buckets could fill most of a client's context window with a single result.
+  `terms`, `multi_terms`, `significant_terms`, `significant_text` and
+  `composite` are now checked at every nesting level, under both `aggs` and
+  `aggregations`, against the same 500-per-level ceiling `malcolm_aggregate`'s
+  `limit` has. The request is refused before it leaves the server, with an
+  error that names the path (`aggs.by_src.terms.size=50000`) and says to page
+  with a composite aggregation instead. It refuses rather than clamps, because
+  500 silently truncated buckets would look like the complete answer. A query
+  that worked before with a larger `size` now needs to page.
+  `date_histogram` and `histogram` size their buckets by interval and are still
+  bounded only by OpenSearch's `search.max_buckets`.
+
+### Fixed
+
+- **Arkime and NetBox results cut at a fixed cap gave no sign of it**.
+  Measured on the training instance unless noted:
+  - `arkime_connections` never sent Arkime's `length`, so every graph came
+    from Arkime's default of 100 sessions. "protocols == modbus" matched
+    41,768 sessions and drew 8 nodes. The new `sessions` parameter defaults
+    to 10,000 (23 nodes, 1.4 s; up to 100,000, which drew 39). A `Note:` line
+    gives both numbers when more sessions matched than were used.
+  - `arkime_spigraphhierarchy` keeps Arkime's top 20 under each node. A
+    `Note:` line now counts the nodes holding exactly 20, five on a
+    two-level source/destination tree.
+  - `arkime_multiunique` returned every combination: 6,378 lines and 183,248
+    characters for `ip.src,ip.dst`. It now stops at `limit` (default 1,000,
+    up to 10,000) and ends with a line counting the rest.
+  - `arkime_unique` adds a `Note:` line when it returns exactly 10,000
+    values, Arkime's ceiling for that route.
+  - `malcolm_netbox_lookup` keeps the first 5 IP or device matches and 10
+    prefixes. It now adds NetBox's own `count` as `matched` when more
+    matched. The training instance has no NetBox, so this part is checked
+    against NetBox's documented response only.
+  The hierarchy and connections output also drops its indentation.
+- **`malcolm_related_sessions` gave no sign that a side was cut at `limit`**.
+  `/mapi/document` reports no total, so the summary now marks a side
+  that filled `limit`, e.g. "2 direct + 10 related (the limit; more may exist)
+  sessions" for a tunnel holding 44 connections. The output also drops its
+  indentation like `malcolm_search`: the same tunnel at `limit=100` went from
+  182,899 to 107,361 characters.
+- **An upstream refusal lost its reason**. Every client request turned
+  an HTTP error into httpx's message, which names only the status and URL. The
+  reason was in the body and was dropped: on the training instance
+  `arkime_connections` answered a bad expression with a 403 whose body read
+  `Parse error on line 1`, and the tool said only `403 Forbidden`. Malcolm's
+  `/mapi/opensearch/` is a plain nginx pass-through, so `search_dsl`, `count`
+  and `index_mapping` lost OpenSearch's `parsing_exception` or
+  `index_not_found_exception` the same way. Errors now end with the first 300
+  characters of the body, redacted like the rest of the message. An HTML error
+  page adds nothing, and neither does a streamed download that failed before
+  its body was read.
+- **The DSL tools claimed to work against any OpenSearch**. The module
+  docstring, a client comment and both READMEs said repointing the base URL at
+  a bare OpenSearch node would work. Every DSL path carries Malcolm's
+  `/mapi/opensearch/` prefix, so it does not. The text now says the tools need
+  Malcolm's proxy.
+- **`malcolm_related_sessions` listed the direct hits a second time as
+  "related"**. Malcolm copies every Zeek record's `zeek.uid` into
+  `rootId`, so the `rootId` search returned the direct set again. The related
+  side now asks for `rootId` equal to the UID and `zeek.uid` not equal to it,
+  which leaves the records `rootId` really adds: the connections inside a
+  tunnel, whose `rootId` is the tunnel's UID. On the training instance a
+  tunnel UID went from "2 direct + 46 related" to "2 direct + 44 related", the
+  44 being its inner connections. A side whose search failed is now named as
+  failed in the summary and has no hit list, where it used to count as 0.
+  `limit` is capped at 500 like the other search tools.
+- **`malcolm_file_scans` gave no way to tell which way a file moved**.
+  `source_ip` and `destination_ip` on a Zeek files record are the connection's
+  originator and responder, so an HTTP download reads client to server. Zeek
+  keeps the file's direction in `network.is_orig`. On the training instance
+  84% of the files records (90,014 of 107,510) were sent by the responder. Rows now carry
+  `sender_ip` and `receiver_ip` derived from it, and the tool description says
+  what `source_ip` and `destination_ip` mean. The existing keys are unchanged.
+- **An Arkime query Arkime could not run read as zero matches**.
+  Arkime answers a bad expression or an unknown field with HTTP 200 and the
+  reason in the body: `{"error": ...}` from `/api/sessions` and `/api/spiview`,
+  a streamed `[{"bsqErr": ...}]` from `/api/sessions/summary`. On the training
+  instance `ip.src==[[[` came back from `arkime_sessions` as `matched: 0`.
+  These three tools now fail with Arkime's own message. `arkime_spigraph` was
+  listed in the issue but needs no change: it already answers a bad query with
+  a 403.
+- **`arkime_session_detail` returned a search row, not the session**. It
+  ran an `id ==` search on `/api/sessions`, which only returns the columns a
+  session list shows: 11 keys on a training conn session. It now reads
+  `/api/session/<id>`, which returns the stored document, 25 keys on the same
+  session, with `@timestamp`, `tags`, `event` and the Zeek or Suricata detail.
+  The route takes the bare or node-prefixed id. Arkime answers an unknown id
+  with a 500 `Session not found`; that still comes back as "No Arkime session
+  found", and any other 500 is still an error.
+- **`malcolm_search` output was indented, and a full page looked
+  complete**. Dropping the indentation cut 20 conn documents from
+  79,571 to 46,328 characters, about 20% of the tokens; the documents
+  themselves are unchanged. The tool now states the measured per-document
+  size and points at `malcolm_aggregate` for counts. `/mapi/document`
+  reports no total, so when `malcolm_search` or `malcolm_alerts` fills
+  `limit`, a `Note:` line says more may match. `malcolm_file_scans` adds
+  `limit_reached: true` in the same case, since its `count` is the rows
+  returned. `arkime_views` and `arkime_shortcuts` add `total` from Arkime's
+  `recordsTotal` beside `count`, the rows on this page.
+- **`malcolm_alerts` said a signature did not exist when it did.** With no
+  `time_from`, the alert search covers all history, but the substring pre-scan
+  that turns `signature` or `category` into exact names asked `/mapi/agg`,
+  which defaults to the last 24 hours. On Malcolm's training instance, a 2021
+  capture, `signature="Modbus"` answered "No alert signature contains 'Modbus'"
+  beside 5,037 matching alerts. The pre-scan now covers the same window as the
+  search. The scan also reads only the 500 most frequent values; when values
+  beyond those exist, a miss now says how many alert documents went unscanned
+  instead of asserting absence, and a hit is prefixed with a `Note:` line, since
+  a rarer match can still be missing (there, "Modbus Request flood detected"
+  sat among 327 unscanned alerts).
+- **`malcolm_field_values` printed a page as a count.** "Values for
+  'destination.ip' (30 distinct)" was the `limit`, not the field's cardinality;
+  on the training instance 813,785 documents held values that were not listed.
+  When `/mapi/agg` reports documents outside the returned values, the header
+  now says how many.
+- **`malcolm_field_values` did not flag a field name Malcolm never indexes.**
+  The rename hint only ran on an empty bucket list, but Malcolm files every
+  document that lacks the field under a "-" bucket, so `http.user_agent`
+  answered "(1 distinct): - (7,718,258 docs)". A list holding only "-" now gets
+  the hint (`http.useragent`). When the field list cannot be fetched, the reply
+  no longer claims the field exists.
+- **`malcolm_data_coverage` listed only the first 50 datasets** and summed only
+  those into `total_documents`. The training instance has 174. It now asks for
+  up to 500, and `total_documents` includes any documents in datasets past
+  that, reported as `documents_in_unlisted_datasets`.
+- **`malcolm_aggregate` checked a key `/mapi/agg` never returns** to decide
+  whether a result was empty, so the field lookup ran on every call. It now
+  reads the real buckets, ignoring the "-" placeholder. The visible output for
+  a valid field was already right; the hint for an unknown one now comes from
+  the actual buckets rather than from the dead check. The hint's first line no
+  longer says "No documents matched", which was false for a "-" bucket.
+- **The MCP Registry still listed 0.4.0 as the latest version.** 1.0.3 put the
+  right version back into `server.json`, but nothing ever sent that file to the
+  registry, so every release since 0.4.0 stayed on PyPI only. A client that
+  installs from the registry pinned a version 13 releases old. The release
+  workflow now publishes `server.json` to the registry once the PyPI upload
+  succeeds.
+- **An Arkime time bound that was not epoch seconds could widen the window
+  silently.** Every Arkime read tool documents `time_from` and `time_to` as
+  epoch seconds, but any string went straight through as `startTime`, and
+  Arkime answers one it cannot parse with HTTP 200 and the whole dataset. On
+  Malcolm's training instance, `arkime_unique` on `protocols` with `now` as the
+  start and the current second as the end listed every protocol the instance
+  holds, although its traffic is years old. The value is now refused before
+  the request, with a message naming the parameter and the expected format.
+  `arkime_sessions` and `arkime_sessions_summary` used to set the window
+  themselves and now go through the same check.
+- **An Arkime window with a start and no end returned nothing.** The same
+  tools document an empty `time_to` as "now", but only `startTime` was sent,
+  and Arkime ignores a `startTime` that arrives without a `stopTime`. The
+  `arkime_unique` call above, given only `time_from=631152000`, came back
+  empty. A start with no end is now closed at the current time.
+- **The core query tools failed on a Malcolm that refuses POST.**
+  `malcolm_search`, `malcolm_alerts`, `malcolm_aggregate` and the other tools
+  built on `/mapi/document` and `/mapi/agg` only ever sent POST. Malcolm
+  documents both endpoints as GET or POST, and a read-only front end can allow
+  GET and refuse POST. Malcolm's public training instance (training.malcolm.fyi)
+  answers 403 to every POST and serves the same request as GET. Both calls now
+  retry once as GET, with the body as query parameters, when POST comes back
+  403 or 405. Any other failure still surfaces unchanged.
+- **`search_dsl` sent an aggregation-only body as a query.** Any `query_dsl`
+  without a `query` key was wrapped as `{"query": ...}`, including a full body
+  such as `{"size": 0, "aggs": {...}}`. OpenSearch rejects that as an unknown
+  query, and the aggregations sat where the new bucket-size check could not see
+  them. Only a bare query clause such as `{"term": {...}}` is wrapped now. A
+  body carrying `aggs`, `size`, `sort` or another top-level search key goes
+  upstream as written and matches every document. A `query_dsl` that is not a
+  JSON object (an array, a string, a number) is refused as an input error
+  rather than failing further in.
+- **Tool failure messages were collapsed by the SDK on mcp >= 2.1.0.**
+  `Tool.run` re-raises `ToolError` and `ResourceError` with their text intact
+  and turns every OTHER exception into
+  `UnexpectedToolError("Error executing tool <name>")`, keeping the original
+  only in the server's own log (python-sdk #3314). `MalcolmToolError` was a
+  plain `Exception` — the module docstring even said so, and said it relied on
+  the SDK's blanket `except Exception`. That assumption stopped holding in
+  2.1.0, so `ToolInputError` and `UpstreamError` reached the client stripped of
+  the one thing that makes a failure actionable.
+
+  A model told only "Error executing tool search_dsl" cannot tell a rejected
+  index pattern from malformed JSON, so its next attempt is a guess. Nothing
+  raised, no test failed, and the flag was still correct — the next attempt
+  just got worse. `MalcolmToolError` now inherits the SDK's `ToolError`.
+
+  This also closes a test gap: `tests/test_failures_raise.py` now asserts the
+  message reaches the client, not only the flag. The two existing end-to-end tests
+  checked `is_error` alone and stayed green throughout.
+
+## [1.1.1] - 2026-08-14
+
+Documentation and packaging. No tool, flag or wire behaviour changes, and a
+session sees the same 51 tools it did in 1.1.0.
+
+### Fixed
+
+- **Both READMEs still printed 1.0.2 after 1.1.0 shipped.** The build
+  transcript, the `pip install` line and both handshake blocks quoted the
+  previous release, so a reader comparing the version they had just installed
+  against the one the README shows could not tell which of the two was wrong.
+  This was the third copy of the version to drift, after `__version__` at 1.0.0
+  and `server.json` at 1.0.3, and it was the last one with no guard.
+  `test_version.py` now fails when a README quotes any version other than the
+  declared one, and also fails if its patterns stop matching anything, since a
+  guard that quietly finds nothing reads as a pass.
+- **The install check called `timeout`, which macOS does not ship.** `timeout 3
+  mcp-server-malcolm < /dev/null` answers `command not found` on a stock Mac,
+  on the one command whose job is to confirm the install worked. Stdin is
+  already at EOF, so nothing was holding the process open and the timeout was
+  doing no work; the check is now the bare command.
+
+### Changed
+
+- **The READMEs lead with Quick start, and carry a table of contents.** Quick
+  start used to begin 28% of the way down, behind the full 51-tool catalogue,
+  and step 1 offered five install routes before the reader reached the
+  registration command. Step 1 is now the published install and the check that
+  the server starts; the checkout, wheel, `uvx` and `pipx` routes moved to
+  Other ways to install, below the numbered steps. Trimming the read surface
+  now follows the tool catalogue rather than preceding it, since it names
+  groups a reader has not met yet. PyPI renders this README on the project page
+  with no outline control of its own, which is what the table of contents is
+  for.
+- **Registration says where the Malcolm password ends up.** A literal password
+  on the `claude mcp add` line lands in shell history and, while the command
+  runs, in `ps`; the value then sits in `~/.claude.json` in cleartext. That
+  section now shows the `read -rs` form and is explicit about what it does not
+  fix, matching how the container section already treats `docker inspect`.
+- macOS is no longer listed as an unverified install target. It was installed
+  from PyPI on macOS 26/arm64 under Python 3.14.6, 32 packages with every
+  compiled dependency arriving as a prebuilt wheel, then registered with a
+  client. x86_64 is still untested and
+  still says so.
+
+### Added
+
+- Python 3.14 in the CI matrix and in the package classifiers. It was the
+  current release, and the only supported version nothing ran against.
+
+## [1.1.0] - 2026-08-11
+
+### Added
+
+- **`MALCOLM_MCP_DISABLE_READ_GROUPS`, so a deployment can stop paying for read
+  tools it will never call.** All 51 read tools were registered
+  unconditionally, and their schemas cost roughly 34,000 tokens per session
+  before the model has asked anything — affordable on a frontier model, and a
+  real constraint on a model with a small context window, which is what this
+  server's field-discovery design is aimed at. Part of that spend was never recoverable: a Malcolm without
+  NetBox cannot answer a `malcolm_netbox_*` call, and not every operator wants
+  an agent reading the OpenSearch alerting configuration at all. The twelve
+  read modules are now named groups (`dsl`, `query`, `fields`, `health`,
+  `netbox`, `arkime`, `arkime-content`, `correlation`, `files`,
+  `arkime-inventory`, `dashboards`, `detections`), and any of them can be left
+  unregistered. Dropping `netbox,dashboards,detections,arkime-inventory` takes
+  a session from 51 tools and ~34,470 tokens to 34 and ~22,690. Nothing changes
+  unless the variable is set, and the registration order is unchanged, so a
+  default deployment's `tools/list` is identical to 1.0.3's.
+- A disabled group is absent from `tools/list` rather than hidden, matching how
+  the write classes already behave, and the startup banner names what was
+  dropped — but only when something was, so the default deployment gains no
+  extra line. A name matching no group aborts startup with the valid names in
+  the message: silently leaving a mistyped group registered is the one outcome
+  an operator would not notice until the token bill or an unwanted tool call
+  arrived.
+
+### Fixed
+
+- **`server.json` advertised 0.9.0 to the MCP Registry while PyPI served
+  1.0.3.** Both version fields — the top-level one and the PyPI package entry
+  the registry resolves separately — had sat at 0.9.0 since that release, so
+  the registry pointed at a version four releases stale. Nothing in the release
+  workflow writes either field, which is why four version bumps went past it;
+  a test now asserts both match `pyproject.toml`, the same guard `__version__`
+  has had since 1.0.1.
+- `CONTRIBUTING.md` described `tools/write/` as four write classes. It has held
+  five since `arkime-view` landed in 1.0.0.
+
+## [1.0.3] - 2026-08-03
+
+### Fixed
+
+- **`arkime_views`, `arkime_shortcuts` and `arkime_crons` only ever listed this
+  account's own.** Arkime scopes those three per request rather than per role:
+  Arkime's shipped viewer gates on `req.query.all && roles.includes(
+  'arkimeAdmin')` in `apiViews.js`, `apiShortcuts.js` and
+  `apiCrons.js`. The client never sent `all`, so however privileged the
+  configured account was, the answer stayed filtered to owner plus shared roles
+  and an empty list could not be told apart from a deployment that genuinely
+  has none. All three now send it. A non-admin account is unaffected — the role
+  half of that condition still fails — so the server instructions keep the
+  caveat, now scoped to below-arkimeAdmin accounts rather than stated flatly.
+- **Both READMEs reported a protocol version this server is not limited to.**
+  The "what the client sees on connection" block showed a 2025-11-25 handshake
+  measurement and a server version two releases stale (0.9.0). `initialize`
+  does not exist at 2026-07-28, so measuring through it can only report the
+  older number; the SDK's `serve_dual_era_loop` picks the era from the client's
+  first request and this server answers both. The legacy block was accurate apart from the version, and a modern block
+  covering `server/discover` is new.
+- **`arkime_session_detail`'s docstring justified its detour with a false
+  claim.** It said `GET /arkime/api/session/<id>` serves the SPA HTML shell
+  rather than JSON. That route answers 200 `application/json` with the stored
+  document. The detour through the sessions search is kept, but it is not
+  equivalent: it answers a strict subset of the route's top-level keys, missing
+  among others `@timestamp`, `event`, `tags`, `tcpflags`, `protocol`, `srcOui`/`dstOui`
+  and `srcTTL`/`dstTTL`. Swapping the URL would widen every answer this tool
+  has returned, so it stays a behavior change for another PR; the docstring now
+  records the gap and how to close it.
+- **The install chapter opened with a warning that had stopped being true.**
+  It told readers PyPI carried an older build than this repository and that
+  both reported `0.9.0`, so the number gave no signal. PyPI serves 1.0.2 and
+  so does this tree. Replaced with the part that holds wherever the release
+  pointer sits — a version number cannot tell you whether a checkout matches
+  the published build, since a tree with unreleased changes still reports the
+  last release. The build transcript in that chapter is re-run rather than
+  hand-edited, as the chapter promises: same 32 packages, `mcp` still resolving
+  to 2.0.0, only the wheel filenames moved. The connection block's measured
+  instruction length is re-measured too (3624 -> 3753), which the caveat
+  rewrite above changed.
+
+### Removed
+
+- `MalcolmClient.invalidate_field_cache`, which had no caller in `src`, `tests`
+  or the docs — dead code on the one long-lived mutable structure in the
+  process.
+
+## [1.0.2] - 2026-07-31
+
+### Fixed
+
+- **An unreachable host produced an error with no message at all.** httpx
+  raises `ConnectTimeout` with an empty `str()` — the anyio timeout it wraps
+  carries no text — so the caller received `Error executing tool <name>: ` with
+  nothing after the colon, on one of the two failures a first run hits most
+  often. Connection *refused* was never affected; it carries
+  `All connection attempts failed`. The message now names the exception and the
+  target (`ConnectTimeout for https://host:port/path`), with credentials
+  stripped from that URL as everywhere else. Both READMEs documented the blank
+  message as observed behaviour and are updated.
+
+## [1.0.1] - 2026-07-31
+
+### Fixed
+
+- **1.0.0 told every client it was 0.9.0.** `pyproject.toml` was bumped and the
+  wheel metadata was correct, but `__init__.py` restated the number as a
+  literal and that literal is what `server.py` hands to the MCP handshake as
+  `serverInfo.version`. `__version__` now reads the installed distribution's
+  metadata, so there is one source of truth; a test asserts it matches both the
+  installed version and `pyproject.toml`, and a third refuses any module that
+  restates the version as a literal again. PyPI cannot be re-uploaded, so 1.0.0
+  keeps the wrong handshake — use 1.0.1.
+
+## [1.0.0] - 2026-07-31
+
+An audit against MCP revision 2026-07-28, a coverage audit against Malcolm's
+own API, and a pass over every tool definition. 41 tools become 51 read-only
+(58 with all five write classes on).
+
+### Security
+
+- **Caller-supplied strings could reach arbitrary endpoints on the Malcolm
+  host.** `/mapi/agg/{fields}` and `/mapi/dashboard-export/{id}` were built by
+  f-string, and httpx normalizes dot segments, so `fields="../../arkime/api/hunts"`
+  issued `POST /arkime/api/hunts` carrying the server's own credentials. That
+  defeated both the read-only guarantee and the write-class gate, which assumes
+  an unregistered tool cannot be called. All nine path-splice sites in
+  `MalcolmClient` are now guarded at the choke point, with a backstop on
+  `get`/`post`/`get_raw` so a method that forgets its guard still cannot climb
+  out. Every field name, saved-object id and index name the server itself uses
+  still passes.
+- Upstream exception text is redacted before it reaches a caller — `MALCOLM_URL`
+  may legitimately embed credentials, and httpx puts the request URL in
+  `HTTPStatusError`.
+- Tool invocations are rate limited, configurable through
+  `MALCOLM_MAX_CONCURRENCY` and `MALCOLM_MAX_REQUESTS_PER_MINUTE`.
+
+### Changed
+
+- **BREAKING — a tool failure now arrives as `isError: true`.** Failures used to
+  `return` a string beginning `Error:`, which the SDK renders as a *successful*
+  result; meanwhile an exception escaping a tool body did set the flag, so
+  `isError` meant different things in different tools. Seventy-seven paths now
+  raise. A client that pattern-matched the `Error:` prefix needs updating; one
+  that reads `isError` needs no change. An empty result set is still a
+  successful answer and still comes back as prose.
+- **BREAKING — malformed arguments are refused instead of dropped.** A filter
+  that failed to parse used to be discarded, so the tool answered a *wider*
+  question than the one asked: the very common single-quoted Python-dict form
+  `{'event.dataset': 'conn'}` returned the entire index, presented as a filtered
+  result. Four such sites now raise.
+- `arkime_hunt_status` is registered unconditionally. It is a read tool and was
+  reachable only when the hunt-job *write* class was enabled.
+- Every tool description was rewritten against the Glama TDQS rubric: mean 4.50
+  to 4.87, minimum 3.2 to 4.6, overall 3.85 to 4.50.
+- Arkime's field vocabularies are documented per parameter, and passing the
+  wrong one now raises with the counterpart named. The `exp` routes
+  reject a db name, `arkime_connections` rejects an expression name, and
+  `arkime_spigraph`/`arkime_spiview` take a third spelling — the storage path —
+  that neither field-discovery tool reports.
+
+### Added
+
+- Packet payload is readable at last. `arkime_session_payload` returns decoded
+  session content; every drill-down previously stopped at metadata, so an
+  analyst could find a suspicious session and read nothing of what crossed the
+  wire. The server's own instructions named this tool before it existed.
+- `arkime_session_file_by_hash` fetches a transferred file from a *known*
+  session; `arkime_file_by_hash` resolves the most recent session carrying the
+  hash, which is the wrong one once a file has moved twice.
+- `arkime_sessions_summary` sizes a result set, including byte and packet
+  totals, in one call instead of two plus a dialect switch.
+- `arkime_build_query` compiles an Arkime expression into OpenSearch DSL.
+- `arkime_crons` lists the standing periodic queries whose tags appear in data
+  an agent sees.
+- `malcolm_alerting_alerts` and `malcolm_alerting_monitor_detail` read alerts in
+  any state and a monitor's actual query, so a monitor's silence can be judged.
+- `malcolm_anomaly_results` reports which entity was anomalous and when, where
+  the detector list could only report one global count.
+- `malcolm_saved_object_detail` resolves a saved search's query, filters and
+  index pattern.
+- `arkime_cancel_hunt` (hunt-job write class) stops a hunt scoped too widely.
+- The two field catalogues are exposed as MCP **resources**, so a client can
+  read the schema without spending a tool call.
+- Cache hints (`ttlMs`) are declared for the methods frozen at startup.
+- Both READMEs document every deployment path — standalone install, Claude Code,
+  a generic `mcpServers` config, Docker, and direct use as a Python library —
+  each proved in a clean environment first, including the real error text for a
+  wrong password, an unreachable host, and a self-signed certificate.
+
+### Fixed
+
+- Two tools were unusable from a spec-compliant client: a bare `TypedDict`
+  return put literal nulls on the wire against a schema typing those keys
+  `string`/`array`, and the official SDK client raised instead of returning the
+  answer.
+- `arkime_sessions_summary` answered 500 for the rest of the process after any
+  `arkime_sessions` call — Arkime switches to `checkCookieToken` once a cookie
+  is in the jar. Every Arkime POST now routes through one helper.
+- `malcolm_service_status` raised an empty-message error when both probes
+  *succeeded* but returned no data.
+- `redact()` never matched an underscore-prefixed key, so `access_token=`,
+  `refresh_token=` and `id_token=` leaked verbatim.
+- `str.isdigit()` is true for characters `int()` rejects, which crashed
+  `MalcolmClient.from_env()` on a typo in a deployment's env file.
+- `MalcolmClient(max_requests_per_minute=0)` raised `IndexError`;
+  `max_concurrency=0` hung until timeout. Both are validated at construction.
+- A saved search's query is stored in two shapes, and the narrower declaration
+  made the tool raise rather than degrade.
+- `dsl.py`'s index guard was stricter than the client's, making OpenSearch's
+  ordinary multi-index form `idx1,idx2` unreachable through four tools.
+
+## [0.9.0] - 2026-07-30
+
+Closes the two things left open after 0.8.1.
+
+### Added
+
+- The ten tools that build their own rows now declare a typed return, so they
+  carry a real output schema instead of the `{"result": {"type": "string"}}` an
+  untyped tool auto-generates: `malcolm_file_scans`, `malcolm_extract_file`,
+  `arkime_views`, `arkime_shortcuts`, `arkime_reverse_dns`, `arkime_pcap_files`,
+  `arkime_node_stats`, `malcolm_saved_objects`, `malcolm_alerting_monitors` and
+  `malcolm_anomaly_detectors`. A client now gets `structuredContent` alongside
+  the text, and the text is unchanged on every path but one: the SDK serializes
+  with the same `indent=2` these tools used, but five call sites had omitted
+  `ensure_ascii=False` and so escaped non-ASCII as `\uXXXX`. Those now emit raw
+  UTF-8 — visible on `malcolm_extract_file`'s 404 note, whose em dash was
+  previously escaped. Both forms decode to the same string, so only an exact
+  byte match on that text is affected.
+
+  The remaining 31 tools keep `-> str` on purpose. They return an upstream body
+  verbatim — `malcolm_search` hands back Malcolm's `/mapi/document` response,
+  `search_dsl` OpenSearch's — and there is no shape this repo can declare for
+  those; annotating them would land back on `dict[str, Any]` and the same empty
+  schema. 0.8.0 recorded a different and wrong reason for not doing any of this
+  (that a typed return could not also return a sentence); it can, via
+  `-> Payload | str`, and the prose-on-empty path is preserved exactly. Two
+  tests now hold both halves: that the ten declare a schema, and that every one
+  of them can still return an explanatory sentence.
+
+  The TypedDicts import from `typing_extensions`, not `typing`: pydantic refuses
+  `typing.TypedDict` below Python 3.12 and this package supports 3.11. That
+  dependency is now declared explicitly rather than relied on transitively.
+
+### Changed
+
+- The `hunt_workflow` prompt covers the whole tool set again. It had been
+  updated for 0.5.0 and then left behind by 0.6.0 and 0.7.0, so it taught 24 of
+  48 tools and none of the nine added in those two releases — an agent following
+  it would rebuild by hand what `arkime_views` and `malcolm_saved_objects`
+  already had. It gains two steps: checking the capture can be trusted before
+  reading anything into an absence (`arkime_node_stats` — a dropping node looks
+  exactly like quiet traffic), and reusing what the team already built before
+  writing a query. `tests/test_prompt_currency.py` now fails when a load-bearing
+  tool is missing from it, when it names a tool that does not exist, when its
+  steps stop being consecutive, or when it demonstrates a parameter that tool
+  does not have. That last one was already true: the prompt taught
+  `arkime_create_shortcut(type="ip")` where the parameter is `shortcut_type`,
+  and an unknown keyword is dropped silently — so the call appeared to succeed
+  while creating a string list instead of an IP list.
+
+## [0.8.1] - 2026-07-30
+
+### Added
+
+- `scripts/api_parity_check.py`: proves that what the tools return still matches
+  what Malcolm's own API says. Every tool here reshapes the upstream response —
+  trimming layout blobs, renaming `sources` to `sensors`, scaling Arkime's CPU
+  field, replacing a result count that meant the wrong thing — and each of those
+  is a chance to change a fact rather than just its presentation. For all 41
+  tools the script asks the same question twice, once over a real MCP stdio
+  session and once with a direct HTTP call, and compares the values that carry
+  meaning.
+
+  It exits non-zero if any tool disagrees with the API, and also if a tool is
+  exposed but has no comparison written for it, so adding a tool without a
+  parity check fails the run. Both READMEs document how to point it at a
+  deployment.
+
+  
+
+## [0.8.0] - 2026-07-30
+
+Ported to the MCP Python SDK 2.x. 0.4.1 pinned the SDK to `<2` as an emergency
+fix, because 2.0 removed `mcp.server.fastmcp` and every module here imported it;
+this replaces that pin with the port it was standing in for.
+
+> **Upgrading:** this release requires `mcp>=2,<3`. The two SDK lines cannot both
+> be supported without a shim — 2.0 removed `mcp.server.fastmcp` outright, with no
+> alias — so an environment holding `mcp` 1.x must upgrade it alongside. No tool
+> name, argument or output changed.
+
+### Changed
+
+- `FastMCP` is now `MCPServer`, from `mcp.server.mcpserver`. Titles, tool
+  annotations and per-parameter descriptions all survive the move unchanged,
+  verified against the running server rather than assumed.
+- Tests read `Tool.input_schema` and `annotations.read_only_hint`, which 2.0
+  renamed from `inputSchema` and `readOnlyHint`, and call results are unwrapped
+  through one shared helper (`tests/conftest.py`): 2.0 returns a
+  `CallToolResult` object where 1.x returned a `(content, structured)` tuple, and
+  the next such change should touch one file rather than every test module.
+
+### Not done, deliberately
+
+Giving every tool a typed return so it carries a meaningful output schema —
+item 5 on Glama's TDQS improvement checklist. Investigating it turned up three
+things, one of which contradicts the reason first recorded here:
+
+- Every tool already *has* an output schema. A `-> str` tool auto-generates
+  `{"result": {"type": "string"}}`, so the checklist item is met literally and
+  uselessly.
+- A typed return **can** coexist with the prose-on-empty behaviour these tools
+  rely on. A first draft of this entry claimed it could not; that was wrong.
+  Annotating a tool `-> Report | str` produces a real `anyOf` output schema and
+  still returns a plain sentence as text when a search comes back empty
+  (verified against the SDK this release pins).
+- The real obstacle is narrower. Roughly half these tools pass an upstream
+  response straight through — `malcolm_search` returns Malcolm's
+  `/mapi/document` body, `search_dsl` returns OpenSearch's — and those have no
+  shape this repo can declare, so they would land back on `dict[str, Any]` and
+  the same empty schema. The remainder, the tools that build a trimmed row,
+  would each need a declared payload type and a rewritten return, with the test
+  churn that follows.
+
+So the outcome is unchanged — not in this release — but the reason is that the
+win is partial and the work is per-tool, not that the technique does not fit.
+It is worth doing as its own change, on the tools that build their own rows.
+
+## [0.7.0] - 2026-07-30
+
+The last planned coverage gap: what Malcolm's Dashboards layer already knows.
+Malcolm ships dashboards, visualizations and saved searches, plus
+OpenSearch's alerting and anomaly-detection plugins, and none of it was
+reachable — an agent would rebuild by hand an analysis that already existed.
+
+### Added
+
+- `malcolm_saved_objects`: find the dashboards, visualizations and saved
+  searches this Malcolm ships, by type and title. Pairs with the existing
+  `malcolm_dashboard_export` — this one finds the id, that one reads how it is
+  built. The panel layout is dropped at both ends: `fields=title&description`
+  keeps the server from sending it, and what remains is trimmed again, so the
+  dashboard list comes back at a small fraction of the untrimmed response.
+- `malcolm_alerting_monitors`: the standing OpenSearch alerting rules, what each
+  watches, and how many alerts are currently raised. When every monitor is
+  disabled the response says so, because a disabled monitor is silent in exactly
+  the way a healthy one is. The alert count asks for `alertState=ACTIVE`; the
+  API defaults to `ALL`, which would fold COMPLETED history into a number
+  labelled as firing now.
+- `malcolm_anomaly_detectors`: the anomaly detectors, what each models, and how
+  many anomalies exist. The count filters on `anomaly_grade > 0` rather than
+  counting result documents: the results index holds one document per detection
+  interval per entity whether or not anything was anomalous, so a plain count of
+  it reports detector runs — many per day for each of Malcolm's MULTI_ENTITY detectors at a ten-minute
+  interval — under a heading that says
+  anomalies. `track_total_hits` is set so the number is not silently capped at
+  10,000. Zero still needs care, and the response says so: a detector that was
+  never started produces the same zero.
+
+Both plugin tools report the server's own `total` alongside `showing`, so a
+truncated page cannot be mistaken for the complete set of standing detections,
+and the all-disabled note says whether it is speaking for every monitor or only
+the page returned.
+
+Both plugin tools reach OpenSearch through Malcolm's `/mapi/opensearch` proxy
+rather than the Dashboards-side routes, which require `from`, `size` and
+`search` to all be present and return 400 otherwise. In both tools the count of
+findings is an enrichment: if that second lookup fails the configuration list is
+still returned, with the error alongside it.
+
+## [0.6.0] - 2026-07-30
+
+Closes the Arkime read gaps: everything the viewer API exposes that an analyst
+would ask for, minus the operational-monitoring and UI-personalisation routes
+that carry nothing an agent can act on.
+
+### Added
+
+- `arkime_views` and `arkime_shortcuts`: read back the saved searches and named
+  value lists the team curated. The write classes could already create both, but
+  nothing could list them, so an agent had no way to reference a `$name` IOC list
+  or reuse a colleague's query. Each shortcut row carries the exact `$name` token
+  to paste into an expression.
+- `arkime_reverse_dns`: PTR lookup for one address. Arkime answers `200` with the
+  body `reverse error` when there is no record, so the tool reads the body rather
+  than the status and reports `resolved: false` — an absent PTR is normal for a
+  private address, not a failure.
+- `arkime_pcap_files`: the capture inventory — which PCAP files are indexed, their
+  size, packet and session counts, and the span each covers.
+- `arkime_node_stats`: capture-node health. A node that is currently dropping
+  packets gets an explicit warning, because a gap in the capture is
+  indistinguishable from "no such traffic" in every search built on top of it.
+  Narrowing uses `filter`; Arkime accepts `nodeName` and silently ignores it,
+  which returns every node and reads as though the filter matched. CPU is
+  reported as `cpu_percent`, scaled from the hundredths-of-a-percent Arkime
+  stores — raw, a node at 2.5% reads as `cpu: 250` next to two keys that
+  really are percents.
+- `arkime_sessions_csv`: sessions as CSV, which costs far fewer tokens than
+  the same rows as JSON. Its `fields` argument takes ECS dotted names
+  (`source.ip`), and a name Arkime does not accept is never reported as an
+  error — it comes back as an empty column, or the request hangs until it times
+  out. The tool says so, and turns that timeout into a message naming the likely
+  cause instead of a bare stall.
+
+  Arkime's matching `connections.csv` is deliberately **not** wrapped. It emits a nine-column header over seven-column rows, so positional
+  parsing reads the packet count as "Data bytes" and the node name as
+  "Packets". The cause is upstream — `apiConnections.js` writes one header per
+  `fieldsMap` entry sharing a `dbField`, so `network.bytes` and
+  `network.packets` each emit two headers while the row loop writes one value
+  each. Its `length` is also a cap on graph nodes rather than rows, so the row
+  count silently falls far short of the limit asked for. `arkime_connections` answers the same question
+  correctly as JSON.
+
+## [0.5.0] - 2026-07-30
+
+File analysis was the largest hole in this server's coverage: Malcolm carves
+every file it sees out of the traffic (Zeek's file extractor, then Strelka with
+YARA/ClamAV on top), and none of it was reachable from an agent.
+
+### Added
+
+- `malcolm_file_scans`: list the files Zeek carved out of traffic. Filters
+  `event.dataset=files` for you and returns one trimmed row per file — name,
+  MIME type, size, md5/sha256, both endpoints, Malcolm's severity, and any
+  Strelka scan hits — instead of the raw document, which runs to several KB of
+  hashes, geo and pipeline metadata each. `executables_only=True` is a shortcut
+  for the executable MIME types (Malcolm records PE files as
+  `application/x-dosexec`, which is not a name an agent guesses).
+  `file_hash=<md5|sha1|sha256|ssdeep|tlsh>` pivots from a hash IOC back to the
+  sessions that carried it, matched on `related.hash`, which holds all five.
+- `malcolm_extract_file`: fetch one carved file from Malcolm's extracted-files
+  server (`GET /extracted-files/<name>`, served when
+  `FILESCAN_HTTP_SERVER_ENABLE` is on) and report size, sha256 and the leading
+  file-magic bytes. Metadata only, nothing written to disk: an extracted file
+  may be live malware, so the bytes never enter the MCP response. A size cap is
+  enforced against the streamed body, and `url_only=True` returns just the URL.
+  A 404 is reported as `found: false` — the record can outlive the file, which
+  Malcolm prunes.
+- The `hunt_workflow` prompt gained a file-chasing step between session
+  drill-down and aggregation.
+
+Both tool definitions are written to Glama's TDQS rubric: purpose in the first
+sentence, named alternatives for the cases each tool excludes, the return shape
+stated, and behavior disclosed that the annotations cannot carry — that a file
+can come back as two rows (Zeek's transfer record and Strelka's scan record both
+sit under `event.dataset=files`), and that no match returns a sentence rather
+than an empty list.
+
+### Fixed
+
+- The README endpoint tables listed `GET /arkime/api/session/<id>` for
+  `arkime_session_detail`; 0.4.1 moved that tool to `/arkime/api/sessions` with
+  an `id ==` expression and the tables were not updated with it.
+
+## [0.4.1] - 2026-07-30
+
+### Fixed
+
+- `arkime_session_detail` now returns the session document instead of failing.
+  Two separate faults had to go:
+  - It fetched `GET /arkime/api/session/<id>`, which serves the Arkime SPA HTML
+    shell rather than JSON, so every call died parsing HTML as JSON
+    (`Expecting value: line 1 column 1`). It now queries `/arkime/api/sessions`
+    with an `id ==` expression and `date=-1`, returning the single record, and
+    reports a clear message when no session matches.
+  - It then passed the id through verbatim. `arkime_sessions` — the tool this
+    one's own docstring tells you to get the id from — returns it node-prefixed
+    (`3@231115:231115-ExampleSessionId00002`), while Arkime's `id ==` matches
+    only the bare id after the last `:`. The prefixed form
+    returns 0 rows and the bare one returns the session, so the documented
+    workflow reported "No Arkime session found" for every valid id. The id is
+    now reduced to its bare form for this expression only; `sessions.pcap`
+    accepts the prefixed id, so `arkime_session_pcap` still passes it through
+    unchanged.
+
+  The prior unit tests passed only because their mock returned JSON for the HTML
+  endpoint and never asserted the expression that was sent.
+- `arkime_sessions` reported the size of the whole index as the result count.
+  It returned Arkime's `recordsTotal`, not `recordsFiltered`, so a search for
+  `protocols == ssh` that matched a handful of sessions came back with the
+  index-wide total — an agent reading that would conclude ssh was everywhere.
+  The key is now `matched` and carries the number the expression actually found.
+- `arkime_unique` could not reach historical data. It was the only Arkime tool
+  with no `time_from` / `time_to`, so every call used Arkime's default recent
+  window and returned "(no values)" against a capture older than that — while
+  its siblings (`arkime_multiunique`, `arkime_spigraph`, `arkime_spiview`)
+  answered the same question fine. It takes the window now, and says in its
+  description that an empty result without one usually means the data is older
+  than the default range rather than missing.
+- Pin the MCP SDK to `mcp>=1.0,<2`. The 0.4.0 requirement was `mcp>=1.0` with
+  no upper bound, so a fresh `pip install mcp-server-malcolm` resolved to
+  `mcp` 2.0.0 and the server failed at import with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. SDK 2.0 renamed
+  `FastMCP` to `MCPServer` and moved it to `mcp.server.mcpserver`; every tool
+  module here imports the 1.x path. Installs that already resolved to 1.x were
+  unaffected. Porting to the 2.0 API (and with it the stateless `2026-07-28`
+  protocol revision) is separate work.
+
+## [0.4.0] - 2026-07-28
+
+Audited Malcolm's ingest pipelines (`logstash/pipelines/`), where Malcolm
+settles its field-mapping quirks, against the fields this server queries. Three of those quirks were live bugs.
+
+### Added
+
+- `arkime_field_search`: field discovery for Arkime's expression syntax.
+  Arkime expressions take Arkime's own names (`ip.src`, `port.dst`), and
+  `/mapi/fields` does not list them: it merges Arkime's field table keyed by
+  `dbField2` and drops the `exp` alias, so the list carries `srcIp` and
+  `source.ip` but never `ip.src`. An agent had no way to discover a name that
+  works inside an `expression` argument — it had to guess. Each result of the
+  new tool carries the expression name and the db name, and says which goes
+  where.
+- An empty `malcolm_search` / `malcolm_aggregate` / `malcolm_field_values`
+  result now reports any queried field that Malcolm does not index, together
+  with the name it stores the value under. Filtering on a renamed field is not
+  an error in Malcolm — it silently matches nothing, which reads as "this
+  traffic does not exist". The lookup runs only once a result set is already
+  empty, so nothing is added on the happy path.
+- `resolve_field` consults a table of ingest renames before falling back to
+  string similarity. For `suricata.alert.signature`, `difflib` returns
+  `suricata.alert.rev` and friends: real fields, all wrong, and indistinguishable
+  from the truth. The table is drawn from Malcolm's pipeline source and covers
+  only jumps that share no spelling with their target.
+
+### Fixed
+
+- Malcolm's filter dict does not support wildcards, and this server documented
+  that it did. `filtervalues()` compiles the dict to an OpenSearch `terms`
+  query, so `{"rule.name": "*MALWARE*"}` searches for a signature literally
+  named `*MALWARE*` and matches nothing — no error, just an empty result an
+  agent reads as "no such traffic". The wildcard examples are gone from the
+  tool descriptions, the hunt prompt and both READMEs, which now state that
+  values are exact and point at `search_dsl` for substring matching.
+- `malcolm_alerts(signature=...)` filtered `suricata.alert.signature` wrapped
+  in wildcards, so it failed twice over: `11_suricata_logs.conf` renames that
+  field to `rule.name` outright, and the wildcards could not match regardless.
+  Every signature search returned zero alerts whatever the data held. Both
+  `signature` and `category` now resolve the substring against the recorded
+  values first and filter on the exact matches; a substring nothing matches
+  says so instead of returning an empty result set.
+- `malcolm_related_sessions` queried `related.zeek.uid`, a field that exists
+  nowhere in Malcolm. The "related" half of every correlation came back empty
+  and was reported as a successful `N direct + 0 related`. Malcolm parks the
+  Zeek connection UID in Arkime's `rootId`, which is what actually ties a
+  flow's dns/ssl/files records to its conn record.
+- `malcolm_search` documented its default time window as "Malcolm's default
+  recent window". `/mapi/document` defaults to all history and `/mapi/agg` to
+  the last 24 hours, so the two tools covered different periods from identical
+  arguments and the description stated the opposite of the truth for one of
+  them. Both are now documented as they behave.
+
+### Changed
+
+- `arkime_sessions` documents the expression rules an agent cannot discover by
+  probing: existence is the literal token `EXISTS!`, a list literal is an OR,
+  and there is no free-text search — every clause must be field-operator-value.
+
+## [0.3.3] - 2026-07-26
+
+### Fixed
+
+- Corrected the MCP Registry server name casing to `io.github.nagameTW/...`
+  (was lowercase `nagametw`). The registry namespace check is case-sensitive and
+  must match the GitHub account (`nagameTW`), so publishing was rejected with a
+  403. The `mcp-name:` ownership token in the README is updated to match; this
+  release republishes it to PyPI so ownership verification passes.
+
+### Changed
+
+- Shortened the `server.json` `description` to fit the MCP Registry's 100-char
+  limit, so the server can be published to the official registry
+  (registry.modelcontextprotocol.io). No effect on the PyPI package.
+
+## [0.3.2] - 2026-07-26
+
+### Changed
+
+- Enriched the `malcolm_related_sessions` and `malcolm_field_profile` tool
+  docstrings to disclose the behavior an agent can't infer from the schema:
+  `malcolm_related_sessions` runs two independent searches (so `limit` caps each
+  side separately, up to 2×limit total) and reports per-side `direct_error` /
+  `related_error` on partial failure; `malcolm_field_profile` has three distinct
+  text outcomes (unknown-field-with-suggestions / known-but-empty / the profile)
+  and its counts honor Malcolm's default recent window. No behavior change —
+  descriptions only.
+
+### Added
+
+- Glama score and card badges in the README (both language versions).
+
+### Fixed
+
+- `arkime_connections` now defaults its `src_field` / `dst_field` to Arkime db
+  field names (`srcIp` / `dstIp`) instead of dotted ECS names (`ip.src` /
+  `ip.dst:port`). Arkime's `/api/connections` resolves these itself and rejects
+  a dotted name with an error (HTTP 403 or 500, depending on the field), so the
+  tool failed on its own defaults. Pass Arkime db names (`srcIp`, `dstIp`,
+  `dstPort`, `node`) — the docstring and parameter descriptions now say so.
+
+An API-coverage pass (verified against Malcolm's Flask source and the Arkime
+v6.x viewer API) plus findings from a multi-perspective code review (security,
+Python quality, test coverage). Two of the changes alter default behavior — see
+**Changed**, and the migration note below.
+
+> **Upgrading from 0.2.x:** TLS verification is now on by default — if you
+> pointed the server at a self-signed Malcolm with `MALCOLM_SSL_VERIFY="false"`,
+> either keep that (isolated labs only) or, preferably, set it to your Malcolm
+> CA-cert path. And `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` now also requires
+> `MALCOLM_MCP_UPLOAD_DIR` — set it to the staging directory holding uploadable
+> files, or PCAP upload stays refused.
+
+### Changed
+
+- Every tool definition reworked for LLM/agent legibility (and Glama's TDQS
+  quality score): a human `title` and full MCP annotations (`readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, `openWorldHint`) on all 36 tools, a
+  description on every one of the ~110 parameters (via `Annotated[…, Field]`,
+  since this FastMCP release doesn't read `Args:` docstrings into the schema),
+  and docstrings rewritten to state each tool's purpose, when to use it versus
+  its siblings, and what it returns. No tool behavior changed. A new
+  `test_tool_quality.py` guards these properties so a future tool can't
+  regress them.
+
+### Added
+
+- New read tools closing Arkime coverage gaps: `arkime_multiunique` (unique value
+  combinations across fields), `arkime_spigraphhierarchy` (hierarchical top-N
+  drill-down), and `arkime_file_by_hash` (extract the transferred file whose
+  md5/sha256 matches — the payload-forensics gap; returns metadata only, never
+  raw bytes in the response).
+- New opt-in write class `arkime-view` (`MALCOLM_MCP_ENABLE_ARKIME_VIEWS`) with
+  `arkime_create_view` (save a named search expression) and
+  `arkime_create_shortcut` (save a named value list / IOC set, referenced as
+  `$name`). Both additive; audited like every other write.
+- A `hunt_workflow` MCP prompt: a cold-start, worked tool-chaining guide (schema
+  discovery → search → drill-in → pivot → record) with the field-name,
+  time-format, and session-id gotchas spelled out.
+- Enriched the server `instructions` string with the three query dialects and
+  when to use each, the epoch-vs-dateparser time rule, and the
+  session-id → pcap/payload/tag dependency chain, so an agent can plan before
+  reading individual tool docstrings.
+
+### Security
+
+- PCAP upload no longer accepts an arbitrary local path. `malcolm_upload_pcap`
+  now requires the file to sit inside a configured staging directory
+  (`MALCOLM_MCP_UPLOAD_DIR`), resolving symlinks before the containment check;
+  with the directory unset, uploads are refused. This removes an
+  arbitrary-file-read-and-exfiltration path a prompt-injected caller could
+  otherwise have used to ship a credential file off the host.
+- TLS verification is now **on by default** (`MALCOLM_SSL_VERIFY` unset ⇒
+  `true`). The previous default transmitted Basic-auth credentials and query
+  results over an unverified channel, and the documented example paired it with
+  a remote host. For self-signed Malcolm, point `MALCOLM_SSL_VERIFY` at the CA
+  cert instead of disabling verification.
+- `arkime_session_pcap` / `arkime_session_detail` now reject a `..` session id,
+  closing a single-hop path-traversal gap in the id validator (the other path
+  validators already had this guard).
+- The write-primitive seam test now parses the AST instead of grepping text, so
+  it also catches dynamic dispatch (`getattr(client, "_write_event")`) — the
+  previous regex only caught direct attribute access.
+
+### Changed
+
+- **Breaking:** `MALCOLM_SSL_VERIFY` now defaults to `true` (was `false`). Set
+  it to `false` explicitly for an isolated localhost lab, or to a CA-bundle path
+  for self-signed certs.
+- **Breaking:** enabling `MALCOLM_MCP_ENABLE_PCAP_UPLOAD` now also requires
+  `MALCOLM_MCP_UPLOAD_DIR` — without it, upload calls return an error.
+- `arkime_session_pcap` streams the download and enforces a 500 MB cap instead
+  of reading an unbounded body fully into memory.
+
+### Fixed
+
+- Closed a race in the lazily-created HTTP client: concurrent first calls could
+  each build an `httpx.AsyncClient` and leak the first one's connection pool. A
+  lock now guards the check-and-create.
+
+### Internal
+
+- Extracted the repeated write-tool audit-on-every-outcome logic into a shared
+  `run_write` helper.
+- Moved the `_arkime_query` static method to a module-level function (project
+  style: no `staticmethod`).
+- Enabled the `BLE` (blind-except) lint rule and annotated the intentional
+  MCP-boundary broad-except sites, so future accidental ones are flagged.
+- Removed dead code (`_format_json`); added tests for `_extract_buckets`,
+  `resolve_field`, `_parse_filters`, the write-gate's bundled read tool, the
+  upload containment guard, and the AST seam check (66 → 92 tests).
+
+## [0.2.0] - 2026-07-26
+
+This release closes the biggest gaps found while auditing the tool surface
+against the upstream Malcolm, Arkime, and NetBox APIs. Everything here is
+read-only or an additive parameter — no new write class, and existing tools
+change only by gaining optional arguments.
+
+### Added
+
+- `malcolm_netbox_query`: a read-only passthrough to any NetBox REST endpoint
+  (services, VLANs, interfaces, virtual machines, contacts, and the rest), for
+  the parts of NetBox that `malcolm_netbox_lookup` doesn't surface. The path is
+  validated against a NetBox-path shape so it can't traverse out of the proxy
+  or smuggle a scheme/host.
+- `doctype` argument on `malcolm_search` and `malcolm_aggregate`, so a query can
+  target the host/beats index or the Arkime sessions index instead of always
+  hitting the default Malcolm network index.
+- `category`, `action`, and `sid` arguments on `malcolm_alerts` for richer
+  Suricata alert filtering. `category` and `sid` map to the ECS fields Malcolm
+  normalizes to (`rule.category`, `rule.id`), not the raw `suricata.alert.*`
+  names, which the ingest pipeline renames away.
+- `arkime_session_pcap` now accepts several comma-separated session ids and
+  returns a single combined PCAP.
+
+### Changed
+
+- Clarified tool docstrings so an agent picks the right tool the first time:
+  the epoch-seconds vs. dateparser time-format split between the Arkime and
+  Malcolm tools, when to reach for `malcolm_search` vs. `arkime_sessions`, the
+  `count` (inner query) vs. `search_dsl` (full body) distinction, and the note
+  that `arkime_hunt_status` is only registered when the hunt-job write class is
+  enabled.
+
+## [0.1.0] - 2026-07-24
+
+The first release. An MCP server that gives any MCP-compatible AI agent
+structured access to a Malcolm deployment, so the agent works through named
+tools instead of guessing at field names and filter syntax.
+
+### Added
+
+- Read tools, available with no configuration:
+  - OpenSearch DSL core: `search_dsl`, `count`, `list_indices`, `index_mapping`, `cluster_health`.
+  - Malcolm query and field discovery: `malcolm_search`, `malcolm_aggregate`, `malcolm_alerts`, `malcolm_field_search`, `malcolm_field_values`, `malcolm_field_profile`.
+  - Health and coverage: `malcolm_service_status`, `malcolm_data_coverage`, `malcolm_ping`.
+  - NetBox assets: `malcolm_netbox_lookup`, `malcolm_netbox_sites`.
+  - Arkime: `arkime_sessions`, `arkime_session_detail`, `arkime_session_pcap`, `arkime_unique`, `arkime_spigraph`, `arkime_spiview`, `arkime_connections`.
+  - Correlation and export: `malcolm_related_sessions`, `malcolm_dashboard_export`.
+- Write tools, off by default and split into four opt-in classes, each behind
+  its own environment flag. A disabled class is never registered, so its tools
+  can't be called. Every write emits an audit line.
+  - `alerting`: `malcolm_create_alert`.
+  - `arkime-tag`: `arkime_add_tags`.
+  - `hunt-job`: `arkime_create_hunt`, `arkime_hunt_status`.
+  - `pcap-upload`: `malcolm_upload_pcap`.
+- A `Dockerfile` for container deployment.
+
+### Security
+
+- Read-only by default. Writes are additive only: this version has no tool that
+  deletes data, removes a tag, or touches user accounts.
+
+[Unreleased]: https://github.com/nagameTW/mcp-server-malcolm/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/nagameTW/mcp-server-malcolm/releases/tag/v1.2.1

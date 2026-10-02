@@ -1,0 +1,12 @@
+.git
+.github
+tests
+docs
+dist
+build
+*.egg-info
+__pycache__
+*.pyc
+.venv
+uv.lock
+README.zh-TW.md

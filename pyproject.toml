@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project]
+name = "mcp-server-malcolm"
+version = "1.2.1"
+description = "MCP server for the Malcolm network traffic analysis platform (Zeek + Suricata + Arkime + OpenSearch + NetBox) — full read surface plus opt-in, audited write tools"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "nagameTW" }]
+keywords = ["mcp", "malcolm", "zeek", "suricata", "arkime", "threat-hunting", "network-security"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Security",
+    "Topic :: System :: Networking :: Monitoring",
+]
+dependencies = [
+    # Pinned to the 2.x line. 2.0 renamed FastMCP to MCPServer and moved it to
+    # mcp.server.mcpserver with no compatibility shim, and renamed Tool's
+    # inputSchema/outputSchema to snake_case, so 1.x and 2.x cannot both be
+    # supported without a shim this server does not need.
+    "mcp>=2,<3",
+    "httpx>=0.27",
+    # pydantic refuses typing.TypedDict below 3.12, and this package supports
+    # 3.11, so the tools that declare a typed return import it from here.
+    "typing-extensions>=4.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/nagameTW/mcp-server-malcolm"
+Repository = "https://github.com/nagameTW/mcp-server-malcolm"
+
+[project.scripts]
+mcp-server-malcolm = "mcp_server_malcolm:main"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "BLE"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

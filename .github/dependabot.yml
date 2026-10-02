@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Python dependencies: security fixes only, checked monthly, and grouped
+  # into a single pull request so it stays quiet. Routine version bumps are
+  # left off on purpose; this project has few dependencies and doesn't need
+  # a PR for every patch release.
+  - package-ecosystem: pip
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      python-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+
+  # GitHub Actions: keep the pinned SHAs current, monthly, in one PR.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        patterns:
+          - "*"
