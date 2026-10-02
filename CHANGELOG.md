@@ -28,6 +28,13 @@ All notable changes to this project are recorded here. The format follows
 
 ### Changed
 
+- **"Read-only by default" now sits right under the examples in both
+  READMEs.** It used to be the last clause of a paragraph below the demo.
+  That paragraph also loses "the first MCP server for Malcolm", which was a
+  claim to defend rather than information. The test-environment detail at the
+  top of Quick start moved to a new "Where this README was tested" subsection,
+  leaving one line in its place. The license badge now reads the license from
+  GitHub.
 - **`malcolm_alerts` returns one compact row per alert** (#74). It used to
   return the raw `/mapi/document` response, indented. On the training
   instance the default 20 alerts ran to 77,963 characters, about 22,000

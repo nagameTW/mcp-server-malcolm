@@ -3,7 +3,7 @@
 [![CI](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml/badge.svg)](https://github.com/nagameTW/mcp-server-malcolm/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/mcp-server-malcolm)](https://pypi.org/project/mcp-server-malcolm/)
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://pypi.org/project/mcp-server-malcolm/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![License](https://img.shields.io/github/license/nagameTW/mcp-server-malcolm?style=flat-square&logo=opensourceinitiative&logoColor=white&color=3DA639)](./LICENSE)
 [![Glama score](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/score.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
 
 [English](README.md) | **繁體中文**
@@ -17,11 +17,13 @@
 - 「列出 Zeek 從昨天的流量裡切出來的執行檔，附上 hash。」→ `malcolm_file_scans`
 - 「上傳這個 PCAP，再到已存的封包裡 hunt 這個字串。」→ `malcolm_upload_pcap`、`arkime_create_hunt`（write 工具，預設關閉）
 
+**預設唯讀。**建立告警、標記 session、發動 hunt、上傳 PCAP 這些 write 工具，要等你開啟對應的 write class 才會註冊。詳見[預設唯讀，需要時再開](#預設唯讀需要時再開)。
+
 ![Claude Code 透過 mcp-server-malcolm 回答 Modbus 告警問題](https://raw.githubusercontent.com/nagameTW/mcp-server-malcolm/main/docs/demo.gif)
 
 *未剪輯的 Claude Code 實際操作，連的是 Malcolm 官方公開的 training instance（training.malcolm.fyi）：呼叫兩次 `malcolm_aggregate`，接著給出答案。錄影時開了 `--verbose`，所以每次工具呼叫都看得到；預設模式會把它們收成一行「Calling malcolm」。*
 
-這是第一個給 Malcolm 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。Claude Code、Claude Desktop、Cursor 這類 MCP 客戶端都能用。沒開 write class 之前它是唯讀的；開了之後還能建立告警、標記 session、發動 hunt 或上傳 PCAP。
+mcp-server-malcolm 是給 Malcolm 用的 MCP server。Malcolm 是開源的網路流量分析平台，整合 Zeek + Suricata + Arkime + OpenSearch，並可選配 NetBox。Claude Code、Claude Desktop、Cursor 這類 MCP 客戶端都能用。
 
 ## 目錄
 
@@ -52,7 +54,7 @@
 
 你不需要寫任何程式碼。MCP 客戶端（Claude Code、Claude Desktop、Cursor 等）會把這個 server 當子行程啟動，用 stdio 跟它溝通；你要做的只是告訴客戶端怎麼啟動它、以及要注入哪些憑證。
 
-這一章的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。第 1 節的安裝和它的檢查指令，以及第 2 節的 Claude Code 註冊，另外在 macOS 26/arm64（Python 3.14.6）上對一台跑著的 Malcolm 25.12.1 再跑過一次。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
+這一章的每一行指令都對一台跑著的 Malcolm 照印出來的樣子跑過，錯誤訊息一律原文照抄。測試用的平台和版本列在[這份 README 在哪裡測過](#這份-readme-在哪裡測過)。
 
 ### 1. 安裝
 
@@ -846,6 +848,10 @@ uv run --with mcp python scripts/api_parity_check.py
 時間範圍要給對：Arkime 預設只看近期，所以要指向你的部署實際持有資料的那段期間。
 只要有任何工具跟 API 對不起來，腳本就會以非零狀態結束；工具有曝出來但沒有對應的比對項目時也一樣——
 所以新增工具卻沒寫 parity check 會讓這個檢查失敗。
+
+### 這份 README 在哪裡測過
+
+[快速開始](#快速開始)的每一行指令都是照著印出來的樣子跑過的：Linux/aarch64（kernel 6.14，Python 3.11.14 與 3.14.6），對象是一台跑著的 Malcolm v26.07.1，錯誤訊息一律原文照抄。第 1 節的安裝和它的檢查指令，以及第 2 節的 Claude Code 註冊，另外在 macOS 26/arm64（Python 3.14.6）上對一台跑著的 Malcolm 25.12.1 再跑過一次。凡是只從原始碼推論、沒有實際執行，或根本沒測到的（x86_64 主機、GUI 的 MCP 客戶端、五個 write class 裡的四個），都會在該處寫明。
 
 ## 用到的 Malcolm API 端點
 
