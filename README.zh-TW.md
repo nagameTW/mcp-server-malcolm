@@ -473,7 +473,7 @@ Arkime 的 `connections.csv` 刻意沒有包裝：在 Malcolm 公開的 training
 - **arkime-tag**：`arkime_add_tags` 幫 session 加 tag，只加不減。移除 tag 需要更高的 Arkime 角色和另一套安全設計，所以延後。
 - **hunt-job**：`arkime_create_hunt` 發動一個跨 PCAP 的封包搜尋（很吃資源，所以先把查詢範圍縮小）。`arkime_cancel_hunt` 停掉一個排隊中或執行中的 hunt——不是新增性質，被取消的掃描沒辦法續跑。作業進度用 `arkime_hunt_status` 讀，它現在是讀取工具，這個 class 關著也拿得到（見 [Arkime 儲存物件與擷取健康度](#arkime-儲存物件與擷取健康度)）。
 - **pcap-upload**：`malcolm_upload_pcap` 把本機的封包檔送進 Malcolm 做 ingestion，並在客戶端擋一道大小上限。檔案必須位於 `MALCOLM_MCP_UPLOAD_DIR` 內；若這個 staging 目錄未設定，一律拒絕上傳，讓這個工具不可能被誘導去讀主機上的任意檔案。
-- **arkime-view**：`arkime_create_view` 存一個具名的搜尋 expression，`arkime_create_shortcut` 存一個具名的值清單（IOC 集合），在 expression 裡用 `$name` 引用。兩者都是 additive — 讓 agent 把 hunting 知識留給人類團隊，不刪除也不覆寫。
+- **arkime-view**：`arkime_create_view` 存一個具名的搜尋 expression，`arkime_create_shortcut` 存一個具名的值清單（IOC 集合），在 expression 裡用 `$name` 引用。兩者都是 additive — 讓 agent 把 hunting 知識留給分析人員，不刪除也不覆寫。
 
 每個 write 工具都帶著 MCP annotation `readOnlyHint: false`，讓 MCP 客戶端能在呼叫前套自己的確認步驟。`destructiveHint` 在每個新增性質的 write 上是 `false`，唯一的例外是 `arkime_cancel_hunt`——它停掉的是進行中的工作，不是新增內容，所以標成 `true`。
 
