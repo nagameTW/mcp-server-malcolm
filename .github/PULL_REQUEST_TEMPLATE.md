@@ -28,5 +28,5 @@
 
 - [ ] `ruff check src tests` and `ruff format --check src tests` pass
 - [ ] `pytest` passes, and I added tests for the change
-- [ ] I updated the README (and README.zh-TW.md) if behavior or configuration changed
+- [ ] I updated the README, `docs/` and their `zh-TW` copies if behavior or configuration changed
 - [ ] I added a line under `[Unreleased]` in CHANGELOG.md
