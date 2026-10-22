@@ -28,7 +28,12 @@ import mcp_server_malcolm
 
 _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 _SERVER_JSON = _PYPROJECT.parent / "server.json"
-_READMES = (_PYPROJECT.parent / "README.md", _PYPROJECT.parent / "README.zh-TW.md")
+# The install and handshake transcripts live in docs/, so those pages are scanned too.
+_READMES = (
+    _PYPROJECT.parent / "README.md",
+    _PYPROJECT.parent / "README.zh-TW.md",
+    *sorted((_PYPROJECT.parent / "docs").rglob("*.md")),
+)
 
 # Only this package's own version, never the many other versions the READMEs
 # quote (Malcolm, Arkime, mcp, Python, Docker). Two shapes carry it: the sdist
@@ -93,7 +98,7 @@ def test_the_readmes_do_not_print_a_stale_version() -> None:
                 seen = found["artifact"] or found["handshake"]
                 matched += 1
                 if seen != declared:
-                    stale.append(f"{readme.name}:{number} shows {seen}")
+                    stale.append(f"{readme.relative_to(_PYPROJECT.parent)}:{number} shows {seen}")
     assert matched, "no version strings found in the READMEs; the patterns above went stale"
     assert not stale, f"declared {declared}, but {'; '.join(stale)}"
 

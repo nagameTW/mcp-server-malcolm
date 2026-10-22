@@ -60,7 +60,7 @@ review that can't land.
 2. Add the tool in the right module and register it in `server.py`.
 3. Give it a docstring an agent can act on. The whole point of this server is
    that the model doesn't guess, so the description matters.
-4. Update the README and `README.zh-TW.md` if you changed behavior or config.
+4. Update the README, the pages in `docs/`, and their `README.zh-TW.md` and `docs/zh-TW/` copies if you changed behavior or config.
 5. Add a line under `[Unreleased]` in `CHANGELOG.md`.
 
 ## Commits
