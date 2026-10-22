@@ -24,7 +24,7 @@ Malcolm MCP Server 讓 AI agent 查詢 [Malcolm](https://malcolm.fyi) 裡的流�
 ## 需求
 
 - Python 3.11 或更新版本。
-- 一個可用 API 的 Malcolm，並能以 HTTPS 連線。
+- 一個可使用 API 的 Malcolm，並能以 HTTPS 連線。
 - 一個 MCP 客戶端。
 
 ## 快速開始
@@ -61,11 +61,11 @@ claude mcp add malcolm \
 | `MALCOLM_PASSWORD` | `admin` | Basic auth 密碼 |
 | `MALCOLM_SSL_VERIFY` | `true` | `true`、`false`，或 CA bundle 的路徑 |
 
-Malcolm 預設使用自簽憑證。連線到遠端的 Malcolm 時，把 `MALCOLM_SSL_VERIFY` 指向 CA bundle。憑證必須帶有符合主機名稱的 `subjectAltName`。只有在隔離的實驗環境才使用 `false`。所有變數列在[設定頁](docs/zh-TW/configuration.md)。
+Malcolm 預設使用自簽憑證。連線到遠端的 Malcolm 時，把 `MALCOLM_SSL_VERIFY` 指向 CA bundle。憑證必須帶有符合主機名稱的 `subjectAltName`。Malcolm 自行產生的憑證沒有這個欄位，需另外安裝帶有他的憑證。只有在隔離的實驗環境才使用 `false`。所有變數列在[設定頁](docs/zh-TW/configuration.md)。
 
 ## 預設唯讀
 
-啟用 write class 之前，伺服器只註冊讀取工具。關閉的 class 不會註冊，他的工具也不會出現在 `tools/list`。
+write 工具分為五個 class，每個 class 有一個旗標。設定旗標之前，伺服器只註冊讀取工具。關閉的 class 不會註冊，他的工具也不會出現在 `tools/list`。
 
 | Class | 旗標 | 工具 |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ Malcolm 預設使用自簽憑證。連線到遠端的 Malcolm 時，把 `MALCOLM
 第 1 版刻意不做以下項目：
 
 - 破壞性的寫入（Arkime session 刪除、移除 tag、使用者管理）。
-- 原生 OpenSearch 寫入或原生 NetBox CRUD 的轉送，不論有沒有旗標。
+- 原生 OpenSearch 寫入或原生 NetBox CRUD 的轉送，不論是否有旗標。
 - `streamable-http` 傳輸（只支援 stdio）。
 
 ## 專案結構

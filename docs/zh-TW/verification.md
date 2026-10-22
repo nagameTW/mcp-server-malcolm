@@ -73,3 +73,7 @@ uv run --with mcp python scripts/api_parity_check.py
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap`（write） |
 
 這些端點路徑和 body 結構是照 Malcolm 26.x 和 Arkime 6.x 寫的。兩者版本之間都會漂移，所以若某個 write 工具回傳非預期錯誤，拿你自己的版本重新核對。
+
+## 收錄
+
+[![mcp-server-malcolm MCP server](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/card.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)

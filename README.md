@@ -62,11 +62,11 @@ Everything after `--` is the launch command. Each `-e` sets one environment vari
 | `MALCOLM_PASSWORD` | `admin` | Basic-auth password |
 | `MALCOLM_SSL_VERIFY` | `true` | `true`, `false`, or the path of a CA bundle |
 
-Malcolm ships a self-signed certificate. For a remote Malcolm, point `MALCOLM_SSL_VERIFY` at the CA bundle. The certificate must carry a `subjectAltName` that matches the host name. Use `false` only on an isolated lab machine. The [configuration page](https://github.com/nagameTW/mcp-server-malcolm/blob/main/docs/configuration.md) lists every variable.
+Malcolm ships a self-signed certificate. For a remote Malcolm, point `MALCOLM_SSL_VERIFY` at the CA bundle. The certificate must carry a `subjectAltName` that matches the host name. The certificate that Malcolm's own setup generates has none, so install one that does. Use `false` only on an isolated lab machine. The [configuration page](https://github.com/nagameTW/mcp-server-malcolm/blob/main/docs/configuration.md) lists every variable.
 
 ## Read-only by default
 
-The server registers only read tools until you turn on a write class. A class that is off is not registered. Its tools do not appear in `tools/list`.
+The write tools come in five classes, and each class has one flag. The server registers only read tools until you set a flag. A class that is off is not registered. Its tools do not appear in `tools/list`.
 
 | Class | Flag | Tools |
 | --- | --- | --- |

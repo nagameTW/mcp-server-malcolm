@@ -76,3 +76,7 @@ The install and its check, and the Claude Code registration, in [Install and reg
 | `/server/php/submit.php` | POST | `malcolm_upload_pcap` (write) |
 
 These endpoint paths and body shapes were written against Malcolm 26.x and Arkime 6.x. Both drift between releases, so re-check against your own version if a write tool returns an unexpected error.
+
+## Listing
+
+[![mcp-server-malcolm MCP server](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm/badges/card.svg)](https://glama.ai/mcp/servers/nagameTW/mcp-server-malcolm)
